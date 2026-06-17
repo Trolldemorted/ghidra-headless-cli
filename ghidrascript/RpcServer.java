@@ -69,21 +69,21 @@ public class RpcServer extends GhidraScript {
 
     @Override
     public void run() throws Exception {
-        if (currentProgram == null) {
-            Msg.error(this, "No current program; run with -process <program>.");
-            return;
-        }
-
         String bind = env("RPC_BIND", "0.0.0.0");
         int port = Integer.parseInt(env("RPC_PORT", "18000"));
 
-        context = new RpcContext(state.getProject(), currentProgram, monitor);
+        // The server is not bound to a program: it starts with ZERO programs open and
+        // resolves each request's target on demand by path. analyzeHeadless still needs a
+        // program to process in order to invoke this post-script at all, but that program
+        // is only a trigger — we use it solely to close the enclosing transaction (below)
+        // and otherwise ignore it, so the initial state is genuinely empty.
+        context = new RpcContext(state.getProject(), monitor);
         registerHandlers();
 
-        // analyzeHeadless wraps a post-script's run() in one open transaction named
-        // after the script. Our run() blocks in the accept loop the whole session, so
-        // that transaction would never close and per-request commits could not land.
-        // End it up front so the server owns persistence (checkin/save land live).
+        // analyzeHeadless wraps a post-script's run() in one open transaction on the
+        // processed (trigger) program. Our run() blocks in the accept loop the whole
+        // session, so that transaction would never close and per-request commits could
+        // not land. End it up front so the server owns persistence (checkin/save land live).
         endEnclosingTransaction();
 
         clientPool = Executors.newCachedThreadPool(r -> {
@@ -96,8 +96,8 @@ public class RpcServer extends GhidraScript {
             server.setReuseAddress(true);
             server.bind(new InetSocketAddress(bind, port));
             server.setSoTimeout(ACCEPT_TIMEOUT_MS);
-            Msg.info(this, "Listening on " + bind + ":" + port
-                    + " program=" + currentProgram.getDomainFile().getPathname());
+            Msg.info(this, "Listening on " + bind + ":" + port + "; 0 programs open"
+                    + " (programs are opened on demand per request)");
             Msg.info(this, "Procedures (" + handlers.size() + "): "
                     + String.join(", ", handlers.keySet()));
             acceptLoop(server);
@@ -115,6 +115,9 @@ public class RpcServer extends GhidraScript {
      * is the most-recently-started tx, so a probe tx gets enclosingId+1.
      */
     private void endEnclosingTransaction() {
+        if (currentProgram == null) {
+            return; // no trigger program processed -> no enclosing transaction to close
+        }
         TransactionInfo tx = currentProgram.getCurrentTransactionInfo();
         if (tx == null) {
             return;

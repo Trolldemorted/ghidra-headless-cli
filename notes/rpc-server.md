@@ -49,18 +49,23 @@ missing field each return an error and keep the connection open.
 
 ## Program selection
 
-For a procedure with `needsProgram()` true (every current one), `dispatch` reads the
-mandatory `"program"` path, resolves it against the project
-(`ProjectData.getFile(path)`, else a recursive name search), and **opens it on demand**
-— `DomainFile.getDomainObject(consumer, upgrade, recover, monitor)` — caching the
-instance in `RpcContext` keyed by canonical path. The headless-opened program (the
-launcher's `-process` target) is seeded into the cache so naming it reuses that
-instance. The resolved program becomes the request's **active program**; all resolvers
-(`requireAddress`, `requireFunctionAt`, `applyCommand`, ...) operate on it, so handlers
-never name the program themselves. On shutdown `closeAll()` releases every program the
-server opened (not the headless one). Procedures that act on the whole project rather
-than one program (e.g. a future binary-import RPC) set `needsProgram()` false and take
-no `"program"` field.
+**The server starts with ZERO programs open** and is not bound to any one program: it
+opens each request's target on demand. For a procedure with `needsProgram()` true (every
+current one), `dispatch` reads the mandatory `"program"` path, resolves it against the
+project (`ProjectData.getFile(path)`, else a recursive name search), checks the versioned
+file out (exclusive) **before** opening it, then opens it —
+`DomainFile.getDomainObject(consumer, upgrade, recover, monitor)` — caching the instance
+in `RpcContext` keyed by canonical path. The resolved program becomes the request's
+**active program**; all resolvers (`requireAddress`, `requireFunctionAt`, `applyCommand`,
+...) operate on it, so handlers never name the program themselves. On shutdown
+`closeAll()` releases every program the server opened. Procedures that act on the whole
+project rather than one program (e.g. a future binary-import RPC) set `needsProgram()`
+false and take no `"program"` field.
+
+There is no seeded/launcher program: `analyzeHeadless` is run as a **`-preScript` with
+no `-process`** (a pre-script runs once even when no program is processed; a post-script
+would not run at all), so `currentProgram` is null and the cache begins empty — see the
+launcher section.
 
 ## Synchronization (precise)
 
@@ -77,9 +82,11 @@ no `"program"` field.
 
 ## Checkout / check-in policy
 
-* **Every procedure checks the file out first** (`RpcContext.ensureCheckout`): if the
-  versioned file is not already checked out, it takes an exclusive checkout. No-op for
-  an already-checked-out or non-versioned file.
+* **Every procedure checks the file out first** (inside `RpcContext.openProgram`, before
+  `getDomainObject`): if the versioned file is not already checked out, it takes an
+  exclusive checkout. No-op for an already-checked-out or non-versioned file. Checkout
+  MUST precede the open — a versioned file opened while not checked out yields a read-only
+  in-memory Program whose check-in fails.
 * **Every successful mutating procedure is checked in immediately**
   (`RpcContext.checkin`): `save()` then `DomainFile.checkin(...)` with
   `keepCheckedOut=true`, pushing a new server version visible to other clients at once.
@@ -120,20 +127,33 @@ Notes on a few that need more than plain values:
 ## Configuration / running
 
 Launcher env (see `ghidra-headless.sh`): `GHIDRA_ADDRESS` (host[:port]),
-`GHIDRA_PROJECT`, `GHIDRA_USER`, `GHIDRA_PASSWORD`, `GHIDRA_PROGRAM`, and
-`GHIDRA_COMMIT_MSG` (set => writable `-commit`/exclusive checkout; unset => read-only).
+`GHIDRA_PROJECT`, `GHIDRA_USER`, `GHIDRA_PASSWORD`. Optional: `GHIDRA_PROGRAM`
+(default none → zero programs; set it to also `-process` a specific program, or
+`__recursive__` for all), `GHIDRA_READONLY=1` (read-only diagnostics),
+`GHIDRA_COMMIT_MSG` (auto-`-commit`, only meaningful alongside `GHIDRA_PROGRAM`).
 Server env: `RPC_BIND` (default 0.0.0.0), `RPC_PORT` (default 18000).
 
+**Launch model (verified):** the launcher runs `RpcServer.java` as a **`-preScript`
+with no `-process`** and **no mode flag**, so the server starts with **zero programs**
+on a **writeable** project:
+* `-preScript` (not `-postScript`) so the script runs once even though no program is
+  processed — a post-script only runs per processed program.
+* **No `-readOnly`**: that opens the *project* read-only and per-request checkout fails
+  with `"checkout permitted in writeable project only"`. **No `-commit`** either: it only
+  auto-commits *processed* programs (there are none); persistence is the server's own
+  per-request check-ins. The default project mode (no flag) is writeable, which is what
+  per-request checkout/check-in needs.
+
 ```bash
+# zero-program server (opens targets on demand by path)
 GHIDRA_ADDRESS=ghidra.stronk.pw GHIDRA_PROJECT=P3 GHIDRA_USER=claude \
-GHIDRA_PASSWORD=... GHIDRA_PROGRAM=Mapeditor.exe GHIDRA_SCRIPT=RpcServer.java \
-GHIDRA_COMMIT_MSG="rpc edits" RPC_PORT=18080 ./ghidra-headless.sh
+GHIDRA_PASSWORD=... RPC_PORT=18080 ./ghidra-headless.sh
 ```
 
 ## Verification
 
 Compiles cleanly against Ghidra 12.1.2 jars (`RpcServer.java` + all 36 handlers, 0
-errors). Live-tested against `P3/Mapeditor.exe` in commit mode:
+errors). Live-tested against `P3/Mapeditor.exe`:
 
 * `SetFunctionNameCmd`, `ApplyFunctionSignatureCmd`, `SetReturnDataTypeCmd`,
   `AddFunctionTagCmd`, `FunctionStackAnalysisCmd`, `SetVariableNameCmd`,
@@ -144,6 +164,15 @@ errors). Live-tested against `P3/Mapeditor.exe` in commit mode:
   per-command check-in pushed each change;
 * error paths: missing field, no-such-procedure, and an unparseable signature
   (`"Can't find function name"`) all returned clean errors with the connection intact.
+
+**Zero-program launch (verified live, 2026-06-17, P3):** server started with the
+launcher (`-preScript`, no `-process`, writeable project) reporting `0 programs open`.
+Targeting `/Mapeditor.exe` on demand: read decompile OK; `SetFunctionNameCmd` rename
+succeeded and the check-in **pushed v21→v22→v23** (confirmed by an independent JVM).
+Error cases clean (missing/unknown `"program"`, bare-name resolution). The per-request
+checkout is **TRANSIENT** (session-scoped): after the server JVM exits the repo shows
+`checkouts=none`, so the zero-program server leaves **no stale checkout** — an
+improvement over the old commit-mode trigger.
 
 Note: first start after a code change recompiles the OSGi script bundle (slow, ~1–2
 min). If the bundle cache wedges, clear

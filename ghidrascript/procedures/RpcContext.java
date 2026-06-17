@@ -62,13 +62,10 @@ public class RpcContext {
     private final Project project;
     private final TaskMonitor monitor;
 
-    /** The program analyzeHeadless opened (its consumer), seeded into the cache; never released by us. May be null. */
-    private final Program initialProgram;
-
     /** Open programs by canonical project path. Guarded by {@link #lock}. */
     private final Map<String, Program> open = new HashMap<>();
 
-    /** Programs WE opened (and must release on shutdown); excludes {@link #initialProgram}. Guarded by {@link #lock}. */
+    /** Programs WE opened (and must release on shutdown). Guarded by {@link #lock}. */
     private final List<Program> owned = new ArrayList<>();
 
     /** The program selected for the in-flight request; set/cleared by {@link #dispatch} under {@link #lock}. */
@@ -77,13 +74,15 @@ public class RpcContext {
     /** Serializes the whole request lifecycle (see class doc). Reentrant for nested runWrite. */
     private final ReentrantLock lock = new ReentrantLock();
 
-    public RpcContext(Project project, Program initialProgram, TaskMonitor monitor) {
+    /**
+     * Create a context bound to {@code project} with ZERO open programs. The server starts
+     * empty: every program is opened on demand by {@link #openProgram} when a request names
+     * it. The program analyzeHeadless processed to invoke this script is only a trigger and
+     * is intentionally NOT seeded here (see RpcServer).
+     */
+    public RpcContext(Project project, TaskMonitor monitor) {
         this.project = project;
-        this.initialProgram = initialProgram;
         this.monitor = monitor;
-        if (initialProgram != null) {
-            open.put(normalize(initialProgram.getDomainFile().getPathname()), initialProgram);
-        }
     }
 
     /** The program selected for the current request; throws if none is active. */
@@ -231,7 +230,7 @@ public class RpcContext {
         return t.startsWith("/") ? t : "/" + t;
     }
 
-    /** Release every program we opened (not the headless-owned one). Call on shutdown. */
+    /** Release every program we opened. Call on shutdown; leaves the context empty. */
     public void closeAll() {
         lock.lock();
         try {
@@ -244,9 +243,6 @@ public class RpcContext {
             }
             owned.clear();
             open.clear();
-            if (initialProgram != null) {
-                open.put(normalize(initialProgram.getDomainFile().getPathname()), initialProgram);
-            }
         } finally {
             lock.unlock();
         }
