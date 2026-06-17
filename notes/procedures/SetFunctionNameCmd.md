@@ -13,6 +13,7 @@ the push fails.
 ```typescript
 interface SetFunctionNameCmdRequest {
   procedure: "SetFunctionNameCmd";
+  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address: string;              // hex, e.g. "0x401000"
   name: string;
   source?: SourceType;          // default "USER_DEFINED"
@@ -24,5 +25,5 @@ interface SetFunctionNameCmdRequest {
 
 ## Example
 ```json
-{"procedure": "SetFunctionNameCmd", "address": "0x401000", "name": "main"}
+{"procedure": "SetFunctionNameCmd", "program": "/Mapeditor.exe", "address": "0x401000", "name": "main"}
 ```

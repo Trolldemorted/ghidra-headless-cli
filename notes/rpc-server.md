@@ -27,12 +27,16 @@ Handlers live in package `procedures.ghidra.app.cmd.function`, named `<GhidraCmd
 
 * One JSON object per line (UTF-8, `\n`-terminated); the `"procedure"` field is a
   Ghidra command's **simple name** (e.g. `"SetFunctionNameCmd"`).
+* Program-related procedures (the default — see `RpcProcedure.needsProgram()`) also
+  carry a **mandatory `"program"`** field: the target program's project path
+  (e.g. `"/Mapeditor.exe"`; a bare name with no `/` is resolved by name search). One
+  server addresses **every program in the repository**, not just the one it launched on.
 * Exactly one JSON response per request: `{"success":true,...}` or
   `{"success":false,"error":"..."}`.
 * Long-lived connection; many clients at once (one thread per connection).
 
 ```
--> {"procedure":"SetFunctionNameCmd","address":"0x4024f1","name":"main"}
+-> {"procedure":"SetFunctionNameCmd","program":"/Mapeditor.exe","address":"0x4024f1","name":"main"}
 <- {"success":true}
 ```
 
@@ -43,12 +47,28 @@ handlers are pre-registered (compile-time linkage); unknown names fall back to
 reflection (drop-in `<Name>Handler.java`). Unknown procedure / malformed JSON / a
 missing field each return an error and keep the connection open.
 
+## Program selection
+
+For a procedure with `needsProgram()` true (every current one), `dispatch` reads the
+mandatory `"program"` path, resolves it against the project
+(`ProjectData.getFile(path)`, else a recursive name search), and **opens it on demand**
+— `DomainFile.getDomainObject(consumer, upgrade, recover, monitor)` — caching the
+instance in `RpcContext` keyed by canonical path. The headless-opened program (the
+launcher's `-process` target) is seeded into the cache so naming it reuses that
+instance. The resolved program becomes the request's **active program**; all resolvers
+(`requireAddress`, `requireFunctionAt`, `applyCommand`, ...) operate on it, so handlers
+never name the program themselves. On shutdown `closeAll()` releases every program the
+server opened (not the headless one). Procedures that act on the whole project rather
+than one program (e.g. a future binary-import RPC) set `needsProgram()` false and take
+no `"program"` field.
+
 ## Synchronization (precise)
 
 * **Sockets:** one daemon thread per client — concurrent at the I/O layer.
 * **Program access:** a single `ReentrantLock` in `RpcContext` serializes the **entire
-  request lifecycle** — checkout, the procedure's mutation (inside a program
-  transaction), and the check-in — so those three steps are atomic with respect to
+  request lifecycle** — program resolution (open/cache), checkout, the procedure's
+  mutation (inside a program transaction), and the check-in — so those steps are atomic
+  with respect to
   other clients; no other client can interleave a read or write between them. Ghidra's
   program DB is not safe for concurrent mutation, so procedures effectively run one at a
   time. The lock is reentrant so `applyCommand`/`runWrite` can open nested program

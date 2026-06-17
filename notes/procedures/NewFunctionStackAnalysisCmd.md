@@ -13,6 +13,7 @@ the push fails.
 ```typescript
 interface NewFunctionStackAnalysisCmdRequest {
   procedure: "NewFunctionStackAnalysisCmd";
+  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address?: string;             // single entry point, OR
   addressSet?: AddressRange[];  // explicit ranges (one of address/addressSet required)
   forceProcessing?: boolean;    // default false
@@ -24,5 +25,5 @@ interface NewFunctionStackAnalysisCmdRequest {
 
 ## Example
 ```json
-{"procedure": "NewFunctionStackAnalysisCmd", "address": "0x401000"}
+{"procedure": "NewFunctionStackAnalysisCmd", "program": "/Mapeditor.exe", "address": "0x401000"}
 ```

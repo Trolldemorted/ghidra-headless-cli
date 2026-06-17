@@ -13,6 +13,7 @@ the push fails.
 ```typescript
 interface ApplyFunctionDataTypesCmdRequest {
   procedure: "ApplyFunctionDataTypesCmd";
+  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address?: string;             // single entry point, OR
   addressSet?: AddressRange[];  // explicit ranges (one of address/addressSet required)
   source?: SourceType;          // default "USER_DEFINED"
@@ -26,5 +27,5 @@ interface ApplyFunctionDataTypesCmdRequest {
 
 ## Example
 ```json
-{"procedure": "ApplyFunctionDataTypesCmd", "address": "0x401000"}
+{"procedure": "ApplyFunctionDataTypesCmd", "program": "/Mapeditor.exe", "address": "0x401000"}
 ```

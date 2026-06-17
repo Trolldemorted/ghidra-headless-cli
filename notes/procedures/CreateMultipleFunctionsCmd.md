@@ -13,6 +13,7 @@ the push fails.
 ```typescript
 interface CreateMultipleFunctionsCmdRequest {
   procedure: "CreateMultipleFunctionsCmd";
+  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address?: string;             // single entry point, OR
   addressSet?: AddressRange[];  // explicit ranges (one of address/addressSet required)
   source?: SourceType;          // default "USER_DEFINED"
@@ -24,5 +25,5 @@ interface CreateMultipleFunctionsCmdRequest {
 
 ## Example
 ```json
-{"procedure": "CreateMultipleFunctionsCmd", "address": "0x401000"}
+{"procedure": "CreateMultipleFunctionsCmd", "program": "/Mapeditor.exe", "address": "0x401000"}
 ```

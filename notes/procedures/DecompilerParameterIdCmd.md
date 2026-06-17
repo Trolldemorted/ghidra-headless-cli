@@ -13,6 +13,7 @@ the push fails.
 ```typescript
 interface DecompilerParameterIdCmdRequest {
   procedure: "DecompilerParameterIdCmd";
+  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address?: string;             // single entry point, OR
   addressSet?: AddressRange[];  // explicit ranges (one of address/addressSet required)
   source?: SourceType;          // default "USER_DEFINED"
@@ -27,5 +28,5 @@ interface DecompilerParameterIdCmdRequest {
 
 ## Example
 ```json
-{"procedure": "DecompilerParameterIdCmd", "address": "0x401000"}
+{"procedure": "DecompilerParameterIdCmd", "program": "/Mapeditor.exe", "address": "0x401000"}
 ```

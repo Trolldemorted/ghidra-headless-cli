@@ -13,6 +13,7 @@ the push fails.
 ```typescript
 interface RemoveStackDepthChangeCommandRequest {
   procedure: "RemoveStackDepthChangeCommand";
+  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address: string;              // hex, e.g. "0x401000"
 }
 ```
@@ -22,5 +23,5 @@ interface RemoveStackDepthChangeCommandRequest {
 
 ## Example
 ```json
-{"procedure": "RemoveStackDepthChangeCommand", "address": "0x401010"}
+{"procedure": "RemoveStackDepthChangeCommand", "program": "/Mapeditor.exe", "address": "0x401010"}
 ```

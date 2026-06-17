@@ -13,6 +13,7 @@ the push fails.
 ```typescript
 interface AddRegisterVarCmdRequest {
   procedure: "AddRegisterVarCmd";
+  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address: string;              // hex, e.g. "0x401000"
   register: string;             // e.g. "EAX"
   name?: string;
@@ -26,5 +27,5 @@ interface AddRegisterVarCmdRequest {
 
 ## Example
 ```json
-{"procedure": "AddRegisterVarCmd", "address": "0x401000", "register": "EAX", "name": "ret", "dataType": "int"}
+{"procedure": "AddRegisterVarCmd", "program": "/Mapeditor.exe", "address": "0x401000", "register": "EAX", "name": "ret", "dataType": "int"}
 ```

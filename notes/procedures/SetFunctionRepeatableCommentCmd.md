@@ -13,6 +13,7 @@ the push fails.
 ```typescript
 interface SetFunctionRepeatableCommentCmdRequest {
   procedure: "SetFunctionRepeatableCommentCmd";
+  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address: string;              // hex, e.g. "0x401000"
   comment: string;
 }
@@ -23,5 +24,5 @@ interface SetFunctionRepeatableCommentCmdRequest {
 
 ## Example
 ```json
-{"procedure": "SetFunctionRepeatableCommentCmd", "address": "0x401000", "comment": "entry"}
+{"procedure": "SetFunctionRepeatableCommentCmd", "program": "/Mapeditor.exe", "address": "0x401000", "comment": "entry"}
 ```

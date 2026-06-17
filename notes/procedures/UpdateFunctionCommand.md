@@ -13,6 +13,7 @@ the push fails.
 ```typescript
 interface UpdateFunctionCommandRequest {
   procedure: "UpdateFunctionCommand";
+  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address: string;              // hex, e.g. "0x401000"
   updateType?: "DYNAMIC_STORAGE_FORMAL_PARAMS" | "DYNAMIC_STORAGE_ALL_PARAMS" | "CUSTOM_STORAGE"; // default DYNAMIC_STORAGE_FORMAL_PARAMS
   callingConvention?: string;   // e.g. "__stdcall"
@@ -28,5 +29,5 @@ interface UpdateFunctionCommandRequest {
 
 ## Example
 ```json
-{"procedure": "UpdateFunctionCommand", "address": "0x401000", "returnType": "int", "parameters": [{"name": "a", "dataType": "int"}, {"name": "b", "dataType": "char *"}]}
+{"procedure": "UpdateFunctionCommand", "program": "/Mapeditor.exe", "address": "0x401000", "returnType": "int", "parameters": [{"name": "a", "dataType": "int"}, {"name": "b", "dataType": "char *"}]}
 ```

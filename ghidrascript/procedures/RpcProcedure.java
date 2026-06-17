@@ -27,6 +27,17 @@ public interface RpcProcedure {
     RpcResponse execute(JsonObject request, RpcContext ctx) throws Exception;
 
     /**
+     * Whether this procedure targets a specific program. When true (the default), the
+     * request must carry a mandatory {@code "program"} field (its project path); the
+     * framework resolves and checks it out before {@link #execute} and exposes it as the
+     * {@link RpcContext}'s active program. Procedures that act on the project as a whole
+     * (e.g. importing a new binary) override this to false.
+     */
+    default boolean needsProgram() {
+        return true;
+    }
+
+    /**
      * Whether a successful call mutated the program and must therefore be checked in.
      * All {@code ghidra.app.cmd.function} commands mutate, so this defaults to true;
      * the framework checks the file in immediately after a successful mutating call

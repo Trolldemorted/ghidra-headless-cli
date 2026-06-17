@@ -7,6 +7,9 @@
 //
 // Wire protocol (newline-delimited JSON / ndjson):
 //   - One JSON object per line; every request has a string "procedure" field.
+//   - Program-related procedures also require a "program" field: the target program's
+//     project path (e.g. "/Mapeditor.exe"). The server opens/caches it from the project,
+//     so one server can serve every program in the repository, not just one.
 //   - Exactly one JSON response object per request, on its own line.
 //   - Long-lived connection; many clients may connect at once (thread per client).
 //
@@ -74,7 +77,7 @@ public class RpcServer extends GhidraScript {
         String bind = env("RPC_BIND", "0.0.0.0");
         int port = Integer.parseInt(env("RPC_PORT", "18000"));
 
-        context = new RpcContext(currentProgram, monitor);
+        context = new RpcContext(state.getProject(), currentProgram, monitor);
         registerHandlers();
 
         // analyzeHeadless wraps a post-script's run() in one open transaction named
@@ -100,6 +103,7 @@ public class RpcServer extends GhidraScript {
             acceptLoop(server);
         } finally {
             clientPool.shutdownNow();
+            context.closeAll(); // release programs we opened on demand (not the headless one)
             Msg.info(this, "Stopped.");
         }
     }

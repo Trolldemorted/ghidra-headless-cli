@@ -13,6 +13,7 @@ the push fails.
 ```typescript
 interface ChangeFunctionTagCmdRequest {
   procedure: "ChangeFunctionTagCmd";
+  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   tagName: string;              // existing tag
   value: string;                // new name or comment
   field?: "name" | "comment";   // default "name"
@@ -24,5 +25,5 @@ interface ChangeFunctionTagCmdRequest {
 
 ## Example
 ```json
-{"procedure": "ChangeFunctionTagCmd", "tagName": "REVIEWED", "value": "AUDITED", "field": "name"}
+{"procedure": "ChangeFunctionTagCmd", "program": "/Mapeditor.exe", "tagName": "REVIEWED", "value": "AUDITED", "field": "name"}
 ```

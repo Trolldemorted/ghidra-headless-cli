@@ -13,6 +13,7 @@ the push fails.
 ```typescript
 interface AddFunctionTagCmdRequest {
   procedure: "AddFunctionTagCmd";
+  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   tag: string;
   address: string;              // hex, e.g. "0x401000"
 }
@@ -23,5 +24,5 @@ interface AddFunctionTagCmdRequest {
 
 ## Example
 ```json
-{"procedure": "AddFunctionTagCmd", "tag": "REVIEWED", "address": "0x401000"}
+{"procedure": "AddFunctionTagCmd", "program": "/Mapeditor.exe", "tag": "REVIEWED", "address": "0x401000"}
 ```

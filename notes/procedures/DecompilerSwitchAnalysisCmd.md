@@ -13,6 +13,7 @@ the push fails.
 ```typescript
 interface DecompilerSwitchAnalysisCmdRequest {
   procedure: "DecompilerSwitchAnalysisCmd";
+  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address: string;              // hex, e.g. "0x401000"
   timeout?: number;             // decompiler timeout (s), default 60
 }
@@ -23,5 +24,5 @@ interface DecompilerSwitchAnalysisCmdRequest {
 
 ## Example
 ```json
-{"procedure": "DecompilerSwitchAnalysisCmd", "address": "0x401000"}
+{"procedure": "DecompilerSwitchAnalysisCmd", "program": "/Mapeditor.exe", "address": "0x401000"}
 ```

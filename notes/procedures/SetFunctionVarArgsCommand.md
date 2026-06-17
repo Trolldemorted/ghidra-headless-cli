@@ -13,6 +13,7 @@ the push fails.
 ```typescript
 interface SetFunctionVarArgsCommandRequest {
   procedure: "SetFunctionVarArgsCommand";
+  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address: string;              // hex, e.g. "0x401000"
   hasVarArgs?: boolean;          // default true
 }
@@ -23,5 +24,5 @@ interface SetFunctionVarArgsCommandRequest {
 
 ## Example
 ```json
-{"procedure": "SetFunctionVarArgsCommand", "address": "0x401000", "hasVarArgs": true}
+{"procedure": "SetFunctionVarArgsCommand", "program": "/Mapeditor.exe", "address": "0x401000", "hasVarArgs": true}
 ```

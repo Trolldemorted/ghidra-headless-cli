@@ -13,6 +13,7 @@ the push fails.
 ```typescript
 interface ApplyFunctionSignatureCmdRequest {
   procedure: "ApplyFunctionSignatureCmd";
+  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address: string;              // hex, e.g. "0x401000"
   signature: string;            // e.g. "int foo(char *s, int n)"
   source?: SourceType;          // default "USER_DEFINED"
@@ -24,5 +25,5 @@ interface ApplyFunctionSignatureCmdRequest {
 
 ## Example
 ```json
-{"procedure": "ApplyFunctionSignatureCmd", "address": "0x401000", "signature": "int foo(char *s, int n)"}
+{"procedure": "ApplyFunctionSignatureCmd", "program": "/Mapeditor.exe", "address": "0x401000", "signature": "int foo(char *s, int n)"}
 ```

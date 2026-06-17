@@ -1,5 +1,9 @@
 package procedures;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.locks.ReentrantLock;
 
 import com.google.gson.JsonElement;
@@ -11,6 +15,8 @@ import ghidra.framework.cmd.BackgroundCommand;
 import ghidra.framework.cmd.Command;
 import ghidra.framework.data.DefaultCheckinHandler;
 import ghidra.framework.model.DomainFile;
+import ghidra.framework.model.DomainFolder;
+import ghidra.framework.model.Project;
 import ghidra.framework.plugintool.ServiceProvider;
 import ghidra.framework.plugintool.ServiceProviderStub;
 import ghidra.program.model.address.Address;
@@ -31,32 +37,66 @@ import ghidra.util.task.TaskMonitor;
 /**
  * Per-server shared context + helper layer handed to every procedure.
  *
+ * PROGRAM SELECTION: the server is not bound to a single program. Every
+ * program-related procedure (see {@link RpcProcedure#needsProgram()}) carries a
+ * mandatory {@code "program"} field — the target's project path (e.g.
+ * {@code "/Mapeditor.exe"}). {@link #dispatch} resolves it once per request via
+ * {@link #openProgram}, opening (and caching) the program from the project, and stores
+ * it as the request's {@linkplain #active() active program}. All resolvers
+ * ({@link #requireAddress}, {@link #requireFunctionAt}, {@link #applyCommand}, ...)
+ * operate on that active program, so the procedure handlers never name it explicitly.
+ *
  * SYNCHRONIZATION: a single {@link #lock} (ReentrantLock) serializes the ENTIRE
- * lifecycle of every request — checkout, the procedure's program mutation, and the
- * check-in — because Ghidra's program database is not safe for concurrent mutation.
- * {@link #dispatch} holds the lock from before {@code execute} until after check-in,
- * so a procedure's mutation and its push are atomic with respect to other clients; no
- * other client can interleave a read or write in between. The lock is reentrant so a
+ * lifecycle of every request — program resolution, checkout, the procedure's mutation,
+ * and the check-in — because Ghidra's program database is not safe for concurrent
+ * mutation. {@link #dispatch} holds the lock from before {@link #openProgram} until
+ * after check-in, so resolution+mutation+push are atomic with respect to other clients;
+ * no other client can interleave a read or write in between. The lock is reentrant so a
  * procedure may call {@link #runWrite}/{@link #applyCommand} (which open program
- * transactions) without deadlock. Program transactions
- * ({@code startTransaction}/{@code endTransaction}) are a separate Ghidra-level
- * mechanism but are always opened while holding {@link #lock}.
+ * transactions) without deadlock. The per-request {@link #active} field is only ever
+ * read or written by the lock-holding thread inside the locked region, so it needs no
+ * separate guard. The open-program cache is likewise only touched under the lock.
  */
 public class RpcContext {
 
-    private final Program program;
+    private final Project project;
     private final TaskMonitor monitor;
 
-    /** Serializes all program access (see class doc). Reentrant for nested runWrite. */
+    /** The program analyzeHeadless opened (its consumer), seeded into the cache; never released by us. May be null. */
+    private final Program initialProgram;
+
+    /** Open programs by canonical project path. Guarded by {@link #lock}. */
+    private final Map<String, Program> open = new HashMap<>();
+
+    /** Programs WE opened (and must release on shutdown); excludes {@link #initialProgram}. Guarded by {@link #lock}. */
+    private final List<Program> owned = new ArrayList<>();
+
+    /** The program selected for the in-flight request; set/cleared by {@link #dispatch} under {@link #lock}. */
+    private Program active;
+
+    /** Serializes the whole request lifecycle (see class doc). Reentrant for nested runWrite. */
     private final ReentrantLock lock = new ReentrantLock();
 
-    public RpcContext(Program program, TaskMonitor monitor) {
-        this.program = program;
+    public RpcContext(Project project, Program initialProgram, TaskMonitor monitor) {
+        this.project = project;
+        this.initialProgram = initialProgram;
         this.monitor = monitor;
+        if (initialProgram != null) {
+            open.put(normalize(initialProgram.getDomainFile().getPathname()), initialProgram);
+        }
     }
 
+    /** The program selected for the current request; throws if none is active. */
     public Program program() {
-        return program;
+        return active();
+    }
+
+    private Program active() {
+        Program p = active;
+        if (p == null) {
+            throw new IllegalStateException("No program is selected for this request.");
+        }
+        return p;
     }
 
     public TaskMonitor monitor() {
@@ -64,30 +104,46 @@ public class RpcContext {
     }
 
     // ---------------------------------------------------------------------------
-    // Dispatch: checkout -> execute -> (if mutating) checkin, all under one lock.
+    // Dispatch: select program -> checkout -> execute -> (if mutating) checkin,
+    // all under one lock.
     // ---------------------------------------------------------------------------
 
     /**
      * Run a procedure with exclusive program access. Holds {@link #lock} across the
-     * whole sequence so checkout, mutation and check-in cannot interleave with other
-     * clients. Per policy: every procedure checks the file out first; every successful
-     * mutating procedure is checked in immediately and the call fails if the push fails.
+     * whole sequence so program selection, checkout, mutation and check-in cannot
+     * interleave with other clients. For program-related procedures the mandatory
+     * {@code "program"} field selects the target; per policy the file is checked out
+     * first and every successful mutating procedure is checked in immediately (the call
+     * fails if the push fails).
      */
     public RpcResponse dispatch(RpcProcedure procedure, JsonObject request) throws Exception {
         lock.lock();
         try {
-            RpcResponse checkoutError = ensureCheckout();
-            if (checkoutError != null) {
-                return checkoutError;
-            }
-            RpcResponse response = procedure.execute(request, this);
-            if (response != null && response.success && procedure.mutates()) {
-                RpcResponse checkinError = checkin(procedureOf(request));
-                if (checkinError != null) {
-                    return checkinError; // push failed -> the whole call fails
+            Program program = null;
+            if (procedure.needsProgram()) {
+                String path = optStr(request, "program");
+                if (path == null || path.isEmpty()) {
+                    return RpcResponse.error("Missing required field 'program'.");
+                }
+                try {
+                    program = openProgram(path); // checks the file out before opening it
+                } catch (Exception e) {
+                    return RpcResponse.error(message(e));
                 }
             }
-            return response;
+            active = program;
+            try {
+                RpcResponse response = procedure.execute(request, this);
+                if (response != null && response.success && procedure.mutates() && program != null) {
+                    RpcResponse checkinError = checkin(program, procedureOf(request));
+                    if (checkinError != null) {
+                        return checkinError; // push failed -> the whole call fails
+                    }
+                }
+                return response;
+            } finally {
+                active = null;
+            }
         } finally {
             lock.unlock();
         }
@@ -101,32 +157,111 @@ public class RpcContext {
         }
     }
 
-    /** Ensure the file is checked out before any procedure runs. Idempotent. */
-    private RpcResponse ensureCheckout() {
-        DomainFile df = program.getDomainFile();
-        if (!df.isVersioned() || df.isCheckedOut()) {
-            return null; // non-versioned local file, or already checked out: nothing to do
+    // ---------------------------------------------------------------------------
+    // Program resolution (project-level). Called only under {@link #lock}.
+    // ---------------------------------------------------------------------------
+
+    /**
+     * Open (and cache) the program at {@code path}. {@code path} is a project path
+     * (e.g. {@code "/Mapeditor.exe"}); a bare name with no {@code '/'} is also accepted
+     * and resolved by a recursive name search. Returns the cached instance on repeat
+     * calls. Throws {@link IllegalArgumentException} if no such program exists.
+     */
+    private Program openProgram(String path) throws Exception {
+        if (project == null) {
+            throw new IllegalArgumentException(
+                "No project is available; cannot select program '" + path + "'.");
         }
-        if (df.isReadOnly()) {
-            return RpcResponse.error(
-                "Read-only session; cannot check out. Launch the server in commit mode.");
+        DomainFile df = resolveFile(path);
+        if (df == null) {
+            throw new IllegalArgumentException("No program found for '" + path + "'.");
         }
-        try {
-            if (!df.checkout(true, monitor)) { // exclusive checkout
-                return RpcResponse.error("Failed to check out (already held by another user?).");
+        String key = normalize(df.getPathname());
+        Program cached = open.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        if (!Program.class.isAssignableFrom(df.getDomainObjectClass())) {
+            throw new IllegalArgumentException("'" + df.getPathname() + "' is not a Program.");
+        }
+        // Check out BEFORE opening: a versioned file opened while not checked out yields a
+        // read-only in-memory instance whose check-in would fail. On a read-only session we
+        // skip checkout — read-only procedures still work; mutating ones fail later at check-in.
+        if (df.isVersioned() && !df.isCheckedOut() && !df.isReadOnly()) {
+            if (!df.checkout(true, monitor)) { // exclusive
+                throw new IllegalArgumentException(
+                    "Failed to check out '" + df.getPathname() + "' (held by another user?).");
             }
-            return null;
-        } catch (Exception e) {
-            return RpcResponse.error("Checkout failed: " + message(e));
+        }
+        // okToUpgrade=true (open older DB versions), okToRecover=false. We are the consumer.
+        Program p = (Program) df.getDomainObject(this, true, false, monitor);
+        open.put(key, p);
+        owned.add(p);
+        return p;
+    }
+
+    /** Resolve a project path or bare program name to a DomainFile, or null. */
+    private DomainFile resolveFile(String path) {
+        DomainFile df = project.getProjectData().getFile(normalize(path));
+        if (df != null) {
+            return df;
+        }
+        // Fall back to a recursive search by simple name (no folder qualifier given).
+        String name = path.contains("/") ? path.substring(path.lastIndexOf('/') + 1) : path;
+        return findByName(project.getProjectData().getRootFolder(), name);
+    }
+
+    private DomainFile findByName(DomainFolder folder, String name) {
+        for (DomainFile f : folder.getFiles()) {
+            if (f.getName().equals(name)) {
+                return f;
+            }
+        }
+        for (DomainFolder sub : folder.getFolders()) {
+            DomainFile f = findByName(sub, name);
+            if (f != null) {
+                return f;
+            }
+        }
+        return null;
+    }
+
+    private static String normalize(String path) {
+        String t = path.trim();
+        return t.startsWith("/") ? t : "/" + t;
+    }
+
+    /** Release every program we opened (not the headless-owned one). Call on shutdown. */
+    public void closeAll() {
+        lock.lock();
+        try {
+            for (Program p : owned) {
+                try {
+                    p.release(this);
+                } catch (Exception ignored) {
+                    // best-effort teardown
+                }
+            }
+            owned.clear();
+            open.clear();
+            if (initialProgram != null) {
+                open.put(normalize(initialProgram.getDomainFile().getPathname()), initialProgram);
+            }
+        } finally {
+            lock.unlock();
         }
     }
 
+    // ---------------------------------------------------------------------------
+    // Checkout / check-in (per resolved program). Called only under {@link #lock}.
+    // ---------------------------------------------------------------------------
+
     /**
-     * Save + check the file in to the shared server so the change is immediately
-     * visible to other clients. Returns null on success (or nothing to push) and an
-     * error response if the push fails (per policy the whole call then fails).
+     * Save + check {@code program}'s file in to the shared server so the change is
+     * immediately visible to other clients. Returns null on success (or nothing to
+     * push) and an error response if the push fails (per policy the whole call fails).
      */
-    private RpcResponse checkin(String procedure) {
+    private RpcResponse checkin(Program program, String procedure) {
         program.flushEvents();
         DomainFile df = program.getDomainFile();
         if (df.isReadOnly()) {
@@ -162,7 +297,7 @@ public class RpcContext {
     }
 
     // ---------------------------------------------------------------------------
-    // Command execution helpers
+    // Command execution helpers (operate on the active program)
     // ---------------------------------------------------------------------------
 
     /** A unit of program mutation that may throw. */
@@ -171,11 +306,12 @@ public class RpcContext {
     }
 
     /**
-     * Run {@code body} inside a program transaction (committed iff it returns
-     * normally; otherwise rolled back and rethrown). Always called while holding
-     * {@link #lock}.
+     * Run {@code body} inside a transaction on the active program (committed iff it
+     * returns normally; otherwise rolled back and rethrown). Always called while
+     * holding {@link #lock}.
      */
     public void runWrite(String description, Write body) throws Exception {
+        Program program = active();
         int txId = program.startTransaction(description);
         boolean committed = false;
         try {
@@ -187,10 +323,11 @@ public class RpcContext {
     }
 
     /**
-     * Apply a Ghidra {@link Command} to the program inside a transaction and map the
-     * result to a response. Background commands get the real monitor.
+     * Apply a Ghidra {@link Command} to the active program inside a transaction and map
+     * the result to a response. Background commands get the real monitor.
      */
     public RpcResponse applyCommand(Command<Program> cmd) throws Exception {
+        Program program = active();
         boolean[] ok = {false};
         runWrite(cmd.getName(), () -> {
             if (cmd instanceof BackgroundCommand) {
@@ -209,7 +346,8 @@ public class RpcContext {
     }
 
     // ---------------------------------------------------------------------------
-    // Resolvers (throw IllegalArgumentException -> turned into error responses)
+    // Resolvers (operate on the active program; throw IllegalArgumentException ->
+    // turned into error responses)
     // ---------------------------------------------------------------------------
 
     /** Parse {@code "0x401000"}, {@code "401000"} or {@code "ram:401000"}; null if invalid. */
@@ -227,7 +365,7 @@ public class RpcContext {
 
     private Address tryAddress(String s) {
         try {
-            return program.getAddressFactory().getAddress(s);
+            return active().getAddressFactory().getAddress(s);
         } catch (Exception e) {
             return null;
         }
@@ -263,7 +401,7 @@ public class RpcContext {
     }
 
     public Function requireFunctionAt(Address entry) {
-        Function f = program.getFunctionManager().getFunctionAt(entry);
+        Function f = active().getFunctionManager().getFunctionAt(entry);
         if (f == null) {
             throw new IllegalArgumentException("No function at " + entry + ".");
         }
@@ -279,7 +417,7 @@ public class RpcContext {
         if (name == null || name.trim().isEmpty()) {
             return null;
         }
-        DataTypeManager dtm = program.getDataTypeManager();
+        DataTypeManager dtm = active().getDataTypeManager();
         DataType dt = new DataTypeParser(dtm, dtm, null, AllowedDataTypes.ALL).parse(name);
         if (dt == null) {
             throw new IllegalArgumentException("Unknown data type: " + name);
@@ -298,7 +436,7 @@ public class RpcContext {
         if (name == null) {
             throw new IllegalArgumentException("Missing required register.");
         }
-        Register r = program.getRegister(name.trim());
+        Register r = active().getRegister(name.trim());
         if (r == null) {
             throw new IllegalArgumentException("Unknown register: " + name);
         }
@@ -342,7 +480,7 @@ public class RpcContext {
             throw new IllegalArgumentException("Missing required signature text.");
         }
         FunctionSignature sig =
-            new FunctionSignatureParser(program.getDataTypeManager(), null).parse(null, text);
+            new FunctionSignatureParser(active().getDataTypeManager(), null).parse(null, text);
         if (sig == null) {
             throw new IllegalArgumentException("Could not parse signature: " + text);
         }
@@ -354,10 +492,10 @@ public class RpcContext {
         return new ServiceProviderStub();
     }
 
-    /** A decompiler interface opened on this program. Caller MUST dispose() it. */
+    /** A decompiler interface opened on the active program. Caller MUST dispose() it. */
     public DecompInterface openedDecompiler() {
         DecompInterface di = new DecompInterface();
-        di.openProgram(program);
+        di.openProgram(active());
         return di;
     }
 

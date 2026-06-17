@@ -13,6 +13,7 @@ the push fails.
 ```typescript
 interface CreateFunctionDefinitionCmdRequest {
   procedure: "CreateFunctionDefinitionCmd";
+  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address: string;              // hex, e.g. "0x401000"
 }
 ```
@@ -22,5 +23,5 @@ interface CreateFunctionDefinitionCmdRequest {
 
 ## Example
 ```json
-{"procedure": "CreateFunctionDefinitionCmd", "address": "0x401000"}
+{"procedure": "CreateFunctionDefinitionCmd", "program": "/Mapeditor.exe", "address": "0x401000"}
 ```

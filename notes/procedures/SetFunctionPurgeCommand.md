@@ -13,6 +13,7 @@ the push fails.
 ```typescript
 interface SetFunctionPurgeCommandRequest {
   procedure: "SetFunctionPurgeCommand";
+  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address: string;              // hex, e.g. "0x401000"
   purge?: number;               // default 0
 }
@@ -23,5 +24,5 @@ interface SetFunctionPurgeCommandRequest {
 
 ## Example
 ```json
-{"procedure": "SetFunctionPurgeCommand", "address": "0x401000", "purge": 8}
+{"procedure": "SetFunctionPurgeCommand", "program": "/Mapeditor.exe", "address": "0x401000", "purge": 8}
 ```

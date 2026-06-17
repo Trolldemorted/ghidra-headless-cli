@@ -13,6 +13,7 @@ the push fails.
 ```typescript
 interface SetReturnDataTypeCmdRequest {
   procedure: "SetReturnDataTypeCmd";
+  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address: string;              // hex, e.g. "0x401000"
   dataType: string;             // e.g. "int", "void *"
   source?: SourceType;          // default "USER_DEFINED"
@@ -24,5 +25,5 @@ interface SetReturnDataTypeCmdRequest {
 
 ## Example
 ```json
-{"procedure": "SetReturnDataTypeCmd", "address": "0x401000", "dataType": "int"}
+{"procedure": "SetReturnDataTypeCmd", "program": "/Mapeditor.exe", "address": "0x401000", "dataType": "int"}
 ```

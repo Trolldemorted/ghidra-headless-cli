@@ -13,6 +13,7 @@ the push fails.
 ```typescript
 interface AddMemoryVarCmdRequest {
   procedure: "AddMemoryVarCmd";
+  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   memoryAddress: string;        // variable storage address
   address: string;              // hex, e.g. "0x401000"
   name?: string;
@@ -26,5 +27,5 @@ interface AddMemoryVarCmdRequest {
 
 ## Example
 ```json
-{"procedure": "AddMemoryVarCmd", "memoryAddress": "0x40a000", "address": "0x401000", "name": "g", "dataType": "int"}
+{"procedure": "AddMemoryVarCmd", "program": "/Mapeditor.exe", "memoryAddress": "0x40a000", "address": "0x401000", "name": "g", "dataType": "int"}
 ```
