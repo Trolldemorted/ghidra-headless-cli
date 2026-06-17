@@ -1,1 +1,4 @@
 /ghidra_*
+/.cargo
+/.rustup
+__pycache__
