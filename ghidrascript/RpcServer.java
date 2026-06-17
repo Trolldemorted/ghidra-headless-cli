@@ -262,9 +262,10 @@ public class RpcServer extends GhidraScript {
         register("DecompilerSwitchAnalysisCmd", new procedures.ghidra.app.cmd.function.DecompilerSwitchAnalysisCmdHandler());
         register("DecompilerParallelConventionAnalysisCmd", new procedures.ghidra.app.cmd.function.DecompilerParallelConventionAnalysisCmdHandler());
 
-        // ghidra.app.decompiler.flatapi (different package -> not found by the
-        // procedures.ghidra.app.cmd.function reflection fallback; must be pre-registered).
+        // Procedures outside procedures.ghidra.app.cmd.function are not found by the
+        // reflection fallback, so they must be pre-registered here.
         register("FlatDecompilerAPI", new procedures.ghidra.app.decompiler.flatapi.FlatDecompilerAPIHandler());
+        register("ProgramLoader", new procedures.ghidra.app.util.importer.ProgramLoaderHandler());
     }
 
     private void register(String procedure, RpcProcedure handler) {

@@ -102,6 +102,11 @@ public class RpcContext {
         return monitor;
     }
 
+    /** The project the server is bound to; for project-level procedures (e.g. import). */
+    public Project project() {
+        return project;
+    }
+
     // ---------------------------------------------------------------------------
     // Dispatch: select program -> checkout -> execute -> (if mutating) checkin,
     // all under one lock.

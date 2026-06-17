@@ -1,0 +1,17 @@
+# Docker build files themselves
+Dockerfile
+.dockerignore
+
+# VCS / editor cruft
+.git
+.gitignore
+*.swp
+*~
+
+# Build/cache artifacts that must never leak into the image
+bin/
+build/
+**/*.class
+osgi/
+felixcache/
+compiled-bundles/

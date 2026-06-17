@@ -14,10 +14,13 @@ access to the analyzed program and the full Ghidra API.
 | `/workdir/ghidrascript/procedures/RpcContext.java` | shared program access: lock, checkout/checkin, `applyCommand`, resolvers |
 | `/workdir/ghidrascript/procedures/RpcResponse.java` | response POJO (`success`, `error`) |
 | `/workdir/ghidrascript/procedures/ghidra/app/cmd/function/*Handler.java` | one handler per command (mirrors Ghidra's package) |
+| `/workdir/ghidrascript/procedures/ghidra/app/decompiler/flatapi/FlatDecompilerAPIHandler.java` | decompile-to-C procedure |
+| `/workdir/ghidrascript/procedures/ghidra/app/util/importer/ProgramLoaderHandler.java` | import a new program from bytes in the request |
 | `/workdir/ghidrascript/ghidra-headless.sh` | headless launcher (env-driven) |
+| `/workdir/ghidrascript/Dockerfile`, `.dockerignore` | package Ghidra + scripts into a container image (build context = this dir) |
 | `/workdir/testscripts/rpc_client.py` | ndjson test client |
 | `/workdir/testscripts/VerifyFnCmd.java` | read-only persistence checker |
-| `/workdir/notes/procedures/<Cmd>.md` | one doc per command, request as a TypeScript interface |
+| `/workdir/notes/procedures/<Cmd>.md` | one doc per procedure, request as a TypeScript interface |
 
 Handlers live in package `procedures.ghidra.app.cmd.function`, named `<GhidraCmd>Handler`
 (e.g. `SetFunctionNameCmdHandler`), mirroring the original Ghidra package below
@@ -59,8 +62,8 @@ in `RpcContext` keyed by canonical path. The resolved program becomes the reques
 **active program**; all resolvers (`requireAddress`, `requireFunctionAt`, `applyCommand`,
 ...) operate on it, so handlers never name the program themselves. On shutdown
 `closeAll()` releases every program the server opened. Procedures that act on the whole
-project rather than one program (e.g. a future binary-import RPC) set `needsProgram()`
-false and take no `"program"` field.
+project rather than one program (e.g. `ProgramLoader`) set `needsProgram()` false and take
+no `"program"` field; `RpcContext.project()` gives them the project.
 
 There is no seeded/launcher program: `analyzeHeadless` is run as a **`-preScript` with
 no `-process`** (a pre-script runs once even when no program is processed; a post-script
@@ -106,13 +109,20 @@ Each handler: parse JSON -> resolve args via `RpcContext` helpers
 monitor) and maps the boolean result + `getStatusMsg()` to the response. Bad input
 throws `IllegalArgumentException`, surfaced as the error message.
 
-## Procedures (wrapped Ghidra commands)
+## Procedures (38 total)
 
 All non-deprecated, concrete `Command`s in `ghidra.app.cmd.function` (36). The four
 **deprecated** ones are intentionally excluded: `AddParameterCommand`,
 `AddRegisterParameterCommand`, `AddStackParameterCommand`, `AddMemoryParameterCommand`
-(use `UpdateFunctionCommand` instead). Per-command request specs (TypeScript
-interfaces) live in `/workdir/notes/procedures/<Cmd>.md`.
+(use `UpdateFunctionCommand` instead). Plus two procedures outside that package
+(pre-registered in `RpcServer`, since the reflection fallback only covers
+`ghidra.app.cmd.function`):
+* `FlatDecompilerAPI` — decompile a function to C (program-level, read-only).
+* `ProgramLoader` — import a new program from base64 bytes in the request (PROJECT-level:
+  `needsProgram()` false, no `"program"` field; saves + adds to version control itself).
+  Wraps the `ProgramLoader` builder (the older `AutoImporter` is deprecated).
+Per-procedure request specs (TypeScript interfaces) live in
+`/workdir/notes/procedures/<Cmd>.md`.
 
 Notes on a few that need more than plain values:
 * `ApplyFunctionSignatureCmd` / `UpdateFunctionCommand` — signature/return/params are
@@ -150,6 +160,21 @@ GHIDRA_ADDRESS=ghidra.stronk.pw GHIDRA_PROJECT=P3 GHIDRA_USER=claude \
 GHIDRA_PASSWORD=... RPC_PORT=18080 ./ghidra-headless.sh
 ```
 
+## Container image
+
+`ghidrascript/Dockerfile` + `.dockerignore` package Ghidra + JDK 21 + these scripts into
+one image that runs the server. Build **context = `ghidrascript/`** (so `.dockerignore`
+applies and the scripts are the only `COPY` source); Ghidra is downloaded in the image
+(pinned `12.1.2_PUBLIC_20260605`, overridable via `--build-arg GHIDRA_URL=...` /
+`GHIDRA_SHA256=...`). The remote server target + credentials are supplied at run time.
+
+```bash
+docker build -t ghidra-rpc /workdir/ghidrascript
+docker run --rm -p 18000:18000 \
+  -e GHIDRA_ADDRESS=ghidra.stronk.pw:13100 -e GHIDRA_PROJECT=P3 \
+  -e GHIDRA_USER=claude -e GHIDRA_PASSWORD=... ghidra-rpc
+```
+
 ## Verification
 
 Compiles cleanly against Ghidra 12.1.2 jars (`RpcServer.java` + all 36 handlers, 0
@@ -164,6 +189,22 @@ errors). Live-tested against `P3/Mapeditor.exe`:
   per-command check-in pushed each change;
 * error paths: missing field, no-such-procedure, and an unparseable signature
   (`"Can't find function name"`) all returned clean errors with the connection intact.
+
+**ProgramLoader (verified live, 2026-06-17, P3):** uploaded a real ELF as base64 →
+imported to `/imports/rpc_pl_test.bin` with `format="Executable and Linking Format (ELF)"`,
+added to version control (v1), confirmed by an independent JVM. A name collision
+auto-uniquified to `…/rpc_pl_test.bin.0` (no failure). Error paths clean: missing `bytes`,
+and un-loadable content → `"No load spec found"`. Test imports deleted (`CleanImports.java`);
+P3 back to just `Mapeditor.exe`.
+
+No deprecated Ghidra APIs are used: all 42 sources compile clean under
+`javac -Xlint:deprecation`. The original `AutoImporter` was deprecated, so this wraps the
+`ProgramLoader` builder instead. Two gotchas: `ProgramLoader.builder().load(Object)` is the
+deprecated overload — use the no-arg `load()`; and `Loaded.getDomainObject()` (no-arg) is
+deprecated-for-removal — use `Loaded.apply(Consumer<Program>)`. The `source(byte[])`
+overload leaves the `ByteProvider` name null, which NPEs filename-sniffing loaders
+(GZF/GDT/Tenet), so a named `ByteArrayProvider(name, bytes)` is passed via
+`source(ByteProvider)` (and `name()` sets a clean program name — no byte-range suffix).
 
 **Zero-program launch (verified live, 2026-06-17, P3):** server started with the
 launcher (`-preScript`, no `-process`, writeable project) reporting `0 programs open`.
