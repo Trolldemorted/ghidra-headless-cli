@@ -266,6 +266,7 @@ public class RpcServer extends GhidraScript {
         // reflection fallback, so they must be pre-registered here.
         register("FlatDecompilerAPI", new procedures.ghidra.app.decompiler.flatapi.FlatDecompilerAPIHandler());
         register("ProgramLoader", new procedures.ghidra.app.util.importer.ProgramLoaderHandler());
+        register("Analyze", new procedures.ghidra.app.plugin.core.analysis.AnalyzeHandler());
     }
 
     private void register(String procedure, RpcProcedure handler) {

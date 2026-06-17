@@ -16,6 +16,7 @@ access to the analyzed program and the full Ghidra API.
 | `/workdir/ghidrascript/procedures/ghidra/app/cmd/function/*Handler.java` | one handler per command (mirrors Ghidra's package) |
 | `/workdir/ghidrascript/procedures/ghidra/app/decompiler/flatapi/FlatDecompilerAPIHandler.java` | decompile-to-C procedure |
 | `/workdir/ghidrascript/procedures/ghidra/app/util/importer/ProgramLoaderHandler.java` | import a new program from bytes in the request |
+| `/workdir/ghidrascript/procedures/ghidra/app/plugin/core/analysis/AnalyzeHandler.java` | run full auto-analysis over a program |
 | `/workdir/ghidrascript/ghidra-headless.sh` | headless launcher (env-driven) |
 | `/workdir/ghidrascript/Dockerfile`, `.dockerignore` | package Ghidra + scripts into a container image (build context = this dir) |
 | `/workdir/testscripts/rpc_client.py` | ndjson test client |
@@ -109,18 +110,23 @@ Each handler: parse JSON -> resolve args via `RpcContext` helpers
 monitor) and maps the boolean result + `getStatusMsg()` to the response. Bad input
 throws `IllegalArgumentException`, surfaced as the error message.
 
-## Procedures (38 total)
+## Procedures (39 total)
 
 All non-deprecated, concrete `Command`s in `ghidra.app.cmd.function` (36). The four
 **deprecated** ones are intentionally excluded: `AddParameterCommand`,
 `AddRegisterParameterCommand`, `AddStackParameterCommand`, `AddMemoryParameterCommand`
-(use `UpdateFunctionCommand` instead). Plus two procedures outside that package
+(use `UpdateFunctionCommand` instead). Plus three procedures outside that package
 (pre-registered in `RpcServer`, since the reflection fallback only covers
 `ghidra.app.cmd.function`):
 * `FlatDecompilerAPI` — decompile a function to C (program-level, read-only).
 * `ProgramLoader` — import a new program from base64 bytes in the request (PROJECT-level:
   `needsProgram()` false, no `"program"` field; saves + adds to version control itself).
   Wraps the `ProgramLoader` builder (the older `AutoImporter` is deprecated).
+* `Analyze` — run full auto-analysis over a program (program-level, mutating). Mirrors the
+  headless analyzer: `AutoAnalysisManager.initializeOptions()` → `reAnalyzeAll(null)` →
+  `startAnalysis(monitor)` (blocks), then marks the program analyzed. Imports land RAW;
+  this recovers functions/disassembly. Holds an EXCLUSIVE checkout for the whole (possibly
+  long) analysis. Optional `force` (default true) re-analyzes even if already analyzed.
 Per-procedure request specs (TypeScript interfaces) live in
 `/workdir/notes/procedures/<Cmd>.md`.
 
@@ -207,7 +213,18 @@ auto-uniquified to `…/rpc_pl_test.bin.0` (no failure). Error paths clean: miss
 and un-loadable content → `"No load spec found"`. Test imports deleted (`CleanImports.java`);
 P3 back to just `Mapeditor.exe`.
 
-No deprecated Ghidra APIs are used: all 42 sources compile clean under
+**Analyze (verified live, 2026-06-17, P3):** imported `/usr/bin/true` raw via `ProgramLoader`,
+then `Analyze` (`force=true`) → `analyzed=true, wasAnalyzed=false, functionCount=134`
+(raw import had none) and the new analyzed version checked in. A second call (`force=false`)
+was a no-op (`analyzed=false, wasAnalyzed=true`), confirming the skip path and the persisted
+analyzed flag. Test import deleted; P3 back to just `Mapeditor.exe`. Implementation mirrors
+`HeadlessAnalyzer`: `initializeOptions()` → `reAnalyzeAll(null)` → `startAnalysis(monitor)`
+(synchronous, blocks the request thread) → `GhidraProgramUtilities.markProgramAnalyzed`, all
+in one transaction. Note: the launcher's default `-noanalysis` does NOT disable this — that
+flag only governs HeadlessAnalyzer's own pass over *processed* programs; `AutoAnalysisManager`
+stays enabled and we drive it explicitly.
+
+No deprecated Ghidra APIs are used: all 43 sources compile clean under
 `javac -Xlint:deprecation`. The original `AutoImporter` was deprecated, so this wraps the
 `ProgramLoader` builder instead. Two gotchas: `ProgramLoader.builder().load(Object)` is the
 deprecated overload — use the no-arg `load()`; and `Loaded.getDomainObject()` (no-arg) is
