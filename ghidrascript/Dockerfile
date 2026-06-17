@@ -9,7 +9,7 @@ ARG GHIDRA_URL=https://github.com/NationalSecurityAgency/ghidra/releases/downloa
 ARG GHIDRA_SHA256=
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl unzip ca-certificates \
+ && apt-get install -y --no-install-recommends curl unzip ca-certificates tini \
  && rm -rf /var/lib/apt/lists/* \
  && curl -fSL "$GHIDRA_URL" -o /tmp/ghidra.zip \
  && if [ -n "$GHIDRA_SHA256" ]; then echo "$GHIDRA_SHA256  /tmp/ghidra.zip" | sha256sum -c -; fi \
@@ -29,4 +29,9 @@ EXPOSE 18000
 # Server target + credentials are supplied at run time, e.g.:
 #   docker run -e GHIDRA_ADDRESS=host:13100 -e GHIDRA_PROJECT=P3 \
 #              -e GHIDRA_USER=claude -e GHIDRA_PASSWORD=... -p 18000:18000 <image>
-ENTRYPOINT ["bash", "/opt/ghidrascript/ghidra-headless.sh"]
+#
+# tini as PID 1 reaps zombies and, crucially, `-g` forwards SIGTERM to the whole process
+# GROUP: Ghidra's launcher chain (analyzeHeadless -> launch.sh -> java) never execs, so the
+# JVM is a grandchild that a bare bash/tini would not signal — `docker stop` would then
+# SIGKILL after the grace period instead of stopping the JVM cleanly.
+ENTRYPOINT ["/usr/bin/tini", "-g", "--", "bash", "/opt/ghidrascript/ghidra-headless.sh"]

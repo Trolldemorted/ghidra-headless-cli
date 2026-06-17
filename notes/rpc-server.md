@@ -168,6 +168,16 @@ applies and the scripts are the only `COPY` source); Ghidra is downloaded in the
 (pinned `12.1.2_PUBLIC_20260605`, overridable via `--build-arg GHIDRA_URL=...` /
 `GHIDRA_SHA256=...`). The remote server target + credentials are supplied at run time.
 
+**Signal handling:** PID 1 is `tini -g` (`ENTRYPOINT ["/usr/bin/tini","-g","--","bash",…]`).
+Ghidra's launcher chain never execs (`analyzeHeadless` → `launch.sh` → `java`, each a child),
+so the JVM is a great-grandchild of the entrypoint. A bare `bash` entrypoint would NOT
+forward `SIGTERM` to it (verified: SIGTERM to the entrypoint bash leaves the JVM orphaned and
+running — and as PID 1 bash ignores SIGTERM outright), so `docker stop` would burn the grace
+period then SIGKILL. `tini -g` forwards the signal to the whole process group, which the JVM
+shares, so it exits cleanly (verified: a group-directed SIGTERM tears down the entire tree
+including the JVM). Plain `docker run --init` is NOT enough — it signals only tini's direct
+child, not the group.
+
 ```bash
 docker build -t ghidra-rpc /workdir/ghidrascript
 docker run --rm -p 18000:18000 \
