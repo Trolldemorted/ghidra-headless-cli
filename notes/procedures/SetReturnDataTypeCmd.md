@@ -1,0 +1,28 @@
+# SetReturnDataTypeCmd
+
+Set the return data type of the function at `address`.
+
+Wraps Ghidra's `ghidra.app.cmd.function.SetReturnDataTypeCmd`. Mutating: the file is checked out
+before the call and checked in immediately after; the call fails with an error if
+the push fails.
+
+<!-- Shared types: SourceType = "USER_DEFINED" | "ANALYSIS" | "IMPORTED" | "DEFAULT";
+     AddressRange = { start: string; end?: string }  (hex addresses) -->
+
+## Request
+```typescript
+interface SetReturnDataTypeCmdRequest {
+  procedure: "SetReturnDataTypeCmd";
+  address: string;              // hex, e.g. "0x401000"
+  dataType: string;             // e.g. "int", "void *"
+  source?: SourceType;          // default "USER_DEFINED"
+}
+```
+
+## Response
+`{ "success": true }`, or `{ "success": false, "error": "<message>" }`.
+
+## Example
+```json
+{"procedure": "SetReturnDataTypeCmd", "address": "0x401000", "dataType": "int"}
+```
