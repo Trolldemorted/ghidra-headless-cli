@@ -60,11 +60,13 @@ enum Command {
         #[command(subcommand)]
         cmd: commands::comment::Cmd,
     },
-    /// Data-type management: list / show / create / edit / delete / apply
+    /// Data-type management: list / show / create / replace / edit / delete / apply
     Datatype {
         #[command(subcommand)]
         cmd: commands::datatype::Cmd,
     },
+    /// Cross-references: list references TO a function / symbol / address
+    Xrefs(commands::xrefs::Cmd),
 }
 
 fn main() {
@@ -89,6 +91,7 @@ fn main() {
         Command::File { cmd } => commands::file::run(cmd, &client),
         Command::Comment { cmd } => commands::comment::run(cmd, &client),
         Command::Datatype { cmd } => commands::datatype::run(cmd, &client),
+        Command::Xrefs(cmd) => commands::xrefs::run(cmd, &client),
     };
 
     if result.is_err() {

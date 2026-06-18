@@ -83,6 +83,44 @@ pub enum Cmd {
         #[arg(long)]
         enum_size: Option<i64>,
     },
+    /// Create or REPLACE a struct / union / enum / typedef (silently overwrites
+    /// on name collision; references preserved). Same input shape as `create`.
+    Replace {
+        /// Target file project path
+        #[arg(long = "file", value_name = "FILE")]
+        program: String,
+        /// One of: struct, union, enum, typedef [default: required unless --definition is given]
+        #[arg(long)]
+        kind: Option<String>,
+        /// New type name [default: required unless --definition is given;
+        /// when --definition is given the snippet's embedded name is the
+        /// type's name and --name is ignored]
+        #[arg(long)]
+        name: Option<String>,
+        /// Target category path [default: /]
+        #[arg(long)]
+        category: Option<String>,
+        /// Full definition as a C snippet: "struct Foo { int x; char *name; };".
+        /// When given, --kind and --name become optional (the parsed type's
+        /// name is used) and --fields/--entries/--base are ignored. Anonymous
+        /// snippets ("struct { int x; };") return an error — the snippet must
+        /// declare a name. Existing types with the same name are REPLACED in
+        /// place (references preserved).
+        #[arg(long)]
+        definition: Option<String>,
+        /// Fields as a JSON array (struct/union): [{"name":"x","type":"int"}]
+        #[arg(long)]
+        fields: Option<String>,
+        /// Entries as a JSON array (enum): [{"name":"RED","value":0}]
+        #[arg(long)]
+        entries: Option<String>,
+        /// Base type as a C-syntax expression (typedef): "int", "char *", "byte[16]"
+        #[arg(long)]
+        base: Option<String>,
+        /// Enum byte width [default: 4]
+        #[arg(long)]
+        enum_size: Option<i64>,
+    },
     /// Edit an existing data type (batched: rename/move/addFields/replaceFields/addEntries)
     Edit {
         /// Target file project path
@@ -183,39 +221,20 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             entries,
             base,
             enum_size,
-        } => {
-            // --definition wins over the explicit JSON arrays: when both are
-            // supplied the C snippet is authoritative (lets a user write the
-            // definition once and not have to mirror it as JSON). --kind and
-            // --name are optional on this path; the snippet's embedded kind
-            // and name are used.
-            let (kind, name, fields_json, entries_json, base) = if definition.is_some() {
-                (kind, None, None, None, None)
-            } else {
-                let k = kind
-                    .ok_or_else(|| common::log_arg_err("--kind is required (or pass --definition)".to_string()))?;
-                let n = name
-                    .ok_or_else(|| common::log_arg_err("--name is required (or pass --definition)".to_string()))?;
-                let f = parse_opt_json("fields", fields)?;
-                let e = parse_opt_json("entries", entries)?;
-                (Some(k), Some(n), f, e, base)
-            };
-            let response = client.invoke(
-                Req::new("CreateDataType")
-                    .str("file", program)
-                    .opt_str("kind", kind)
-                    .opt_str("name", name)
-                    .opt_str("category", category)
-                    .opt_str("definition", definition)
-                    .opt_json("fields", fields_json)
-                    .opt_json("entries", entries_json)
-                    .opt_str("base", base)
-                    .opt_int("enumSize", enum_size)
-                    .build(),
-            )?;
-            print_show(&response);
-            Ok(())
-        }
+        } => run_create_or_replace("CreateDataType", program, kind, name, category,
+            definition, fields, entries, base, enum_size, client),
+        Cmd::Replace {
+            program,
+            kind,
+            name,
+            category,
+            definition,
+            fields,
+            entries,
+            base,
+            enum_size,
+        } => run_create_or_replace("ReplaceDataType", program, kind, name, category,
+            definition, fields, entries, base, enum_size, client),
         Cmd::Edit {
             program,
             path,
@@ -309,6 +328,55 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
 
 /// Parse a user-supplied JSON literal (or None) and emit a clear error on
 /// malformed input. Used for the `--fields` and `--entries` arrays.
+/// Shared dispatch for `create` and `replace`. The only difference is the
+/// server-side procedure name: `CreateDataType` fails on name collision;
+/// `ReplaceDataType` uses `REPLACE_HANDLER` to silently overwrite in place.
+fn run_create_or_replace(
+    procedure: &'static str,
+    program: String,
+    kind: Option<String>,
+    name: Option<String>,
+    category: Option<String>,
+    definition: Option<String>,
+    fields: Option<String>,
+    entries: Option<String>,
+    base: Option<String>,
+    enum_size: Option<i64>,
+    client: &Client,
+) -> Result<(), ()> {
+    // --definition wins over the explicit JSON arrays: when both are
+    // supplied the C snippet is authoritative (lets a user write the
+    // definition once and not have to mirror it as JSON). --kind and
+    // --name are optional on this path; the snippet's embedded kind
+    // and name are used.
+    let (kind, name, fields_json, entries_json, base) = if definition.is_some() {
+        (kind, None, None, None, None)
+    } else {
+        let k = kind
+            .ok_or_else(|| common::log_arg_err("--kind is required (or pass --definition)".to_string()))?;
+        let n = name
+            .ok_or_else(|| common::log_arg_err("--name is required (or pass --definition)".to_string()))?;
+        let f = parse_opt_json("fields", fields)?;
+        let e = parse_opt_json("entries", entries)?;
+        (Some(k), Some(n), f, e, base)
+    };
+    let response = client.invoke(
+        Req::new(procedure)
+            .str("file", program)
+            .opt_str("kind", kind)
+            .opt_str("name", name)
+            .opt_str("category", category)
+            .opt_str("definition", definition)
+            .opt_json("fields", fields_json)
+            .opt_json("entries", entries_json)
+            .opt_str("base", base)
+            .opt_int("enumSize", enum_size)
+            .build(),
+    )?;
+    print_show(&response);
+    Ok(())
+}
+
 fn parse_opt_json(name: &str, value: Option<String>) -> Result<Option<Json>, ()> {
     match value {
         None => Ok(None),
