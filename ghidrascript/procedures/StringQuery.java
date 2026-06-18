@@ -35,6 +35,22 @@ public final class StringQuery {
         return s -> s.contains(query);
     }
 
+    /**
+     * Like {@link #contains} but the {@code query} field is OPTIONAL — when
+     * missing/empty, returns a predicate that matches every string (used by
+     * the merged search/list-defined procedure so an absent query simply means
+     * "list all defined strings").
+     */
+    public static Predicate<String> containsOptional(JsonObject req) {
+        String query = RpcContext.optStr(req, "query");
+        if (query == null || query.isEmpty()) {
+            return s -> true;
+        }
+        // Forward to contains(); it reads the same fields (query/regex/ignoreCase)
+        // and is happy with a non-empty query.
+        return contains(req);
+    }
+
     /** Whole-string match (or regex when {@code regex} is true). */
     public static Predicate<String> exact(JsonObject req) {
         String query = RpcContext.reqStr(req, "query");

@@ -14,4 +14,5 @@ pub mod variable;
 pub mod exports;
 pub mod imports;
 pub mod memory;
+pub mod string;
 pub mod xrefs;

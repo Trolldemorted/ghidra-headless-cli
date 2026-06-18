@@ -76,6 +76,11 @@ enum Command {
         #[command(subcommand)]
         cmd: commands::memory::Cmd,
     },
+    /// Defined strings: substring/regex search + get-at-address + define + delete
+    String {
+        #[command(subcommand)]
+        cmd: commands::string::Cmd,
+    },
 }
 
 fn main() {
@@ -104,6 +109,7 @@ fn main() {
         Command::Imports(cmd) => commands::imports::run(cmd, &client),
         Command::Exports(cmd) => commands::exports::run(cmd, &client),
         Command::Memory { cmd } => commands::memory::run(cmd, &client),
+        Command::String { cmd } => commands::string::run(cmd, &client),
     };
 
     if result.is_err() {

@@ -342,6 +342,14 @@ public class RpcServer extends GhidraScript {
         register("LookupLabel", new procedures.ghidra.program.model.listing.LookupLabelHandler());
         register("GetLabel", new procedures.ghidra.program.model.listing.GetLabelHandler());
         register("ReadBytes", new procedures.ghidra.program.model.listing.ReadBytesHandler());
+        // Strings: substring/regex search over the program's defined-string set
+        // (--query optional; empty = list all), point lookup at one address,
+        // mutating DefineString for materializing a string at an address, and
+        // DeleteString for clearing the Data type (bytes preserved).
+        register("SearchStrings", new procedures.ghidra.program.model.listing.SearchStringsHandler());
+        register("GetString", new procedures.ghidra.program.model.listing.GetStringHandler());
+        register("DefineString", new procedures.ghidra.program.model.listing.DefineStringHandler());
+        register("DeleteString", new procedures.ghidra.program.model.listing.DeleteStringHandler());
         register("ListFiles", new procedures.ghidra.framework.model.ListFilesHandler());
         register("FileMetadata", new procedures.ghidra.framework.model.FileMetadataHandler());
 

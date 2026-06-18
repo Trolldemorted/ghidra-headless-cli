@@ -169,6 +169,10 @@ These two are the only short flags (the task's stated exceptions to the
 | `memory lookup-label` | LookupLabel |
 | `memory get-label` | GetLabel |
 | `memory read-bytes` | ReadBytes |
+| `string search` | SearchStrings |
+| `string get` | GetString |
+| `string define` | DefineString |
+| `string delete` | DeleteString |
 
 Per-procedure request/response field specs live in
 `/workdir/notes/procedures/<Cmd>.md`.
@@ -331,3 +335,67 @@ $BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --addre
     block: deadbeef.` (start-outside-block check).
   - `memory read-bytes --format banana` → `Invalid 'format' 'banana': must
     be hex or dump.` (exit 1).
+* String subcommand: all 4 verbs (`search` / `get` / `define` / `delete`)
+  tested live on P3. (The CLI group was renamed from `strings` to
+  `string` (singular) to match the other verb-based groups: `function`,
+  `memory`, `comment`, `datatype`, `stack`, `analysis`, `file`. The
+  underlying RPC procedure names are unchanged: `SearchStrings`,
+  `GetString`, `DefineString`, `DeleteString`.)
+  - `string search --file /Mapeditor.exe` (no query) → 995 strings, mixed
+    ASCII/UTF-8/UTF-16 (US-ASCII / `string`, UTF-8 / `string-utf8`, UTF-16 /
+    `PascalUnicode`, etc.). Output: `<address>  <representation>  [N bytes,
+    <charset>, <dataType>]`. The "no query" path is the canonical
+    "list all" (the old `list-defined` verb was merged into `search`).
+  - `string search --file /Mapeditor.exe --query Mapeditor` → 1 hit,
+    `004c8274  u"Mapeditor"  [20 bytes, UTF-16, PascalUnicode]`.
+  - `string search --file /Mapeditor.exe --query 'ELF|GNU' --regex true`
+    on a small ELF → 5 hits including multiple `"GNU"` matches and a
+    `__GNU_EH_FRAME_HDR` UTF-8 entry.
+  - `string search --file /Mapeditor.exe --query error --ignore-case true
+    --limit 5` → ERROR: DrawAt called for uninitialized Animation, NOTIFY:
+    Error Loading Texture ID %d from File %s, etc.
+  - `string search --file /Mapeditor.exe --query '^[A-Z]+$' --regex true
+    --limit 5` → `MZ`, `PE`, `FALSE`, plus UTF-16 `ER` / `UF` PascalUnicode
+    matches (regex matches the DECODED string, not raw bytes).
+  - `string search --file /noanno-1781782566 --query '[unclosed' --regex
+    true` → `Invalid regex: Unclosed character class near index 8` (exit 1).
+  - `string search --file /noanno-1781782566 --address 0x100374` → exactly
+    1 string at that address. `--address-set 0x100449:0x1004c0` → 8 strings
+    in the data-section range.
+  - `string get --file /noanno-1781782566 --address 0x100374` → ` `
+    `/lib64/ld-linux-x86-64.so.2` `  [28 bytes, US-ASCII, TerminatedCString]`
+    (full match shape echoed in `string`).
+  - `string get --file /noanno-1781782566 --address 0x100001` → `no defined
+    string at 00100001` (the ELF magic at 0x100000 is defined as a 4-byte
+    `char[]` array, not an AbstractStringDataType, so a miss here is the
+    correct behaviour).
+  - `string define --file /Mapeditor.exe --address 0x0047ffd0 --kind
+    cstring` → defined; `success`, exit 0. Commit pipeline runs end-to-end.
+  - `string define --file /noanno-1781782566 --address 0x100220 --kind
+    string` → `'length' is required for fixed-length kind 'string' (must
+    be >= 1).` (exit 1).
+  - `string define --file /Mapeditor.exe --address 0x0047ffd0 --kind
+    banana` → `Unknown kind 'banana': must be cstring, string, utf8, utf16,
+    unicode, pascal, pascal255.` (exit 1).
+  - `string define --file /Mapeditor.exe --address 0xDEADBEEF --kind
+    cstring` → `Could not create Data at address deadbeef` (unmapped).
+  - `string define --file /NoSuchProgram --address 0x401000 --kind cstring`
+    → `No program found for '/NoSuchProgram'.` (exit 1).
+  - `string delete --file /Mapeditor.exe --address 0x0047ffd0` →
+    `deleted string at 0047ffd0 (1 bytes, TerminatedCString)`. Follow-up
+    `string get --address 0x0047ffd0` → `no defined string at 0047ffd0`
+    (the `GetString` miss is now correctly null after a delete — without
+    the `isString` guard the 1-byte undefined Data left behind by the
+    delete would otherwise look like a hit with `dataType: "undefined"`).
+  - Round-trip: `string define ... cstring` → `string delete` →
+    `string define ... cstring` → `string delete` all succeed and net
+    out to no change. After each delete, `string get` shows the miss.
+  - `string delete --file /Mapeditor.exe --address 0x00401000` →
+    `No defined data at 00401000.` (the address is code, not data).
+  - `string delete --file /Mapeditor.exe --address 0xDEADBEEF` →
+    `No defined data at deadbeef.` (unmapped).
+  - `string delete --file /NoSuch --address 0x401000` →
+    `No program found for '/NoSuch'.` (exit 1).
+  - Old `strings` (plural) → clap rejects: `error: unrecognized
+    subcommand 'strings'` with `tip: a similar subcommand exists:
+    'string'`. Confirmed the rename is complete.
