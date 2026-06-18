@@ -215,7 +215,7 @@ public class RpcServer extends GhidraScript {
 
     private void handleClient(Socket socket, long clientId) {
         String peer = socket.getRemoteSocketAddress() + " #" + clientId;
-        Msg.info(this, "Client connected: " + peer);
+        Msg.debug(this, "Client connected: " + peer);
         try (Socket s = socket;
              BufferedReader in = new BufferedReader(
                      new InputStreamReader(s.getInputStream(), StandardCharsets.UTF_8))) {
@@ -234,7 +234,7 @@ public class RpcServer extends GhidraScript {
         } catch (IOException e) {
             // client went away: nothing actionable
         } finally {
-            Msg.info(this, "Client disconnected: " + peer);
+            Msg.debug(this, "Client disconnected: " + peer);
         }
     }
 
