@@ -3,7 +3,7 @@
 use clap::Subcommand;
 
 use crate::client::Client;
-use crate::commands::{decompile, disassemble, tag};
+use crate::commands::{decompile, disassemble, find, tag};
 use crate::common::{self, Source};
 use crate::json::Req;
 
@@ -188,6 +188,10 @@ pub enum Cmd {
     Decompile(decompile::DecompileArgs),
     /// Disassemble a function to an instruction listing
     Disassemble(disassemble::DisassembleArgs),
+    /// Find functions whose name matches a query
+    FindByName(find::FindByNameArgs),
+    /// Find functions that have a tag matching a query
+    FindByTag(find::FindByTagArgs),
     /// Function tag operations
     Tag {
         #[command(subcommand)]
@@ -365,6 +369,8 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
         ),
         Cmd::Decompile(args) => decompile::run(args, client),
         Cmd::Disassemble(args) => disassemble::run(args, client),
+        Cmd::FindByName(args) => find::run_by_name(args, client),
+        Cmd::FindByTag(args) => find::run_by_tag(args, client),
         Cmd::Tag { cmd } => tag::run(cmd, client),
     }
 }

@@ -328,6 +328,8 @@ public class RpcServer extends GhidraScript {
         register("ProgramLoader", new procedures.ghidra.app.util.importer.ProgramLoaderHandler());
         register("Analyze", new procedures.ghidra.app.plugin.core.analysis.AnalyzeHandler());
         register("Disassemble", new procedures.ghidra.program.model.listing.DisassembleHandler());
+        register("FindFunctionsByName", new procedures.ghidra.program.model.listing.FindFunctionsByNameHandler());
+        register("FindFunctionsByTag", new procedures.ghidra.program.model.listing.FindFunctionsByTagHandler());
     }
 
     private void register(String procedure, RpcProcedure handler) {

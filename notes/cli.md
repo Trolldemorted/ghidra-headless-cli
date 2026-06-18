@@ -112,6 +112,8 @@ These two are the only short flags (the task's stated exceptions to the
 | `analysis decompiler-convention` | DecompilerParallelConventionAnalysisCmd |
 | `function decompile` | FlatDecompilerAPI |
 | `function disassemble` | Disassemble |
+| `function find-by-name` | FindFunctionsByName |
+| `function find-by-tag` | FindFunctionsByTag |
 | `datatype apply-function` | ApplyFunctionDataTypesCmd |
 | `datatype capture-function` | CaptureFunctionDataTypesCmd |
 | `program load` | ProgramLoader |
@@ -131,6 +133,15 @@ $BIN --host 127.0.0.1:18000 function decompile --program /Mapeditor.exe --addres
 # Disassemble a function (one "<address>  <bytes>  <repr>" line per instruction on stdout)
 $BIN --host 127.0.0.1:18000 function disassemble --program /Mapeditor.exe --address 0x4024f1
 $BIN --host 127.0.0.1:18000 function disassemble --program /Mapeditor.exe --address 0x4024f1 --bytes false
+
+# Find functions by name ("<address>  <name>" per match); substring, regex, or case-insensitive
+$BIN --host 127.0.0.1:18000 function find-by-name --program /Mapeditor.exe --query fn_cmd
+$BIN --host 127.0.0.1:18000 function find-by-name --program /Mapeditor.exe --query "^FUN_0040" --regex true --limit 50
+
+# Find functions by tag ("<address>  <name>  [tag,...]" per match)
+# Plain query = EXACT tag name ("has this tag"); use --regex for a substring/pattern.
+$BIN --host 127.0.0.1:18000 function find-by-tag --program /Mapeditor.exe --query RPC_TAG
+$BIN --host 127.0.0.1:18000 function find-by-tag --program /Mapeditor.exe --query RPC --regex true
 
 # Rename a function (mutating: checked out, checked in on success)
 $BIN --host 127.0.0.1:18000 function set-name \
@@ -159,6 +170,11 @@ $BIN --host 127.0.0.1:18000 program analyze --program /imports/foo.exe --force t
   stdout with `CodeUnitFormat`-resolved operands (e.g. `CALL dword ptr
   [PTR_LoadLibraryA_004c0ca4]`, `JMP FUN_004100b0`); `--bytes false` drops the bytes
   column; bad address → `No function at deadbeef.` verbatim, exit 1.
+* Read-only `function find-by-name`/`find-by-tag` on /Mapeditor.exe → name substring `fn_cmd`
+  found `fn_cmd_rpc_test`; `--ignore-case` matched `entry`; `--regex` anchoring works. Tag
+  search is EXACT by default: `--query RPC` → 0, `--query RPC_TAG` → `fn_cmd_rpc_test
+  [RPC_TAG]`, `--query RPC --regex true` → match. An invalid regex → `Invalid regex: …`
+  verbatim, exit 1.
 * Mutating `function set-repeatable-comment` → `success`, exit 0 (server checked
   the new version in); reset afterward.
 * Error paths: bad address → `No function at deadbeef.`; unknown program →

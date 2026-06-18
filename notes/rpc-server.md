@@ -16,6 +16,8 @@ access to the analyzed program and the full Ghidra API.
 | `/workdir/ghidrascript/procedures/ghidra/app/cmd/function/*Handler.java` | one handler per command (mirrors Ghidra's package) |
 | `/workdir/ghidrascript/procedures/ghidra/app/decompiler/flatapi/FlatDecompilerAPIHandler.java` | decompile-to-C procedure |
 | `/workdir/ghidrascript/procedures/ghidra/program/model/listing/DisassembleHandler.java` | disassemble-a-function procedure |
+| `/workdir/ghidrascript/procedures/ghidra/program/model/listing/FindFunctionsBy{Name,Tag}Handler.java` | search functions by name / by tag |
+| `/workdir/ghidrascript/procedures/StringQuery.java` | substring/regex matcher shared by the find procedures |
 | `/workdir/ghidrascript/procedures/ghidra/app/util/importer/ProgramLoaderHandler.java` | import a new program from bytes in the request |
 | `/workdir/ghidrascript/procedures/ghidra/app/plugin/core/analysis/AnalyzeHandler.java` | run full auto-analysis over a program |
 | `/workdir/ghidrascript/ghidra-headless.sh` | headless launcher (env-driven) |
@@ -136,12 +138,12 @@ Each handler: parse JSON -> resolve args via `RpcContext` helpers
 monitor) and maps the boolean result + `getStatusMsg()` to the response. Bad input
 throws `IllegalArgumentException`, surfaced as the error message.
 
-## Procedures (40 total)
+## Procedures (42 total)
 
 All non-deprecated, concrete `Command`s in `ghidra.app.cmd.function` (36). The four
 **deprecated** ones are intentionally excluded: `AddParameterCommand`,
 `AddRegisterParameterCommand`, `AddStackParameterCommand`, `AddMemoryParameterCommand`
-(use `UpdateFunctionCommand` instead). Plus four procedures outside that package
+(use `UpdateFunctionCommand` instead). Plus six procedures outside that package
 (pre-registered in `RpcServer`, since the reflection fallback only covers
 `ghidra.app.cmd.function`):
 * `FlatDecompilerAPI` — decompile a function to C (program-level, read-only).
@@ -149,6 +151,15 @@ All non-deprecated, concrete `Command`s in `ghidra.app.cmd.function` (36). The f
   Iterates `Listing.getInstructions(function.getBody(), true)` and renders each with
   `CodeUnitFormat.DEFAULT` (GUI-faithful operands: resolved labels, stack-var/param
   names). Handler in `procedures.ghidra.program.model.listing`; `mutates()` false.
+* `FindFunctionsByName` — list functions whose name matches `query` (program-level,
+  read-only). Substring by default, regex with `regex:true` (`find()` semantics — anchor
+  with `^…$` for exact), optional `ignoreCase` and `limit`. Iterates
+  `FunctionManager.getFunctions(true)`.
+* `FindFunctionsByTag` — list functions that have the tag named `query`: **exact** tag-name
+  match by default (not substring), or a regex over tag names with `regex:true`; same
+  `ignoreCase`/`limit`. One O(functions) pass checking `Function.getTags()` (no reverse
+  tag→function index in the API). Both share `procedures.StringQuery` (`contains` for name,
+  `exact` for tag) and return `{count, truncated, functions:[{name, address, tags?}]}`.
 * `ProgramLoader` — import a new program from base64 bytes in the request (PROJECT-level:
   `needsProgram()` false, no `"program"` field; saves + adds to version control itself).
   Wraps the `ProgramLoader` builder (the older `AutoImporter` is deprecated).

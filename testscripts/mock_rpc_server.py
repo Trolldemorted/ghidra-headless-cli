@@ -65,6 +65,17 @@ while True:
                      "representation": "CALL FUN_004100b0"},
                 ],
             }
+        elif MODE == "find":
+            resp = {
+                "success": True,
+                "count": 2,
+                "truncated": True,
+                "functions": [
+                    {"address": "00401000", "name": "init_thing"},
+                    # tags present -> exercises the tag-rendering path
+                    {"address": "00402000", "name": "do_thing", "tags": ["RPC_TAG", "AUDIT"]},
+                ],
+            }
         else:
             resp = {"success": False, "error": "unknown mode"}
         conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))
