@@ -3,6 +3,7 @@
 use clap::Subcommand;
 
 use crate::client::Client;
+use crate::commands::tag;
 use crate::common::{self, Source};
 use crate::json::Req;
 
@@ -183,6 +184,11 @@ pub enum Cmd {
         #[arg(long)]
         comment: String,
     },
+    /// Function tag operations
+    Tag {
+        #[command(subcommand)]
+        cmd: tag::Cmd,
+    },
 }
 
 pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
@@ -353,5 +359,6 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                 .str("comment", comment)
                 .build(),
         ),
+        Cmd::Tag { cmd } => tag::run(cmd, client),
     }
 }

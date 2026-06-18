@@ -35,15 +35,10 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Function create/delete/signature operations
+    /// Function create/delete/signature/tag operations
     Function {
         #[command(subcommand)]
         cmd: commands::function::Cmd,
-    },
-    /// Function tag operations
-    Tag {
-        #[command(subcommand)]
-        cmd: commands::tag::Cmd,
     },
     /// Function variable operations
     Variable {
@@ -91,7 +86,6 @@ fn main() {
 
     let result = match cli.command {
         Command::Function { cmd } => commands::function::run(cmd, &client),
-        Command::Tag { cmd } => commands::tag::run(cmd, &client),
         Command::Variable { cmd } => commands::variable::run(cmd, &client),
         Command::Stack { cmd } => commands::stack::run(cmd, &client),
         Command::Analysis { cmd } => commands::analysis::run(cmd, &client),

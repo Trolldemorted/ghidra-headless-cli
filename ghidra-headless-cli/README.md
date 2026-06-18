@@ -2,8 +2,8 @@
 
 Synchronous, dependency-light Rust CLI for the Ghidra TCP ndjson RPC server.
 Subcommands mirror the server's 39 procedures, grouped by area
-(`function`, `tag`, `variable`, `stack`, `analysis`, `datatype`, `decompile`,
-`program`).
+(`function` — with function tags nested under `function tag` — `variable`,
+`stack`, `analysis`, `datatype`, `decompile`, `program`).
 
 Build:
 

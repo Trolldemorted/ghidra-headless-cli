@@ -3,7 +3,8 @@
 A small, synchronous, dependency-light Rust CLI that talks to the Ghidra TCP
 ndjson RPC server (see [rpc-server.md](rpc-server.md)). One invocation = one
 request = one response. Subcommands mirror the server's 39 procedures, grouped by
-the area they act on.
+the area they act on (function tags are nested under `function tag`, since they
+are function-scoped).
 
 ## Location & build
 
@@ -87,11 +88,11 @@ These two are the only short flags (the task's stated exceptions to the
 | `function set-varargs` | SetFunctionVarArgsCommand |
 | `function set-purge` | SetFunctionPurgeCommand |
 | `function set-repeatable-comment` | SetFunctionRepeatableCommentCmd |
-| `tag create` | CreateFunctionTagCmd |
-| `tag delete` | DeleteFunctionTagCmd |
-| `tag change` | ChangeFunctionTagCmd |
-| `tag add` | AddFunctionTagCmd |
-| `tag remove` | RemoveFunctionTagCmd |
+| `function tag create` | CreateFunctionTagCmd |
+| `function tag delete` | DeleteFunctionTagCmd |
+| `function tag change` | ChangeFunctionTagCmd |
+| `function tag add` | AddFunctionTagCmd |
+| `function tag remove` | RemoveFunctionTagCmd |
 | `variable add-stack` | AddStackVarCmd |
 | `variable add-register` | AddRegisterVarCmd |
 | `variable add-memory` | AddMemoryVarCmd |
