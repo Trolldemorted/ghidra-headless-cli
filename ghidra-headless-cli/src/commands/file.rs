@@ -173,17 +173,20 @@ fn print_listing(response: &Json) {
     }
 }
 
-/// Print a file's attributes followed by its stored metadata map, to stdout.
+/// Print a file's attributes followed by its stored metadata map. Everything
+/// is data (the user asked for metadata), so all of it goes on stdout. No
+/// status banner — a single-object response has no count to report.
 fn print_metadata(response: &Json) {
-    log::info!(
-        "metadata for {}",
-        response.get("name").and_then(Json::as_str).unwrap_or("?")
-    );
+    let name = response.get("name").and_then(Json::as_str).unwrap_or("?");
+    // First line is a TSV header (`name<TAB>path<TAB>contentType<TAB>version`)
+    // so `file metadata --path /X | head -1` is the one-liner summary.
+    let path = response.get("path").and_then(Json::as_str).unwrap_or("");
+    let content_type = response.get("contentType").and_then(Json::as_str).unwrap_or("");
+    let version = response.get("version").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+    println!("{}\t{}\t{}\t{}", name, path, content_type, version);
+    // Detail lines on stdout, in a stable order, so the rest of the output is
+    // grep-friendly and predictable.
     for key in [
-        "path",
-        "name",
-        "contentType",
-        "version",
         "versioned",
         "checkedOut",
         "readOnly",

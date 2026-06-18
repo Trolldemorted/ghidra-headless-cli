@@ -284,18 +284,39 @@ fn print_response(cmd: &Cmd, response: &Json) {
             print_refs(response.get("refs"));
         }
         Cmd::GetLabel(_) => {
-            let addr = response.get("address").and_then(Json::as_str).unwrap_or("?");
+            // Primary label is the deliverable; on stdout so it can be piped
+            // (e.g. `ghidra-headless-cli memory get-label ... | xargs ...`).
+            // Status (count + secondary labels) goes to stderr.
             let primary = response.get("primary").and_then(Json::as_str);
+            let total = response
+                .get("all")
+                .and_then(Json::as_array)
+                .map(|a| a.len())
+                .unwrap_or(0);
             match primary {
-                Some(p) => log::info!("primary at {}: {}", addr, p),
-                None => log::info!("no primary label at {}", addr),
-            }
-            if let Some(arr) = response.get("all").and_then(Json::as_array) {
-                for entry in arr {
-                    let n = entry.get("name").and_then(Json::as_str).unwrap_or("?");
-                    let p = entry.get("isPrimary").and_then(Json::as_bool).unwrap_or(false);
-                    let tag = if p { " (primary)" } else { "" };
-                    log::info!("  {}{}", n, tag);
+                Some(p) => {
+                    println!("{}", p); // data
+                    if total > 1 {
+                        log::info!(
+                            "primary label at {} ({} label(s) total; secondary on stderr below)",
+                            response.get("address").and_then(Json::as_str).unwrap_or("?"),
+                            total
+                        );
+                        if let Some(arr) = response.get("all").and_then(Json::as_array) {
+                            for entry in arr {
+                                let n = entry.get("name").and_then(Json::as_str).unwrap_or("?");
+                                let p = entry.get("isPrimary").and_then(Json::as_bool).unwrap_or(false);
+                                let tag = if p { " (primary)" } else { "" };
+                                log::info!("  {}{}", n, tag);
+                            }
+                        }
+                    }
+                }
+                None => {
+                    log::info!(
+                        "no primary label at {}",
+                        response.get("address").and_then(Json::as_str).unwrap_or("?")
+                    );
                 }
             }
         }
@@ -324,16 +345,20 @@ fn print_response(cmd: &Cmd, response: &Json) {
 }
 
 fn print_refs(refs: Option<&Json>) {
+    // One entry per line on stdout (the data); the count banner above stays
+    // on stderr. Format mirrors the previous human-readable listing so a
+    // terminal user still sees aligned output, and a scripter can pipe the
+    // lines through awk/cut for the address or name column.
     if let Some(arr) = refs.and_then(Json::as_array) {
         for r in arr {
             let name = r.get("name").and_then(Json::as_str).unwrap_or("?");
             let addr = r.get("address").and_then(Json::as_str).unwrap_or("?");
             let src = r.get("source").and_then(Json::as_str);
             let line = match src {
-                Some(s) => format!("  {}  {}  ({})", addr, name, s),
-                None => format!("  {}  {}", addr, name),
+                Some(s) => format!("{}  {}  ({})", addr, name, s),
+                None => format!("{}  {}", addr, name),
             };
-            log::info!("{}", line);
+            println!("{}", line);
         }
     }
 }

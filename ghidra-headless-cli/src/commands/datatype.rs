@@ -353,12 +353,14 @@ fn print_list(response: &Json) {
 }
 
 fn print_show(response: &Json) {
-    log::info!(
-        "{} {} ({})",
-        response.get("kind").and_then(Json::as_str).unwrap_or("?"),
-        response.get("path").and_then(Json::as_str).unwrap_or("?"),
-        response.get("size").and_then(Json::as_f64).unwrap_or(0.0) as i64,
-    );
+    // The kind/path/size headline IS the deliverable when scripting (e.g.
+    // `datatype show --path /X | head -1`); put it on stdout as a TSV line so
+    // it's directly pipeable. Detail lines also on stdout (still data); no
+    // status to emit on stderr for a single-object response.
+    let kind = response.get("kind").and_then(Json::as_str).unwrap_or("?");
+    let path = response.get("path").and_then(Json::as_str).unwrap_or("?");
+    let size = response.get("size").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+    println!("{}\t{}\t{}", kind, path, size);
     if let Some(detail) = response.get("detail").and_then(Json::as_object) {
         for (key, value) in detail {
             println!("{}: {}", key, scalar_or_inline(value));

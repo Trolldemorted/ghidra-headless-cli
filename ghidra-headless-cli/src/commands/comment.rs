@@ -161,15 +161,16 @@ fn invoke_clear(client: &Client, procedure: &str, program: &str, address: &str) 
     Ok(())
 }
 
-/// Print a one-line summary of the response: type / address / function (if any) / comment.
+/// Print a one-line summary of the response: type / address / function (if
+/// any) on stderr (status), comment text on stdout (data — the deliverable).
 fn print_response(procedure: &str, response: &Json, show_previous: bool) {
     let type_name = response.get("type").and_then(Json::as_str).unwrap_or("?");
     let address = response.get("address").and_then(Json::as_str).unwrap_or("?");
     let comment = response.get("comment").and_then(Json::as_str).unwrap_or("");
     if let Some(function) = response.get("function").and_then(Json::as_str) {
-        log::info!("{} {} {}@{} -> {:?}", procedure, type_name, function, address, comment);
+        log::info!("{} {} {}@{}", procedure, type_name, function, address);
     } else {
-        log::info!("{} {} {} -> {:?}", procedure, type_name, address, comment);
+        log::info!("{} {} {}", procedure, type_name, address);
     }
     println!("{}", comment);
     if show_previous {
