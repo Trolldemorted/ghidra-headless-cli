@@ -85,6 +85,31 @@ launcher section.
   transactions. Program transactions (`startTransaction`/`endTransaction`) are a
   separate Ghidra mechanism, always entered while holding the lock.
 
+## Graceful shutdown (SIGTERM)
+
+The server is a long-lived process parked in an accept loop, so it is stopped by a
+signal. **Send `SIGTERM`** (`kill -TERM <jvm-pid>`, or `docker stop` → the `tini -g`
+entrypoint forwards SIGTERM to the JVM's process group) — **not `SIGKILL`**: a `kill -9`
+skips cleanup and orphans the file's exclusive checkout server-side, which then blocks the
+next exclusive checkout (`"Failed to check out '…' (held by another user?)"`; recover with
+`testscripts/CleanCheckouts.java`, run **writeable** — a read-only run does not enumerate it).
+
+`RpcServer` installs a JVM shutdown hook (`installShutdownHook`) for SIGTERM: it sets a
+`volatile boolean stopping`, closes the `ServerSocket` to interrupt the blocked `accept()`,
+then `join`s the main thread so the accept-loop `finally` (client-pool shutdown +
+`RpcContext.closeAll()`) completes in order. **The accept loop is driven by `stopping`, not
+`monitor.isCancelled()`** — the headless `TaskMonitor.cancel()` is a no-op, so relying on it
+busy-spins the catch on "Socket is closed". Verified live: SIGTERM → loop stops (no spin),
+programs released ("Stopped."), exit in ~1s, and **no stale checkout** (Ghidra's repository
+disconnect on shutdown releases the transient checkout).
+
+Two benign ERROR lines accompany shutdown and are **not** preventable from the script:
+`"Premature removal of active transient project"` and `"…use count has gone negative"`. They
+come from Ghidra's own `TransientProjectManager`, which registers a **separate raw JVM
+shutdown hook** that force-disposes the still-open remote project (the disconnect that
+actually releases the checkouts). It runs concurrently with our hook, so it cannot be ordered
+away; the second line also appears on normal headless script exits.
+
 ## Checkout / check-in policy
 
 * **Every procedure checks the file out first** (inside `RpcContext.openProgram`, before

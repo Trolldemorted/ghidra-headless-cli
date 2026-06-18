@@ -60,12 +60,23 @@ public class RpcServer extends GhidraScript {
     private static final int ACCEPT_TIMEOUT_MS = 1000;
     private static final String HANDLER_PKG = "procedures.ghidra.app.cmd.function";
 
+    /** How long the shutdown hook waits for the main thread's normal teardown to finish. */
+    private static final long SHUTDOWN_WAIT_MS = 20_000;
+
     private final Gson gson = new GsonBuilder().disableHtmlEscaping().create();
     private final Map<String, RpcProcedure> handlers = new ConcurrentHashMap<>();
     private final AtomicLong clientIds = new AtomicLong();
 
     private RpcContext context;
     private ExecutorService clientPool;
+
+    /** The accept-loop socket, published so the shutdown hook can interrupt accept(). */
+    private volatile ServerSocket serverSocket;
+    /** The script's main thread, joined by the shutdown hook so cleanup can complete. */
+    private volatile Thread mainThread;
+    /** Set by the shutdown hook to stop the accept loop. The headless {@code monitor}'s
+     *  cancel() is a no-op, so this flag — not monitor.isCancelled() — drives shutdown. */
+    private volatile boolean stopping;
 
     @Override
     public void run() throws Exception {
@@ -80,6 +91,13 @@ public class RpcServer extends GhidraScript {
         context = new RpcContext(state.getProject(), monitor);
         registerHandlers();
 
+        // Handle SIGTERM (e.g. `kill` / `docker stop`) gracefully: the JVM halts shutdown
+        // hooks without unwinding this blocked thread, so the accept loop's finally and
+        // HeadlessAnalyzer's end-of-session teardown (which releases transient checkouts)
+        // would otherwise never run. The hook unblocks the loop and waits for that normal
+        // path to finish, turning SIGTERM into the same clean exit as cancellation.
+        installShutdownHook();
+
         // analyzeHeadless wraps a post-script's run() in one open transaction on the
         // processed (trigger) program. Our run() blocks in the accept loop the whole
         // session, so that transaction would never close and per-request commits could
@@ -93,6 +111,7 @@ public class RpcServer extends GhidraScript {
         });
 
         try (ServerSocket server = new ServerSocket()) {
+            serverSocket = server; // publish so the shutdown hook can close it
             server.setReuseAddress(true);
             server.bind(new InetSocketAddress(bind, port));
             server.setSoTimeout(ACCEPT_TIMEOUT_MS);
@@ -134,16 +153,57 @@ public class RpcServer extends GhidraScript {
         }
     }
 
+    /**
+     * Install a JVM shutdown hook for graceful SIGTERM handling (also `docker stop`, plain
+     * `kill`). The hook runs on its own thread when the JVM starts shutting down; it sets
+     * {@link #stopping} (the headless {@code monitor.cancel()} is a no-op, so the flag — not
+     * the monitor — drives the loop), closes the server socket to interrupt a blocked
+     * accept() at once, then joins the main thread. The join is essential: the JVM waits for
+     * shutdown hooks to return but NOT for ordinary threads, so without it the process could
+     * halt before the main thread runs its cleanup (clientPool shutdown +
+     * {@link RpcContext#closeAll()}), which we want to complete in an orderly way.
+     *
+     * Transient checkouts are released by Ghidra's repository disconnect on shutdown, so a
+     * SIGTERM leaves NO stale checkout (verified). Note: Ghidra's own {@code
+     * TransientProjectManager} registers a separate raw JVM shutdown hook that force-disposes
+     * the still-open remote project, logging "Premature removal of active transient project"
+     * (and "use count has gone negative", which also appears on normal headless exits). Those
+     * lines are benign Ghidra-internal bookkeeping for force-stopping a parked ghidra://
+     * session — the disconnect they perform is what releases the checkouts — and run
+     * concurrently with this hook, so they cannot be ordered away from here.
+     */
+    private void installShutdownHook() {
+        mainThread = Thread.currentThread();
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            Msg.info(this, "Shutdown signal received; shutting down gracefully...");
+            stopping = true;  // drive the accept loop to exit (monitor.cancel is a no-op here)
+            monitor.cancel(); // best-effort cancel of any in-flight work (if supported)
+            ServerSocket s = serverSocket;
+            if (s != null) {
+                try {
+                    s.close(); // interrupt a blocked accept() right away
+                } catch (IOException ignored) {
+                    // already closed / never opened
+                }
+            }
+            try {
+                mainThread.join(SHUTDOWN_WAIT_MS); // let the accept-loop teardown finish
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+        }, "rpc-shutdown"));
+    }
+
     private void acceptLoop(ServerSocket server) {
-        while (!monitor.isCancelled()) {
+        while (!stopping && !monitor.isCancelled()) {
             final Socket socket;
             try {
                 socket = server.accept();
             } catch (SocketTimeoutException timeout) {
-                continue; // poll cancellation, then keep waiting
+                continue; // poll the stop flag, then keep waiting
             } catch (IOException e) {
-                if (monitor.isCancelled()) {
-                    break;
+                if (stopping || monitor.isCancelled() || server.isClosed()) {
+                    break; // socket closed by the shutdown hook
                 }
                 Msg.warn(this, "Accept failed: " + e.getMessage());
                 continue;
@@ -163,7 +223,7 @@ public class RpcServer extends GhidraScript {
             OutputStream out = s.getOutputStream();
             String line;
             while ((line = in.readLine()) != null) {
-                if (monitor.isCancelled()) {
+                if (stopping || monitor.isCancelled()) {
                     break;
                 }
                 if (line.trim().isEmpty()) {
