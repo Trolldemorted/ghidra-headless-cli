@@ -2,3 +2,4 @@
 /.cargo
 /.rustup
 __pycache__
+*.log

@@ -1,9 +1,9 @@
 # ghidra-headless-cli
 
 Synchronous, dependency-light Rust CLI for the Ghidra TCP ndjson RPC server.
-Subcommands mirror the server's 39 procedures, grouped by area
-(`function` — with `function decompile` and function tags under `function tag` —
-`variable`, `stack`, `analysis`, `datatype`, `program`).
+Subcommands mirror the server's 40 procedures, grouped by area
+(`function` — with `function decompile`, `function disassemble`, and function tags
+under `function tag` — `variable`, `stack`, `analysis`, `datatype`, `program`).
 
 Build:
 

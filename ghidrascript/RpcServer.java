@@ -267,6 +267,7 @@ public class RpcServer extends GhidraScript {
         register("FlatDecompilerAPI", new procedures.ghidra.app.decompiler.flatapi.FlatDecompilerAPIHandler());
         register("ProgramLoader", new procedures.ghidra.app.util.importer.ProgramLoaderHandler());
         register("Analyze", new procedures.ghidra.app.plugin.core.analysis.AnalyzeHandler());
+        register("Disassemble", new procedures.ghidra.program.model.listing.DisassembleHandler());
     }
 
     private void register(String procedure, RpcProcedure handler) {

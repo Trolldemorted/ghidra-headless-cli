@@ -3,6 +3,7 @@
 pub mod analysis;
 pub mod datatype;
 pub mod decompile;
+pub mod disassemble;
 pub mod function;
 pub mod program;
 pub mod stack;

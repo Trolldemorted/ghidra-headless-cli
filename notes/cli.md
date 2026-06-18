@@ -46,8 +46,9 @@ These two are the only short flags (the task's stated exceptions to the
 
 ## Output & exit codes
 
-* **stdout** carries command *data* only (decompiled C source); logs go to
-  **stderr** — so `function decompile … > out.c` yields clean source.
+* **stdout** carries command *data* only (decompiled C source, disassembly
+  listing); logs go to **stderr** — so `function decompile … > out.c` yields clean
+  source.
 * Status, results summaries, and errors are emitted via `log` to stderr.
 * Exit `0` on `success:true`; exit `1` on any transport error, malformed
   response, client-side argument error, or a `success:false` reply.
@@ -110,6 +111,7 @@ These two are the only short flags (the task's stated exceptions to the
 | `analysis decompiler-switch` | DecompilerSwitchAnalysisCmd |
 | `analysis decompiler-convention` | DecompilerParallelConventionAnalysisCmd |
 | `function decompile` | FlatDecompilerAPI |
+| `function disassemble` | Disassemble |
 | `datatype apply-function` | ApplyFunctionDataTypesCmd |
 | `datatype capture-function` | CaptureFunctionDataTypesCmd |
 | `program load` | ProgramLoader |
@@ -125,6 +127,10 @@ BIN=/workdir/ghidra-headless-cli/target/release/ghidra-headless-cli
 
 # Decompile to clean C on stdout (logs on stderr)
 $BIN --host 127.0.0.1:18000 function decompile --program /Mapeditor.exe --address 0x4024f1 > fn.c
+
+# Disassemble a function (one "<address>  <bytes>  <repr>" line per instruction on stdout)
+$BIN --host 127.0.0.1:18000 function disassemble --program /Mapeditor.exe --address 0x4024f1
+$BIN --host 127.0.0.1:18000 function disassemble --program /Mapeditor.exe --address 0x4024f1 --bytes false
 
 # Rename a function (mutating: checked out, checked in on success)
 $BIN --host 127.0.0.1:18000 function set-name \
@@ -149,6 +155,10 @@ $BIN --host 127.0.0.1:18000 program analyze --program /imports/foo.exe --force t
 * Read-only `function decompile /Mapeditor.exe 0x4024f1` → exit 0, full C source on stdout
   (escaped newlines/quotes parsed correctly by the hand-rolled JSON parser),
   status logs on stderr.
+* Read-only `function disassemble /Mapeditor.exe 0x4024f1` → exit 0, 34 instructions on
+  stdout with `CodeUnitFormat`-resolved operands (e.g. `CALL dword ptr
+  [PTR_LoadLibraryA_004c0ca4]`, `JMP FUN_004100b0`); `--bytes false` drops the bytes
+  column; bad address → `No function at deadbeef.` verbatim, exit 1.
 * Mutating `function set-repeatable-comment` → `success`, exit 0 (server checked
   the new version in); reset afterward.
 * Error paths: bad address → `No function at deadbeef.`; unknown program →

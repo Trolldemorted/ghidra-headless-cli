@@ -49,6 +49,22 @@ while True:
                 "address": req.get("address", "?"),
                 "decompilation": "int main(void) {\n  return 0; /* é */\n}",
             }
+        elif MODE == "disasm":
+            resp = {
+                "success": True,
+                "function": "FUN_00401000",
+                "address": req.get("address", "?"),
+                "count": 3,
+                "instructions": [
+                    {"address": "00401000", "bytes": "55", "mnemonic": "PUSH",
+                     "representation": "PUSH EBP"},
+                    {"address": "00401001", "bytes": "8bec", "mnemonic": "MOV",
+                     "representation": "MOV EBP,ESP"},
+                    # no "bytes" -> exercise the omitted-bytes path
+                    {"address": "00401003", "mnemonic": "CALL",
+                     "representation": "CALL FUN_004100b0"},
+                ],
+            }
         else:
             resp = {"success": False, "error": "unknown mode"}
         conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))

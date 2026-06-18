@@ -15,6 +15,7 @@ access to the analyzed program and the full Ghidra API.
 | `/workdir/ghidrascript/procedures/RpcResponse.java` | response POJO (`success`, `error`) |
 | `/workdir/ghidrascript/procedures/ghidra/app/cmd/function/*Handler.java` | one handler per command (mirrors Ghidra's package) |
 | `/workdir/ghidrascript/procedures/ghidra/app/decompiler/flatapi/FlatDecompilerAPIHandler.java` | decompile-to-C procedure |
+| `/workdir/ghidrascript/procedures/ghidra/program/model/listing/DisassembleHandler.java` | disassemble-a-function procedure |
 | `/workdir/ghidrascript/procedures/ghidra/app/util/importer/ProgramLoaderHandler.java` | import a new program from bytes in the request |
 | `/workdir/ghidrascript/procedures/ghidra/app/plugin/core/analysis/AnalyzeHandler.java` | run full auto-analysis over a program |
 | `/workdir/ghidrascript/ghidra-headless.sh` | headless launcher (env-driven) |
@@ -110,15 +111,19 @@ Each handler: parse JSON -> resolve args via `RpcContext` helpers
 monitor) and maps the boolean result + `getStatusMsg()` to the response. Bad input
 throws `IllegalArgumentException`, surfaced as the error message.
 
-## Procedures (39 total)
+## Procedures (40 total)
 
 All non-deprecated, concrete `Command`s in `ghidra.app.cmd.function` (36). The four
 **deprecated** ones are intentionally excluded: `AddParameterCommand`,
 `AddRegisterParameterCommand`, `AddStackParameterCommand`, `AddMemoryParameterCommand`
-(use `UpdateFunctionCommand` instead). Plus three procedures outside that package
+(use `UpdateFunctionCommand` instead). Plus four procedures outside that package
 (pre-registered in `RpcServer`, since the reflection fallback only covers
 `ghidra.app.cmd.function`):
 * `FlatDecompilerAPI` — decompile a function to C (program-level, read-only).
+* `Disassemble` — return a function's instruction listing (program-level, read-only).
+  Iterates `Listing.getInstructions(function.getBody(), true)` and renders each with
+  `CodeUnitFormat.DEFAULT` (GUI-faithful operands: resolved labels, stack-var/param
+  names). Handler in `procedures.ghidra.program.model.listing`; `mutates()` false.
 * `ProgramLoader` — import a new program from base64 bytes in the request (PROJECT-level:
   `needsProgram()` false, no `"program"` field; saves + adds to version control itself).
   Wraps the `ProgramLoader` builder (the older `AutoImporter` is deprecated).
