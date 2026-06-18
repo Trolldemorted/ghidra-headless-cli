@@ -1,4 +1,4 @@
-//! Imports subcommand: list external symbols this program imports from its
+//! Import subcommand: list external symbols this program imports from its
 //! linked libraries. Wires to the `GetImports` RPC procedure.
 
 use clap::Args;

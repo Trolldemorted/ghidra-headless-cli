@@ -1,4 +1,4 @@
-//! Exports subcommand: list in-program symbols that are external entry
+//! Export subcommand: list in-program symbols that are external entry
 //! points (what this binary exports). Wires to the `GetExports` RPC procedure.
 
 use clap::Args;

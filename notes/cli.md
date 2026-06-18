@@ -159,8 +159,8 @@ These two are the only short flags (the task's stated exceptions to the
 | `datatype delete` | DeleteDataType |
 | `datatype apply` | ApplyDataType |
 | `xrefs` | GetXrefs |
-| `imports` | GetImports |
-| `exports` | GetExports |
+| `import` | GetImports |
+| `export` | GetExports |
 | `memory create-label` | CreateLabel |
 | `memory rename-label` | RenameLabel |
 | `memory delete-label` | DeleteLabel |
@@ -268,7 +268,7 @@ $BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --addre
   `Invalid 'type' 'foo': must be function, symbol, or address.` (exit 1);
   unknown target → `No function matched 'NoSuchFunction'.` (exit 1);
   `--limit 1` → truncated, single ref returned.
-* Imports: `imports --file <F> [--type function] [--limit N]`. Iterates
+* Import: `import --file <F> [--type function] [--limit N]`. Iterates
   `Program.getExternalManager().getExternalLocations(libraryName)` per
   library, returns each entry's name / EXTERNAL-space address / original
   imported name / source / isFunction. Default `type=all` includes both
@@ -281,7 +281,7 @@ $BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --addre
   to filter). `--limit 1` → truncated after the first entry. Invalid
   `--type` → `Invalid 'type' 'foo': must be all or function.` (exit 1).
   Unknown program → `No program found for '/NoSuch'.` (exit 1).
-* Exports: `exports --file <F> [--type function] [--limit N]`. Iterates
+* Export: `export --file <F> [--type function] [--limit N]`. Iterates
   `SymbolTable.getSymbolIterator()` in address order, filters
   `Symbol.isExternalEntryPoint() && Symbol.isPrimary()` (and rejects any
   address in EXTERNAL space, which would be an import not an export).
@@ -291,7 +291,7 @@ $BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --addre
   `_init`, `main`, `_start`, `frame_dummy`, `add`, `_fini`, plus
   `_IO_stdin_used` / `data_start` / etc. as labels. `--type function`
   narrows to 7 rows. `--limit 1` → truncated, single export returned.
-  Error paths identical to imports (`--type foo`, unknown program).
+  Error paths identical to import (`--type foo`, unknown program).
   Resolved function/symbol/address (the target itself is echoed in the
   response so the caller can see what was hit) and listed every caller
   with ref type, operand index, offcut flag, and the enclosing function.

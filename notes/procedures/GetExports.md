@@ -3,6 +3,9 @@
 List **in-program symbols flagged as external entry points** — what this
 binary exposes to other modules. Mirrors the Ghidra Exports window.
 
+> The CLI group is `export` (singular). The RPC procedure name is still
+> `GetExports` and is sent as `"procedure": "GetExports"`.
+
 Read-only — does not mutate the program or check anything back in.
 
 ## Request
@@ -70,7 +73,7 @@ can be piped directly into other procedures:
 
 ```bash
 # pick an export, then disassemble it
-ADDR=$(ghidra-headless-cli exports --file /Mapeditor.exe --type function --limit 1 | awk 'NR==2 {print $1}')
+ADDR=$(ghidra-headless-cli export --file /Mapeditor.exe --type function --limit 1 | awk 'NR==2 {print $1}')
 ghidra-headless-cli function disassemble --file /Mapeditor.exe --address "$ADDR"
 # or follow the calls into it
 ghidra-headless-cli xrefs --file /Mapeditor.exe --to "$ADDR" --type address
@@ -87,9 +90,9 @@ Only `Symbol.isPrimary()` entries are returned, so multi-symbol addresses
 ## CLI
 
 ```bash
-ghidra-headless-cli exports --file /Mapeditor.exe
-ghidra-headless-cli exports --file /Mapeditor.exe --type function
-ghidra-headless-cli exports --file /test/tiny64 --limit 20
+ghidra-headless-cli export --file /Mapeditor.exe
+ghidra-headless-cli export --file /Mapeditor.exe --type function
+ghidra-headless-cli export --file /test/tiny64 --limit 20
 ```
 
 Output (analyzed ELF on P3):

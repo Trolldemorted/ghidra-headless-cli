@@ -4,6 +4,9 @@ List **external symbols this program imports** from its linked libraries.
 Mirrors the Ghidra Imports window — one group per library, each with the
 imported entries (functions and data).
 
+> The CLI group is `import` (singular). The RPC procedure name is still
+> `GetImports` and is sent as `"procedure": "GetImports"`.
+
 Read-only — does not mutate the program or check anything back in.
 
 ## Request
@@ -85,9 +88,9 @@ the binary actually pulled in (`IMPORTED`) or that the user annotated
 ## CLI
 
 ```bash
-ghidra-headless-cli imports --file /Mapeditor.exe
-ghidra-headless-cli imports --file /Mapeditor.exe --type function
-ghidra-headless-cli imports --file /test/tiny64 --limit 50
+ghidra-headless-cli import --file /Mapeditor.exe
+ghidra-headless-cli import --file /Mapeditor.exe --type function
+ghidra-headless-cli import --file /test/tiny64 --limit 50
 ```
 
 Output (analyzed ELF on P3):

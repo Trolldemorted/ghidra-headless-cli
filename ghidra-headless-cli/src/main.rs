@@ -67,10 +67,10 @@ enum Command {
     },
     /// Cross-references: list references TO a function / symbol / address
     Xrefs(commands::xrefs::Cmd),
-    /// External imports (libraries this program pulls symbols from)
-    Imports(commands::imports::Cmd),
-    /// External exports (entry points this program exposes to other modules)
-    Exports(commands::exports::Cmd),
+    /// External import: list libraries this program pulls symbols from
+    Import(commands::import::Cmd),
+    /// External export: list entry points this program exposes to other modules
+    Export(commands::export::Cmd),
     /// Static-memory labels (create/rename/delete/set-primary/list/lookup/get) and raw byte reads
     Memory {
         #[command(subcommand)]
@@ -106,8 +106,8 @@ fn main() {
         Command::Comment { cmd } => commands::comment::run(cmd, &client),
         Command::Datatype { cmd } => commands::datatype::run(cmd, &client),
         Command::Xrefs(cmd) => commands::xrefs::run(cmd, &client),
-        Command::Imports(cmd) => commands::imports::run(cmd, &client),
-        Command::Exports(cmd) => commands::exports::run(cmd, &client),
+        Command::Import(cmd) => commands::import::run(cmd, &client),
+        Command::Export(cmd) => commands::export::run(cmd, &client),
         Command::Memory { cmd } => commands::memory::run(cmd, &client),
         Command::String { cmd } => commands::string::run(cmd, &client),
     };
