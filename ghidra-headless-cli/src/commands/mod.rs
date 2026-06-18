@@ -1,6 +1,7 @@
 //! Command groups, one module per related set of RPC procedures.
 
 pub mod analysis;
+pub mod callgraph;
 pub mod comment;
 pub mod datatype;
 pub mod decompile;

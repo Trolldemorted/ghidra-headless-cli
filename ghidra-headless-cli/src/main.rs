@@ -67,6 +67,8 @@ enum Command {
     },
     /// Cross-references: list references TO a function / symbol / address
     Xrefs(commands::xrefs::Cmd),
+    /// Callgraph: walk a function's callers/callees to a depth
+    Callgraph(commands::callgraph::Cmd),
     /// External import: list libraries this program pulls symbols from
     Import(commands::import::Cmd),
     /// External export: list entry points this program exposes to other modules
@@ -106,6 +108,7 @@ fn main() {
         Command::Comment { cmd } => commands::comment::run(cmd, &client),
         Command::Datatype { cmd } => commands::datatype::run(cmd, &client),
         Command::Xrefs(cmd) => commands::xrefs::run(cmd, &client),
+        Command::Callgraph(cmd) => commands::callgraph::run(cmd, &client),
         Command::Import(cmd) => commands::import::run(cmd, &client),
         Command::Export(cmd) => commands::export::run(cmd, &client),
         Command::Memory { cmd } => commands::memory::run(cmd, &client),

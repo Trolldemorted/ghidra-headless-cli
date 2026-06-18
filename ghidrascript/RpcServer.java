@@ -333,6 +333,7 @@ public class RpcServer extends GhidraScript {
         register("GetXrefs", new procedures.ghidra.program.model.listing.GetXrefsHandler());
         register("GetImports", new procedures.ghidra.program.model.listing.GetImportsHandler());
         register("GetExports", new procedures.ghidra.program.model.listing.GetExportsHandler());
+        register("Callgraph", new procedures.ghidra.program.model.listing.CallgraphHandler());
         // Memory: static-memory labels (create/rename/delete/set-primary/list/lookup/get) + raw bytes.
         register("CreateLabel", new procedures.ghidra.program.model.listing.CreateLabelHandler());
         register("RenameLabel", new procedures.ghidra.program.model.listing.RenameLabelHandler());

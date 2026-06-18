@@ -161,6 +161,7 @@ These two are the only short flags (the task's stated exceptions to the
 | `xrefs` | GetXrefs |
 | `import` | GetImports |
 | `export` | GetExports |
+| `callgraph` | Callgraph |
 | `memory create-label` | CreateLabel |
 | `memory rename-label` | RenameLabel |
 | `memory delete-label` | DeleteLabel |
@@ -399,3 +400,51 @@ $BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --addre
   - Old `strings` (plural) → clap rejects: `error: unrecognized
     subcommand 'strings'` with `tip: a similar subcommand exists:
     'string'`. Confirmed the rename is complete.
+
+* Callgraph: `callgraph --file <F> [--function <name|0x...>]
+  [--direction called|calling] [--depth 1..10] [--format mermaid|json]
+  [--include-refs true|false]`. BFS-walks the call graph from a function
+  in either direction up to `--depth` layers, default `called` at depth
+  `2`. Output is Mermaid by default (`graph TD` for called, `graph BT`
+  for calling), pipeable to any Mermaid renderer; `--format json`
+  switches to a structured `nodes[]` / `edges[]` envelope. External
+  callees render as leaf nodes (tinted `classDef leaf`) and are NOT
+  recursed into. Cycle edges are emitted (not dropped) so loops are
+  visible. Edge count is hard-capped at 5000; when hit, `truncated=true`
+  is set in the response and the diagram is still well-formed. Read-only
+  — no checkout/check-in cycle. The response deliberately does NOT
+  carry `nodeCount` / `edgeCount` — the CLI derives them from the
+  Mermaid source (count node-definition lines and `-->` / `-.->`
+  arrows) or the JSON `nodes[]` / `edges[]` lengths, so both formats
+  report the same number in the log line.
+  - `--function 0x419580 --direction calling --depth 2 --format json`
+    on `/Mapeditor.exe` → `2 nodes, 1 edges`. Edges: `thunk_FUN_00419580
+    -> FUN_00419580 (UNCONDITIONAL_CALL)`. The single call site is the
+    entry thunk.
+  - `--function 0x419580 --direction called --depth 3 --include-refs
+    true --format json` → `3 nodes, 3 edges`. Same root; the called walk
+    reaches `chkesp` twice (one local, one external `EXTERNAL:000001cb`)
+    and the tail-call cycle `chkesp -> chkesp (COMPUTED_JUMP)`. Only
+    present because `--include-refs true` follows the COMPUTED_JUMP;
+    the same call without it produces just 1 node / 1 edge.
+  - `--function chkesp --direction calling --depth 2` on
+    `/Mapeditor.exe` → `1025 nodes, 2057 edges` (the binary's full
+    reverse-call fan-in up to depth 2; under the 5000 cap so
+    `truncated=false`).
+  - Default `--format mermaid` emits a clean `graph TD` / `graph BT`
+    block on stdout, with the summary line on stderr. Pipe test:
+    `... | tail -n +2 | head -5` returns the first five Mermaid lines
+    (header + 3 nodes + 1 edge), confirming the stdout/stderr split.
+  - `--function main` on `/noanno-1781782566` → `1 node, 0 edges` (the
+    binary's `main` doesn't call anything; the BFS terminates
+    immediately). Pipe-friendly.
+  - `--function does_not_exist` → `No function matched 'does_not_exist'.`
+    (exit 1).
+  - `--depth 99` → `'depth' must be between 1 and 10.` (exit 1).
+  - `--direction sideways` → `Invalid 'direction' 'sideways': must be
+    called or calling.` (exit 1).
+  - `--format svg` → `Invalid 'format' 'svg': must be mermaid or json.`
+    (exit 1).
+  - `--file /NoSuch --function main` → `No program found for '/NoSuch'.`
+    (exit 1).
+  - Server log: `Procedures (91)` — was 90; +1 for `Callgraph`.
