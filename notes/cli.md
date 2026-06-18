@@ -3,8 +3,8 @@
 A small, synchronous, dependency-light Rust CLI that talks to the Ghidra TCP
 ndjson RPC server (see [rpc-server.md](rpc-server.md)). One invocation = one
 request = one response. Subcommands mirror the server's 39 procedures, grouped by
-the area they act on (function tags are nested under `function tag`, since they
-are function-scoped).
+the area they act on. Function-scoped operations are nested under `function`:
+tags under `function tag` and variable operations under `function variable`.
 
 ## Location & build
 
@@ -97,13 +97,13 @@ These two are the only short flags (the task's stated exceptions to the
 | `function tag change` | ChangeFunctionTagCmd |
 | `function tag add` | AddFunctionTagCmd |
 | `function tag remove` | RemoveFunctionTagCmd |
-| `variable add-stack` | AddStackVarCmd |
-| `variable add-register` | AddRegisterVarCmd |
-| `variable add-memory` | AddMemoryVarCmd |
-| `variable delete` | DeleteVariableCmd |
-| `variable set-name` | SetVariableNameCmd |
-| `variable set-type` | SetVariableDataTypeCmd |
-| `variable set-comment` | SetVariableCommentCmd |
+| `function variable add-stack` | AddStackVarCmd |
+| `function variable add-register` | AddRegisterVarCmd |
+| `function variable add-memory` | AddMemoryVarCmd |
+| `function variable delete` | DeleteVariableCmd |
+| `function variable set-name` | SetVariableNameCmd |
+| `function variable set-type` | SetVariableDataTypeCmd |
+| `function variable set-comment` | SetVariableCommentCmd |
 | `stack set-depth-change` | SetStackDepthChangeCommand |
 | `stack remove-depth-change` | RemoveStackDepthChangeCommand |
 | `analysis stack` | FunctionStackAnalysisCmd |

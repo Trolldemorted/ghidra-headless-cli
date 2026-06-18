@@ -3,7 +3,7 @@
 use clap::Subcommand;
 
 use crate::client::Client;
-use crate::commands::{decompile, disassemble, find, tag};
+use crate::commands::{decompile, disassemble, find, tag, variable};
 use crate::common::{self, Source};
 use crate::json::Req;
 
@@ -203,6 +203,11 @@ pub enum Cmd {
         #[command(subcommand)]
         cmd: tag::Cmd,
     },
+    /// Function variable operations
+    Variable {
+        #[command(subcommand)]
+        cmd: variable::Cmd,
+    },
 }
 
 pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
@@ -378,5 +383,6 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
         Cmd::FindByName(args) => find::run_by_name(args, client),
         Cmd::FindByTag(args) => find::run_by_tag(args, client),
         Cmd::Tag { cmd } => tag::run(cmd, client),
+        Cmd::Variable { cmd } => variable::run(cmd, client),
     }
 }

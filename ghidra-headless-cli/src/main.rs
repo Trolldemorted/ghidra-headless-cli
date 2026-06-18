@@ -35,15 +35,10 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Function create/delete/signature/tag operations
+    /// Function create/delete/signature/tag/variable operations
     Function {
         #[command(subcommand)]
         cmd: commands::function::Cmd,
-    },
-    /// Function variable operations
-    Variable {
-        #[command(subcommand)]
-        cmd: commands::variable::Cmd,
     },
     /// Stack-depth-change operations
     Stack {
@@ -84,7 +79,6 @@ fn main() {
 
     let result = match cli.command {
         Command::Function { cmd } => commands::function::run(cmd, &client),
-        Command::Variable { cmd } => commands::variable::run(cmd, &client),
         Command::Stack { cmd } => commands::stack::run(cmd, &client),
         Command::Analysis { cmd } => commands::analysis::run(cmd, &client),
         Command::Datatype { cmd } => commands::datatype::run(cmd, &client),
