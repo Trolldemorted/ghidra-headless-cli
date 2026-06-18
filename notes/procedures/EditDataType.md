@@ -20,6 +20,8 @@ interface EditDataTypeRequest {
   addEntries?: Array<{ name: string; value: number }>;
   // typedef:
   base?: string;            // not yet supported — returns an error if supplied
+  // OR a C snippet to merge into addFields/addEntries (see below):
+  definition?: string;      // "struct { long long sum; char tag; };"
 }
 ```
 
@@ -48,3 +50,40 @@ Same shape as `ShowDataType` — the edited type, fully described (post-edit).
 - All edits are batched into one transaction: if step 3 of 3 fails, steps
   1-2 are rolled back. The program is checked in by the dispatcher on
   commit; on rollback, no check-in occurs.
+
+## `definition` — C-snippet replace
+
+`definition` is the most powerful edit op: parse a C snippet, then
+`DataTypeConflictHandler.REPLACE_HANDLER` swaps the parsed type into
+the target's slot in place. References in function signatures, applied
+data, and other types are preserved (REPLACE is in-place, not
+delete+create). `rename` and `move` happen first, so the snippet's
+body replaces the type at its new path/name.
+
+```jsonc
+// Replace a struct's body wholesale. The snippet must declare the
+// target's name (struct CFoo) — REPLACE_HANDLER collides on name.
+{"path":"/CFoo","definition":"struct CFoo { long long sum; char tag; };"}
+
+// Replace an enum's body the same way:
+{"path":"/Color","definition":"enum Color { BLUE=2, ALPHA=3 };"}
+```
+
+Rules:
+
+- The snippet must produce exactly ONE type. The target type's `path`
+  defines the kind being edited; the snippet's kind must match
+  (`struct`/`union` ↔ composite target, `enum` ↔ enum target,
+  `typedef` ↔ typedef target). Mismatches return
+  `C snippet kind 'X' does not match target 'Y'.` BEFORE any commit.
+- **The snippet's name must equal the target's name.** Mismatches return
+  `C snippet name 'X' does not match target 'Y'. The snippet must
+  declare the target's name (e.g. `struct Y { ... };`).` The
+  `EditDataType` request does NOT auto-inject the target's name — write
+  it into the snippet.
+- **Anonymous snippets are rejected** (same rule as `CreateDataType`).
+  Write `struct TargetName { int x; };`, not `struct { int x; };`.
+- `definition` wins over `addFields`/`addEntries` on the request — the
+  explicit arrays are dropped, mirroring the precedence rule on
+  `CreateDataType`.
+- Parse failures return `IllegalArgumentException`'s message verbatim.

@@ -51,15 +51,25 @@ pub enum Cmd {
         /// Target file project path
         #[arg(long = "file", value_name = "FILE")]
         program: String,
-        /// One of: struct, union, enum, typedef
+        /// One of: struct, union, enum, typedef [default: required unless --definition is given]
         #[arg(long)]
-        kind: String,
-        /// New type name (must not already exist in target category)
+        kind: Option<String>,
+        /// New type name [default: required unless --definition is given;
+        /// when --definition is given the snippet's embedded name is the
+        /// type's name and --name is ignored]
         #[arg(long)]
-        name: String,
+        name: Option<String>,
         /// Target category path [default: /]
         #[arg(long)]
         category: Option<String>,
+        /// Full definition as a C snippet: "struct Foo { int x; char *name; };".
+        /// When given, --kind and --name become optional (the parsed type's
+        /// name is used) and --fields/--entries/--base are ignored. Anonymous
+        /// snippets ("struct { int x; };") return an error — the snippet must
+        /// declare a name. Existing types with the same name are REPLACED in
+        /// place (references preserved).
+        #[arg(long)]
+        definition: Option<String>,
         /// Fields as a JSON array (struct/union): [{"name":"x","type":"int"}]
         #[arg(long)]
         fields: Option<String>,
@@ -90,6 +100,12 @@ pub enum Cmd {
         /// Drop all existing fields before adding (struct/union) [default: false]
         #[arg(long)]
         replace_fields: Option<bool>,
+        /// Fields to append as a C snippet: "struct { long long sum; char tag; };".
+        /// The target type's name is auto-injected for anonymous snippets. The
+        /// snippet's kind must match the target (struct/union/enum); mismatch
+        /// returns an error before commit.
+        #[arg(long)]
+        definition: Option<String>,
         /// Fields to append (JSON array, struct/union)
         #[arg(long)]
         add_fields: Option<String>,
@@ -162,19 +178,35 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             kind,
             name,
             category,
+            definition,
             fields,
             entries,
             base,
             enum_size,
         } => {
-            let fields_json = parse_opt_json("fields", fields)?;
-            let entries_json = parse_opt_json("entries", entries)?;
+            // --definition wins over the explicit JSON arrays: when both are
+            // supplied the C snippet is authoritative (lets a user write the
+            // definition once and not have to mirror it as JSON). --kind and
+            // --name are optional on this path; the snippet's embedded kind
+            // and name are used.
+            let (kind, name, fields_json, entries_json, base) = if definition.is_some() {
+                (kind, None, None, None, None)
+            } else {
+                let k = kind
+                    .ok_or_else(|| common::log_arg_err("--kind is required (or pass --definition)".to_string()))?;
+                let n = name
+                    .ok_or_else(|| common::log_arg_err("--name is required (or pass --definition)".to_string()))?;
+                let f = parse_opt_json("fields", fields)?;
+                let e = parse_opt_json("entries", entries)?;
+                (Some(k), Some(n), f, e, base)
+            };
             let response = client.invoke(
                 Req::new("CreateDataType")
                     .str("file", program)
-                    .str("kind", kind)
-                    .str("name", name)
+                    .opt_str("kind", kind)
+                    .opt_str("name", name)
                     .opt_str("category", category)
+                    .opt_str("definition", definition)
                     .opt_json("fields", fields_json)
                     .opt_json("entries", entries_json)
                     .opt_str("base", base)
@@ -190,11 +222,18 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             rename,
             move_to,
             replace_fields,
+            definition,
             add_fields,
             add_entries,
         } => {
             let add_fields_json = parse_opt_json("addFields", add_fields)?;
             let add_entries_json = parse_opt_json("addEntries", add_entries)?;
+            // --definition wins over explicit --add-fields/--add-entries JSON.
+            let (add_fields_json, add_entries_json) = if definition.is_some() {
+                (None, None)
+            } else {
+                (add_fields_json, add_entries_json)
+            };
             let response = client.invoke(
                 Req::new("EditDataType")
                     .str("file", program)
@@ -202,6 +241,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                     .opt_str("rename", rename)
                     .opt_str("move", move_to)
                     .opt_bool("replaceFields", replace_fields)
+                    .opt_str("definition", definition)
                     .opt_json("addFields", add_fields_json)
                     .opt_json("addEntries", add_entries_json)
                     .build(),

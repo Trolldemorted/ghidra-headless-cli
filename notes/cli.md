@@ -154,8 +154,8 @@ These two are the only short flags (the task's stated exceptions to the
 | `comment decompiler clear` | DecompilerClear |
 | `datatype list` | ListDataTypes |
 | `datatype show` | ShowDataType |
-| `datatype create` | CreateDataType |
-| `datatype edit` | EditDataType |
+| `datatype create` | CreateDataType (supports `--definition`) |
+| `datatype edit` | EditDataType (supports `--definition`) |
 | `datatype delete` | DeleteDataType |
 | `datatype apply` | ApplyDataType |
 
@@ -224,6 +224,23 @@ $BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --addre
   verbatim, exit 1.
 * Mutating `function set-repeatable-comment` → `success`, exit 0 (server checked
   the new version in); reset afterward.
+* Data-type management: `datatype create --definition`, `--fields`, `--base`,
+  `--enum-size`; `datatype edit --definition`, `--add-fields`, `--replace-fields`.
+  `--definition` requires a NAMED C snippet — `struct Foo { … };`, not
+  `struct { … };`. Anonymous snippets return `C snippet must define a
+  NAMED type. Got an anonymous struct/union/enum body — write e.g.
+  `struct Foo { int x; };` with an identifier.` On `create`, `--kind`
+  and `--name` are optional when `--definition` is given (the parsed
+  type's name is used). On `edit`, the snippet's name must equal the
+  target's `path` last segment; mismatches return
+  `C snippet name 'X' does not match target 'Y'. The snippet must
+  declare the target's name (e.g. `struct Y { ... };`).` On the server
+  side, the C snippet is parsed by Ghidra's `CParser` directly into the
+  program DTM and added via `DataTypeConflictHandler.REPLACE_HANDLER` —
+  a name clash on `create` replaces the existing type in place
+  (references preserved). On `edit`, `--definition` replaces the type's
+  body wholesale. `kind` mismatch returns `C snippet kind 'X' does not
+  match target 'Y'.`; bad parse returns `C parse error: …` verbatim.
 * Error paths: bad address → `No function at deadbeef.`; unknown program →
   `No program found for '/NoSuchProgram.exe'.` — both verbatim, exit 1.
 * Mock server (`/workdir/testscripts/mock_rpc_server.py`) covers connection
