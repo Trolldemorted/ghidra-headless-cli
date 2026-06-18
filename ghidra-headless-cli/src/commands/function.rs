@@ -3,7 +3,7 @@
 use clap::Subcommand;
 
 use crate::client::Client;
-use crate::commands::tag;
+use crate::commands::{decompile, tag};
 use crate::common::{self, Source};
 use crate::json::Req;
 
@@ -184,6 +184,8 @@ pub enum Cmd {
         #[arg(long)]
         comment: String,
     },
+    /// Decompile a function to C
+    Decompile(decompile::DecompileArgs),
     /// Function tag operations
     Tag {
         #[command(subcommand)]
@@ -359,6 +361,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                 .str("comment", comment)
                 .build(),
         ),
+        Cmd::Decompile(args) => decompile::run(args, client),
         Cmd::Tag { cmd } => tag::run(cmd, client),
     }
 }

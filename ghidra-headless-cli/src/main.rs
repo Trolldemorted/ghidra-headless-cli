@@ -60,8 +60,6 @@ enum Command {
         #[command(subcommand)]
         cmd: commands::datatype::Cmd,
     },
-    /// Decompile a function to C
-    Decompile(commands::decompile::DecompileArgs),
     /// Project-level program operations (import, analyze)
     Program {
         #[command(subcommand)]
@@ -90,7 +88,6 @@ fn main() {
         Command::Stack { cmd } => commands::stack::run(cmd, &client),
         Command::Analysis { cmd } => commands::analysis::run(cmd, &client),
         Command::Datatype { cmd } => commands::datatype::run(cmd, &client),
-        Command::Decompile(args) => commands::decompile::run(args, &client),
         Command::Program { cmd } => commands::program::run(cmd, &client),
     };
 

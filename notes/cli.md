@@ -47,7 +47,7 @@ These two are the only short flags (the task's stated exceptions to the
 ## Output & exit codes
 
 * **stdout** carries command *data* only (decompiled C source); logs go to
-  **stderr** — so `decompile … > out.c` yields clean source.
+  **stderr** — so `function decompile … > out.c` yields clean source.
 * Status, results summaries, and errors are emitted via `log` to stderr.
 * Exit `0` on `success:true`; exit `1` on any transport error, malformed
   response, client-side argument error, or a `success:false` reply.
@@ -109,9 +109,9 @@ These two are the only short flags (the task's stated exceptions to the
 | `analysis decompiler-param-id` | DecompilerParameterIdCmd |
 | `analysis decompiler-switch` | DecompilerSwitchAnalysisCmd |
 | `analysis decompiler-convention` | DecompilerParallelConventionAnalysisCmd |
+| `function decompile` | FlatDecompilerAPI |
 | `datatype apply-function` | ApplyFunctionDataTypesCmd |
 | `datatype capture-function` | CaptureFunctionDataTypesCmd |
-| `decompile` | FlatDecompilerAPI |
 | `program load` | ProgramLoader |
 | `program analyze` | Analyze |
 
@@ -124,7 +124,7 @@ Per-procedure request/response field specs live in
 BIN=/workdir/ghidra-headless-cli/target/release/ghidra-headless-cli
 
 # Decompile to clean C on stdout (logs on stderr)
-$BIN --host 127.0.0.1:18000 decompile --program /Mapeditor.exe --address 0x4024f1 > fn.c
+$BIN --host 127.0.0.1:18000 function decompile --program /Mapeditor.exe --address 0x4024f1 > fn.c
 
 # Rename a function (mutating: checked out, checked in on success)
 $BIN --host 127.0.0.1:18000 function set-name \
@@ -146,7 +146,7 @@ $BIN --host 127.0.0.1:18000 program analyze --program /imports/foo.exe --force t
 
 ## Verification (2026-06-17, live against P3 @ ghidra.stronk.pw)
 
-* Read-only `decompile /Mapeditor.exe 0x4024f1` → exit 0, full C source on stdout
+* Read-only `function decompile /Mapeditor.exe 0x4024f1` → exit 0, full C source on stdout
   (escaped newlines/quotes parsed correctly by the hand-rolled JSON parser),
   status logs on stderr.
 * Mutating `function set-repeatable-comment` → `success`, exit 0 (server checked
