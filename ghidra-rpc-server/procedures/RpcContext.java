@@ -545,4 +545,109 @@ public class RpcContext {
         }
         return v;
     }
+
+    // ---------------------------------------------------------------------------
+    // Brief request summary for server-side logging.
+    // ---------------------------------------------------------------------------
+
+    /**
+     * Cap on a single value's text length when summarised for the server log.
+     * Anything longer is truncated with a trailing {@code "..."} so each call
+     * fits on one log line. 200 chars matches the convention in our notes and
+     * is enough to identify a request without dumping full payloads.
+     */
+    public static final int BRIEF_VALUE_MAX = 200;
+
+    /**
+     * Render a request's arguments as a single greppable line for the server
+     * log: alphabetically-sorted {@code key=value} pairs, space-separated.
+     * The {@code procedure} field is omitted (caller already prefixes it).
+     * String values longer than {@link #BRIEF_VALUE_MAX} are truncated with a
+     * trailing {@code "..."}; nested objects and arrays are summarised by
+     * length (e.g. {@code [tags:2]}). Designed never to throw and never to
+     * return null.
+     */
+    public static String briefArgs(JsonObject req) {
+        if (req == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        java.util.TreeMap<String, String> sorted = new java.util.TreeMap<>();
+        for (java.util.Map.Entry<String, JsonElement> e : req.entrySet()) {
+            String k = e.getKey();
+            if ("procedure".equals(k)) {
+                continue;
+            }
+            sorted.put(k, OPAQUE_FIELDS.contains(k)
+                ? opaqueSummary(e.getValue())
+                : briefValue(e.getValue()));
+        }
+        boolean first = true;
+        for (java.util.Map.Entry<String, String> e : sorted.entrySet()) {
+            if (!first) sb.append(' ');
+            first = false;
+            sb.append(e.getKey()).append('=').append(e.getValue());
+        }
+        return sb.toString();
+    }
+
+    /** Render one JSON value as a brief log fragment; never throws, never null. */
+    private static String briefValue(JsonElement v) {
+        if (v == null || v.isJsonNull()) {
+            return "null";
+        }
+        if (v.isJsonPrimitive()) {
+            String s = v.getAsString();
+            return truncate(s == null ? v.toString() : s);
+        }
+        if (v.isJsonArray()) {
+            return "[" + v.getAsJsonArray().size() + "]";
+        }
+        if (v.isJsonObject()) {
+            return "{" + v.getAsJsonObject().size() + "}";
+        }
+        return truncate(v.toString());
+    }
+
+    /**
+     * Field names whose values are always logged as length only, never as
+     * content. {@code bytes} is base64 of a whole binary on ProgramLoader and
+     * a raw read on ReadBytes — the contents are unreadable in the log, take
+     * hundreds of lines to dump, and risk leaking the input binary into log
+     * aggregation. Add more here as we find them.
+     */
+    private static final java.util.Set<String> OPAQUE_FIELDS =
+        java.util.Set.of("bytes");
+
+    /**
+     * Length-only summary for a value we treat as opaque (no content in the
+     * log). For strings: byte/char count. For arrays/objects: element count.
+     * Falls back to {@code "?"} for nulls/primitives we don't expect here.
+     */
+    private static String opaqueSummary(JsonElement v) {
+        if (v == null || v.isJsonNull()) {
+            return "?";
+        }
+        if (v.isJsonPrimitive()) {
+            return String.valueOf(v.getAsString().length());
+        }
+        if (v.isJsonArray()) {
+            return "[" + v.getAsJsonArray().size() + "]";
+        }
+        if (v.isJsonObject()) {
+            return "{" + v.getAsJsonObject().size() + "}";
+        }
+        return "?";
+    }
+
+    /** Trim {@code s} to {@link #BRIEF_VALUE_MAX} chars, appending "..." if cut. */
+    private static String truncate(String s) {
+        if (s == null) {
+            return "";
+        }
+        if (s.length() <= BRIEF_VALUE_MAX) {
+            return s;
+        }
+        return s.substring(0, BRIEF_VALUE_MAX) + "...";
+    }
 }

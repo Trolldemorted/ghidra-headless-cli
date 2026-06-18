@@ -254,13 +254,33 @@ public class RpcServer extends GhidraScript {
         if (handler == null) {
             return RpcResponse.error("Unknown procedure: " + procedure + ".");
         }
+        // Log the call (procedure + brief args) on entry, then the outcome on exit,
+        // so every request shows up as a pair of lines in the server log. The args
+        // summary is bounded (RpcContext.BRIEF_VALUE_MAX chars per value) so a giant
+        // comment or base64 blob can't blow up the log line.
+        Msg.info(this, "Rpc #" + Thread.currentThread().getId()
+                + " call " + procedure + " " + RpcContext.briefArgs(request));
+        RpcResponse response;
         try {
-            return context.dispatch(handler, request); // serializes program access
+            response = context.dispatch(handler, request); // serializes program access
         } catch (Exception e) {
             String msg = e.getMessage();
-            return RpcResponse.error(msg != null ? msg
+            response = RpcResponse.error(msg != null ? msg
                 : "Internal error: " + e.getClass().getSimpleName());
         }
+        Msg.info(this, "Rpc #" + Thread.currentThread().getId()
+                + " done " + procedure + " " + (response.success ? "ok" : "error")
+                + (response.success ? "" : ": " + briefError(response)));
+        return response;
+    }
+
+    /** Trim an error message for the done-line log (don't echo multi-KB messages). */
+    private static String briefError(RpcResponse r) {
+        if (r == null || r.error == null) {
+            return "";
+        }
+        String s = r.error;
+        return s.length() <= 200 ? s : s.substring(0, 200) + "...";
     }
 
     /** Pre-registered handler, else reflectively load <pkg>.<procedure>Handler. */
