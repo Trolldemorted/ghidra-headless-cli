@@ -1,7 +1,7 @@
-//! Data-type management: list / show / create / edit / delete / apply.
+//! Data-type management: list / show / create / replace / edit / delete.
 //!
 //! These wire to the `ListDataTypes`, `ShowDataType`, `CreateDataType`,
-//! `EditDataType`, `DeleteDataType`, and `ApplyDataType` RPC procedures.
+//! `ReplaceDataType`, `EditDataType`, and `DeleteDataType` RPC procedures.
 //!
 //! Path syntax mirrors the server: a leading slash, category segments
 //! separated by slashes, name as the last segment. Examples: `/int`,
@@ -10,6 +10,10 @@
 //! Complex payload fields (`--fields` for struct/union, `--entries` for
 //! enum) are accepted as JSON literals on the command line. Both are arrays
 //! of objects: `[{"name":"x","type":"int"}]` and `[{"name":"RED","value":0}]`.
+//!
+//! NOTE: `datatype apply` was removed; it now lives under `memory apply-type`
+//! because it operates on program memory (laying a type at an address),
+//! not on the DTM.
 
 use clap::Subcommand;
 
@@ -160,24 +164,6 @@ pub enum Cmd {
         #[arg(long)]
         path: String,
     },
-    /// Apply a data type at an address (or address range)
-    Apply {
-        /// Target file project path
-        #[arg(long = "file", value_name = "FILE")]
-        program: String,
-        /// Data type to apply (C-syntax expression or full path)
-        #[arg(long = "type")]
-        type_name: String,
-        /// Single address to apply at (hex)
-        #[arg(long, conflicts_with = "address_set")]
-        address: Option<String>,
-        /// Address range as START[:END] (repeatable). When given, --address is ignored.
-        #[arg(long = "address-set", value_name = "START[:END]")]
-        address_set: Vec<String>,
-        /// Byte length to consume at a single address [default: type's length]
-        #[arg(long)]
-        length: Option<i64>,
-    },
 }
 
 pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
@@ -280,46 +266,6 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                 "{} {}",
                 if deleted { "deleted" } else { "NOT deleted" },
                 response.get("path").and_then(Json::as_str).unwrap_or("?")
-            );
-            Ok(())
-        }
-        Cmd::Apply {
-            program,
-            type_name,
-            address,
-            address_set,
-            length,
-        } => {
-            let req = Req::new("ApplyDataType")
-                .str("file", program)
-                .str("type", type_name)
-                .opt_int("length", length);
-            let req = if !address_set.is_empty() {
-                let items: Vec<Json> = address_set
-                    .iter()
-                    .map(|s| {
-                        let parts: Vec<&str> = s.splitn(2, ':').collect();
-                        let start = parts[0].to_string();
-                        let end = parts.get(1).map(|e| (*e).to_string());
-                        let mut fields = vec![("start".to_string(), Json::Str(start))];
-                        if let Some(e) = end {
-                            fields.push(("end".to_string(), Json::Str(e)));
-                        }
-                        Json::Obj(fields)
-                    })
-                    .collect();
-                req.opt_json("addressSet", Some(Json::Arr(items)))
-            } else {
-                req.opt_str("address", address)
-            };
-            let response = client.invoke(req.build())?;
-            let created = response.get("created").and_then(Json::as_f64).unwrap_or(0.0) as i64;
-            let bytes = response.get("bytes").and_then(Json::as_f64).unwrap_or(0.0) as i64;
-            log::info!(
-                "applied {} ({} entries, {} bytes)",
-                response.get("type").and_then(Json::as_str).unwrap_or("?"),
-                created,
-                bytes
             );
             Ok(())
         }

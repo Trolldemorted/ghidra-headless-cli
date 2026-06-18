@@ -76,7 +76,9 @@ enum Command {
         #[command(subcommand)]
         cmd: commands::comment::Cmd,
     },
-    /// Data-type management: list / show / create / replace / edit / delete / apply
+    /// Data-type management: list / show / create / replace / edit / delete
+    /// (use `memory apply-type` to lay a type at an address — that verb was
+    /// moved here from `datatype apply` because it operates on memory).
     Datatype {
         #[command(subcommand)]
         cmd: commands::datatype::Cmd,
@@ -89,7 +91,8 @@ enum Command {
     Import(commands::import::Cmd),
     /// External export: list entry points this program exposes to other modules
     Export(commands::export::Cmd),
-    /// Static-memory labels (create/rename/delete/set-primary/list/lookup/get) and raw byte reads
+    /// Static-memory labels (create/rename/delete/set-primary/list/lookup/get),
+    /// raw byte reads, and applying a data type at an address (apply-type)
     Memory {
         #[command(subcommand)]
         cmd: commands::memory::Cmd,

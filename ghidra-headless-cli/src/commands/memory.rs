@@ -1,6 +1,6 @@
 //! `memory` subcommand: static-memory labels (create / rename / delete /
-//! set-primary / list / lookup / get) and raw byte reads. Wires to 8 separate
-//! RPC procedures — one per verb.
+//! set-primary / list / lookup / get), raw byte reads, and applying a data
+//! type at an address. Wires to 9 separate RPC procedures — one per verb.
 
 use clap::{Args, Subcommand};
 
@@ -25,6 +25,8 @@ pub enum Cmd {
     GetLabel(GetLabelArgs),
     /// Read bytes starting at an address
     ReadBytes(ReadBytesArgs),
+    /// Apply a data type at an address (or address range)
+    ApplyType(ApplyTypeArgs),
 }
 
 #[derive(Args, Debug)]
@@ -146,6 +148,30 @@ pub struct ReadBytesArgs {
     pub format: String,
 }
 
+/// Args for `memory apply-type`. Lays a data type at a single address or
+/// across a range; the only `memory` verb that consumes a type definition.
+/// Was previously `datatype apply` — moved because it operates on program
+/// memory (clears the existing code unit, then `Listing.createData`) rather
+/// than on the DTM.
+#[derive(Args, Debug)]
+pub struct ApplyTypeArgs {
+    /// Target file project path
+    #[arg(long = "file", value_name = "FILE")]
+    pub program: String,
+    /// Data type to apply (C-syntax expression or full path; leading '/' stripped)
+    #[arg(long = "type")]
+    pub type_name: String,
+    /// Single address to apply at (hex)
+    #[arg(long, conflicts_with = "address_set")]
+    pub address: Option<String>,
+    /// Address range as START[:END] (repeatable). When given, --address is ignored.
+    #[arg(long = "address-set", value_name = "START[:END]")]
+    pub address_set: Vec<String>,
+    /// Byte length to consume at a single address [default: type's length]
+    #[arg(long)]
+    pub length: Option<i64>,
+}
+
 pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
     let req = match &cmd {
         Cmd::CreateLabel(a) => Req::new("CreateLabel")
@@ -195,6 +221,32 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             .int("length", a.length)
             .str("format", a.format.clone())
             .build(),
+        Cmd::ApplyType(a) => {
+            let mut req = Req::new("ApplyDataType")
+                .str("file", a.program.clone())
+                .str("type", a.type_name.clone())
+                .opt_int("length", a.length);
+            if !a.address_set.is_empty() {
+                let items: Vec<Json> = a
+                    .address_set
+                    .iter()
+                    .map(|s| {
+                        let parts: Vec<&str> = s.splitn(2, ':').collect();
+                        let start = parts[0].to_string();
+                        let end = parts.get(1).map(|e| (*e).to_string());
+                        let mut fields = vec![("start".to_string(), Json::Str(start))];
+                        if let Some(e) = end {
+                            fields.push(("end".to_string(), Json::Str(e)));
+                        }
+                        Json::Obj(fields)
+                    })
+                    .collect();
+                req = req.opt_json("addressSet", Some(Json::Arr(items)));
+                req.build()
+            } else {
+                req.opt_str("address", a.address.clone()).build()
+            }
+        }
     };
     let response = client.invoke(req)?;
     print_response(&cmd, &response);
@@ -257,6 +309,16 @@ fn print_response(cmd: &Cmd, response: &Json) {
                     println!("{}", line);
                 }
             }
+        }
+        Cmd::ApplyType(_) => {
+            let created = response.get("created").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+            let bytes = response.get("bytes").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+            log::info!(
+                "applied {} ({} entries, {} bytes)",
+                response.get("type").and_then(Json::as_str).unwrap_or("?"),
+                created,
+                bytes
+            );
         }
     }
 }

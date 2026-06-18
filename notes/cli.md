@@ -9,7 +9,8 @@ data-type apply/capture under `function apply-types`/`function capture-types`.
 Comment operations are nested under `comment`: each of the 6 Ghidra comment types
 (EOL/PRE/POST/PLATE/REPEATABLE/DECOMPILER) gets its own subcommand, and each
 type has `get`/`set`/`append`/`clear` ops. Data-type management (list / show /
-create / edit / delete / apply) lives under `datatype`.
+create / replace / edit / delete) lives under `datatype`. Laying a type at an
+address (`apply`) is a memory operation and lives under `memory apply-type`.
 
 ## Location & build
 
@@ -157,7 +158,6 @@ These two are the only short flags (the task's stated exceptions to the
 | `datatype create` | CreateDataType (supports `--definition`) |
 | `datatype edit` | EditDataType (supports `--definition`) |
 | `datatype delete` | DeleteDataType |
-| `datatype apply` | ApplyDataType |
 | `xrefs` | GetXrefs |
 | `import` | GetImports |
 | `export` | GetExports |
@@ -170,6 +170,7 @@ These two are the only short flags (the task's stated exceptions to the
 | `memory lookup-label` | LookupLabel |
 | `memory get-label` | GetLabel |
 | `memory read-bytes` | ReadBytes |
+| `memory apply-type` | ApplyDataType |
 | `string search` | SearchStrings |
 | `string get` | GetString |
 | `string define` | DefineString |
