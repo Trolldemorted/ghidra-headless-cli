@@ -33,7 +33,9 @@ public final class DisassembleHandler implements RpcProcedure {
 
     @Override
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
-        Function function = ctx.requireFunctionAt(RpcContext.reqStr(req, "address"));
+        // `address` accepts either a hex address or an exact function name
+        // (resolved via RpcContext.requireFunction).
+        Function function = ctx.requireFunction(RpcContext.reqStr(req, "address"));
         boolean includeBytes = RpcContext.optBool(req, "bytes", true);
 
         Listing listing = ctx.program().getListing();

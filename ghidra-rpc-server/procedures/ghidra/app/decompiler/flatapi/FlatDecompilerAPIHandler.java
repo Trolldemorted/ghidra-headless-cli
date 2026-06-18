@@ -21,7 +21,11 @@ public final class FlatDecompilerAPIHandler implements RpcProcedure {
 
     @Override
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
-        Function function = ctx.requireFunctionAt(RpcContext.reqStr(req, "address"));
+        // `address` accepts either a hex address or an exact function name
+        // (resolved via RpcContext.requireFunction). Names take one extra
+        // lookup pass but let callers pipe `--function main` without having
+        // to resolve the address first.
+        Function function = ctx.requireFunction(RpcContext.reqStr(req, "address"));
         int timeoutSecs = RpcContext.optInt(req, "timeoutSecs", 0);
 
         // FlatDecompilerAPI lazily opens a DecompInterface; dispose() releases it.

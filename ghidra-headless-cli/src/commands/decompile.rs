@@ -10,8 +10,9 @@ pub struct DecompileArgs {
     /// Target file project path
     #[arg(long = "file", value_name = "FILE")]
     program: String,
-    /// Function entry address (hex)
-    #[arg(long)]
+    /// Function identifier: entry address (e.g. "0x401000") OR exact function
+    /// name (e.g. "main"). Address takes precedence when both would match.
+    #[arg(long = "function", alias = "address", value_name = "FN_OR_ADDR")]
     address: String,
     /// Decompiler timeout in seconds [default: 0 = library default]
     #[arg(long)]

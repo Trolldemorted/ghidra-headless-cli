@@ -26,6 +26,7 @@ import ghidra.program.model.data.DataType;
 import ghidra.program.model.data.DataTypeManager;
 import ghidra.program.model.lang.Register;
 import ghidra.program.model.listing.Function;
+import ghidra.program.model.listing.FunctionManager;
 import ghidra.program.model.listing.FunctionSignature;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.listing.Variable;
@@ -430,6 +431,49 @@ public class RpcContext {
 
     public Function requireFunctionAt(String address) {
         return requireFunctionAt(requireAddress(address));
+    }
+
+    /**
+     * Resolve a function by either a hex address (preferred) or an exact
+     * function name. Mirrors the {@code "function"} branch of
+     * {@code GetXrefsHandler.resolveTarget} so procedures like decompile and
+     * disassemble can accept either form from a single {@code --function}
+     * flag. Exact-name match (not substring) matches Ghidra's own function
+     * dialog behavior; collisions are reported as {@code "multiple functions
+     * matched 'foo'"} so the caller knows to switch to an address.
+     */
+    public Function requireFunction(String spec) {
+        if (spec == null || spec.trim().isEmpty()) {
+            throw new IllegalArgumentException("Missing function address or name.");
+        }
+        FunctionManager fm = active().getFunctionManager();
+        Address a = parseAddress(spec);
+        if (a != null) {
+            Function f = fm.getFunctionAt(a);
+            if (f != null) {
+                return f;
+            }
+        }
+        // Exact-name match; report collisions so silent-prefix-match bugs
+        // don't bite callers later (e.g. two functions named foo_main and
+        // foo_main_cold).
+        Function match = null;
+        int matches = 0;
+        for (Function f : fm.getFunctions(true)) {
+            if (f.getName().equals(spec)) {
+                match = f;
+                matches++;
+                if (matches > 1) {
+                    throw new IllegalArgumentException(
+                        "Multiple functions matched '" + spec + "'; use an address.");
+                }
+            }
+        }
+        if (match != null) {
+            return match;
+        }
+        throw new IllegalArgumentException(
+            "No function matched '" + spec + "' (by address or name).");
     }
 
     /**
