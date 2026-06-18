@@ -30,7 +30,7 @@ pub enum Cmd {
         /// Tag name
         #[arg(long)]
         name: String,
-        /// Tag comment
+        /// Tag comment [default: none]
         #[arg(long)]
         comment: Option<String>,
     },
@@ -51,7 +51,7 @@ pub enum Cmd {
         /// New name or comment
         #[arg(long)]
         value: String,
-        /// Which field to change
+        /// Which field to change [default: name]
         #[arg(long, value_enum)]
         field: Option<TagField>,
     },

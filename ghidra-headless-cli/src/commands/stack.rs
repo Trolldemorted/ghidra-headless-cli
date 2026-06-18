@@ -14,7 +14,7 @@ pub enum Cmd {
         program: String,
         #[arg(long)]
         address: String,
-        /// Stack depth change in bytes
+        /// Stack depth change in bytes [default: 0]
         #[arg(long)]
         stack_depth_change: Option<i64>,
     },

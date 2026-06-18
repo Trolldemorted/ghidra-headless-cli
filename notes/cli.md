@@ -62,7 +62,10 @@ These two are the only short flags (the task's stated exceptions to the
   (`USER_DEFINED`) apply.
 * Optional fields are sent **only when given**, so the server's documented
   defaults always apply when a flag is omitted. Boolean options take an explicit
-  value: `--force true`, `--create-bookmarks false`.
+  value: `--force true`, `--create-bookmarks false`. Every optional flag's
+  `--help` line ends with the effective default it falls back to (e.g.
+  `[default: user-defined]`, `[default: true]`, `[default: 0 = unlimited]`),
+  matching the server-side defaults in `notes/procedures/<Cmd>.md`.
 * Address sets: `--address <hex>` (single) **or** `--address-set <START[:END]>`
   (repeatable). At least one is required client-side; each `--address-set` entry
   becomes `{start[,end]}`. Example: `--address-set 0x401000:0x401050 --address-set 0x402000`.

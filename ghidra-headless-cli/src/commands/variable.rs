@@ -16,13 +16,16 @@ pub enum Cmd {
         /// Function entry address (hex)
         #[arg(long)]
         address: String,
-        /// Stack frame offset
+        /// Stack frame offset [default: 0]
         #[arg(long)]
         stack_offset: Option<i64>,
+        /// Variable name [default: auto-generated]
         #[arg(long)]
         name: Option<String>,
+        /// Data type name [default: undefined]
         #[arg(long)]
         data_type: Option<String>,
+        /// Symbol source type [default: user-defined]
         #[arg(long, value_enum)]
         source: Option<Source>,
     },
@@ -35,10 +38,13 @@ pub enum Cmd {
         /// Register name, e.g. "EAX"
         #[arg(long)]
         register: String,
+        /// Variable name [default: auto-generated]
         #[arg(long)]
         name: Option<String>,
+        /// Data type name [default: undefined]
         #[arg(long)]
         data_type: Option<String>,
+        /// Symbol source type [default: user-defined]
         #[arg(long, value_enum)]
         source: Option<Source>,
     },
@@ -51,10 +57,13 @@ pub enum Cmd {
         /// Variable storage address (hex)
         #[arg(long)]
         memory_address: String,
+        /// Variable name [default: auto-generated]
         #[arg(long)]
         name: Option<String>,
+        /// Data type name [default: undefined]
         #[arg(long)]
         data_type: Option<String>,
+        /// Symbol source type [default: user-defined]
         #[arg(long, value_enum)]
         source: Option<Source>,
     },
@@ -78,6 +87,7 @@ pub enum Cmd {
         old_name: String,
         #[arg(long)]
         new_name: String,
+        /// Symbol source type [default: user-defined]
         #[arg(long, value_enum)]
         source: Option<Source>,
     },
@@ -92,6 +102,7 @@ pub enum Cmd {
         name: String,
         #[arg(long)]
         data_type: String,
+        /// Symbol source type [default: user-defined]
         #[arg(long, value_enum)]
         source: Option<Source>,
     },

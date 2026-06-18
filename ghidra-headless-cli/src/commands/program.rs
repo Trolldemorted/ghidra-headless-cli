@@ -18,10 +18,10 @@ pub enum Cmd {
         /// Local file whose bytes are uploaded (base64-encoded in the request)
         #[arg(long)]
         file: String,
-        /// Destination project folder; created if missing
+        /// Destination project folder; created if missing [default: /]
         #[arg(long)]
         folder: Option<String>,
-        /// Version-control comment
+        /// Version-control comment [default: none]
         #[arg(long)]
         comment: Option<String>,
     },
@@ -30,7 +30,7 @@ pub enum Cmd {
         /// Target program project path
         #[arg(long)]
         program: String,
-        /// Re-analyze even if already analyzed
+        /// Re-analyze even if already analyzed [default: true]
         #[arg(long)]
         force: Option<bool>,
     },

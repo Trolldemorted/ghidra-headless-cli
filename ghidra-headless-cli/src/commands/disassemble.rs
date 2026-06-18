@@ -13,7 +13,7 @@ pub struct DisassembleArgs {
     /// Function entry address (hex)
     #[arg(long)]
     address: String,
-    /// Include raw instruction bytes (default true)
+    /// Include raw instruction bytes [default: true]
     #[arg(long)]
     bytes: Option<bool>,
 }

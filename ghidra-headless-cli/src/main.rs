@@ -25,7 +25,7 @@ struct Cli {
     #[arg(short = 'H', long, global = true, default_value = "127.0.0.1:18000")]
     host: String,
 
-    /// Increase logging verbosity (-v debug, -vv trace with raw ndjson)
+    /// Increase logging verbosity (-v debug, -vv trace with raw ndjson) [default: info]
     #[arg(short = 'v', long, action = clap::ArgAction::Count, global = true)]
     verbose: u8,
 

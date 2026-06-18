@@ -13,7 +13,7 @@ pub struct DecompileArgs {
     /// Function entry address (hex)
     #[arg(long)]
     address: String,
-    /// Decompiler timeout (seconds); omit for the library default
+    /// Decompiler timeout in seconds [default: 0 = library default]
     #[arg(long)]
     timeout_secs: Option<i64>,
 }

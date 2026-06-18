@@ -19,7 +19,7 @@ pub enum Cmd {
         /// Address range START[:END] (repeatable)
         #[arg(long)]
         address_set: Vec<String>,
-        /// Force processing of already-analyzed functions
+        /// Force processing of already-analyzed functions [default: false]
         #[arg(long)]
         force_processing: Option<bool>,
     },
@@ -31,6 +31,7 @@ pub enum Cmd {
         address: Option<String>,
         #[arg(long)]
         address_set: Vec<String>,
+        /// Force processing of already-analyzed functions [default: false]
         #[arg(long)]
         force_processing: Option<bool>,
     },
@@ -42,6 +43,7 @@ pub enum Cmd {
         address: Option<String>,
         #[arg(long)]
         address_set: Vec<String>,
+        /// Force processing of already-analyzed functions [default: false]
         #[arg(long)]
         force_processing: Option<bool>,
     },
@@ -62,15 +64,16 @@ pub enum Cmd {
         address: Option<String>,
         #[arg(long)]
         address_set: Vec<String>,
+        /// Symbol source type [default: user-defined]
         #[arg(long, value_enum)]
         source: Option<Source>,
-        /// Commit identified data types
+        /// Commit identified data types [default: true]
         #[arg(long)]
         commit_data_types: Option<bool>,
-        /// Commit a void return when identified
+        /// Commit a void return when identified [default: true]
         #[arg(long)]
         commit_void_return: Option<bool>,
-        /// Decompiler timeout (seconds)
+        /// Decompiler timeout in seconds [default: 60]
         #[arg(long)]
         timeout: Option<i64>,
     },
@@ -80,6 +83,7 @@ pub enum Cmd {
         program: String,
         #[arg(long)]
         address: String,
+        /// Decompiler timeout in seconds [default: 60]
         #[arg(long)]
         timeout: Option<i64>,
     },
@@ -89,6 +93,7 @@ pub enum Cmd {
         program: String,
         #[arg(long)]
         address: String,
+        /// Decompiler timeout in seconds [default: 60]
         #[arg(long)]
         timeout: Option<i64>,
     },

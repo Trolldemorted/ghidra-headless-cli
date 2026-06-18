@@ -34,10 +34,10 @@ pub enum Cmd {
         /// Entry point address (hex)
         #[arg(long)]
         address: String,
-        /// Function name
+        /// Function name [default: auto-named, e.g. FUN_<address>]
         #[arg(long)]
         name: Option<String>,
-        /// Symbol source type
+        /// Symbol source type [default: user-defined]
         #[arg(long, value_enum)]
         source: Option<Source>,
     },
@@ -51,6 +51,7 @@ pub enum Cmd {
         /// Address range START[:END] (repeatable)
         #[arg(long)]
         address_set: Vec<String>,
+        /// Symbol source type [default: user-defined]
         #[arg(long, value_enum)]
         source: Option<Source>,
     },
@@ -60,10 +61,10 @@ pub enum Cmd {
         program: String,
         #[arg(long)]
         address: String,
-        /// Thunked function address; omit to auto-detect
+        /// Thunked function address [default: auto-detected]
         #[arg(long)]
         referenced_function_address: Option<String>,
-        /// Check existing function when auto-detecting
+        /// Check existing function when auto-detecting [default: false]
         #[arg(long)]
         check_existing: Option<bool>,
     },
@@ -76,9 +77,10 @@ pub enum Cmd {
         library: String,
         #[arg(long)]
         name: String,
-        /// Optional memory address to bind
+        /// Memory address to bind [default: unbound]
         #[arg(long)]
         address: Option<String>,
+        /// Symbol source type [default: user-defined]
         #[arg(long, value_enum)]
         source: Option<Source>,
     },
@@ -104,6 +106,7 @@ pub enum Cmd {
         address: String,
         #[arg(long)]
         name: String,
+        /// Symbol source type [default: user-defined]
         #[arg(long, value_enum)]
         source: Option<Source>,
     },
@@ -116,6 +119,7 @@ pub enum Cmd {
         /// Data type name, e.g. "int", "void *"
         #[arg(long)]
         data_type: String,
+        /// Symbol source type [default: user-defined]
         #[arg(long, value_enum)]
         source: Option<Source>,
     },
@@ -128,6 +132,7 @@ pub enum Cmd {
         /// C signature, e.g. "int foo(char *s, int n)"
         #[arg(long)]
         signature: String,
+        /// Symbol source type [default: user-defined]
         #[arg(long, value_enum)]
         source: Option<Source>,
     },
@@ -137,21 +142,22 @@ pub enum Cmd {
         program: String,
         #[arg(long)]
         address: String,
-        /// Parameter storage handling
+        /// Parameter storage handling [default: dynamic-storage-formal-params]
         #[arg(long, value_enum)]
         update_type: Option<UpdateType>,
-        /// Calling convention, e.g. "__stdcall"
+        /// Calling convention, e.g. "__stdcall" [default: unchanged]
         #[arg(long)]
         calling_convention: Option<String>,
-        /// Return data type name
+        /// Return data type name [default: unchanged]
         #[arg(long)]
         return_type: Option<String>,
         /// Parameter as [NAME=]DATATYPE (repeatable)
         #[arg(long)]
         parameter: Vec<String>,
+        /// Symbol source type [default: user-defined]
         #[arg(long, value_enum)]
         source: Option<Source>,
-        /// Override conflicting storage
+        /// Override conflicting storage [default: false]
         #[arg(long)]
         force: Option<bool>,
     },
@@ -161,7 +167,7 @@ pub enum Cmd {
         program: String,
         #[arg(long)]
         address: String,
-        /// Whether the function has varargs
+        /// Whether the function has varargs [default: true]
         #[arg(long)]
         has_var_args: Option<bool>,
     },
@@ -171,7 +177,7 @@ pub enum Cmd {
         program: String,
         #[arg(long)]
         address: String,
-        /// Purge size in bytes
+        /// Purge size in bytes [default: 0]
         #[arg(long)]
         purge: Option<i64>,
     },

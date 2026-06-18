@@ -19,12 +19,13 @@ pub enum Cmd {
         /// Address range START[:END] (repeatable)
         #[arg(long)]
         address_set: Vec<String>,
+        /// Symbol source type [default: user-defined]
         #[arg(long, value_enum)]
         source: Option<Source>,
-        /// Create bookmarks for applied types
+        /// Create bookmarks for applied types [default: true]
         #[arg(long)]
         create_bookmarks: Option<bool>,
-        /// Always replace existing signatures
+        /// Always replace existing signatures [default: false]
         #[arg(long)]
         always_replace: Option<bool>,
     },

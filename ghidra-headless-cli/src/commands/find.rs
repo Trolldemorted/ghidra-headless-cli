@@ -13,13 +13,13 @@ pub struct FindByNameArgs {
     /// Substring to search for in function names (or a regex with --regex)
     #[arg(long)]
     query: String,
-    /// Treat the query as a regular expression
+    /// Treat the query as a regular expression [default: false]
     #[arg(long)]
     regex: Option<bool>,
-    /// Match case-insensitively
+    /// Match case-insensitively [default: false]
     #[arg(long)]
     ignore_case: Option<bool>,
-    /// Cap the number of results (0 = unlimited)
+    /// Cap the number of results [default: 0 = unlimited]
     #[arg(long)]
     limit: Option<i64>,
 }
@@ -32,13 +32,13 @@ pub struct FindByTagArgs {
     /// Exact tag name a function must have (or a regex over tag names with --regex)
     #[arg(long)]
     query: String,
-    /// Treat the query as a regular expression
+    /// Treat the query as a regular expression [default: false]
     #[arg(long)]
     regex: Option<bool>,
-    /// Match case-insensitively
+    /// Match case-insensitively [default: false]
     #[arg(long)]
     ignore_case: Option<bool>,
-    /// Cap the number of results (0 = unlimited)
+    /// Cap the number of results [default: 0 = unlimited]
     #[arg(long)]
     limit: Option<i64>,
 }
