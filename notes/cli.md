@@ -2,12 +2,14 @@
 
 A small, synchronous, dependency-light Rust CLI that talks to the Ghidra TCP
 ndjson RPC server (see [rpc-server.md](rpc-server.md)). One invocation = one
-request = one response. Subcommands mirror the server's 44+24 procedures, grouped by
+request = one response. Subcommands mirror the server's 44+24+6 procedures, grouped by
 the area they act on. Function-scoped operations are nested under `function`:
-tags under `function tag` and variable operations under `function variable`.
+tags under `function tag`, variable operations under `function variable`,
+data-type apply/capture under `function apply-types`/`function capture-types`.
 Comment operations are nested under `comment`: each of the 6 Ghidra comment types
 (EOL/PRE/POST/PLATE/REPEATABLE/DECOMPILER) gets its own subcommand, and each
-type has `get`/`set`/`append`/`clear` ops.
+type has `get`/`set`/`append`/`clear` ops. Data-type management (list / show /
+create / edit / delete / apply) lives under `datatype`.
 
 ## Location & build
 
@@ -120,8 +122,8 @@ These two are the only short flags (the task's stated exceptions to the
 | `function disassemble` | Disassemble |
 | `function find-by-name` | FindFunctionsByName |
 | `function find-by-tag` | FindFunctionsByTag |
-| `datatype apply-function` | ApplyFunctionDataTypesCmd |
-| `datatype capture-function` | CaptureFunctionDataTypesCmd |
+| `function apply-data-types` | ApplyFunctionDataTypesCmd |
+| `function capture-data-types` | CaptureFunctionDataTypesCmd |
 | `file load` | ProgramLoader |
 | `file analyze` | Analyze |
 | `file list` | ListFiles |
@@ -150,6 +152,12 @@ These two are the only short flags (the task's stated exceptions to the
 | `comment decompiler set` | DecompilerSet |
 | `comment decompiler append` | DecompilerAppend |
 | `comment decompiler clear` | DecompilerClear |
+| `datatype list` | ListDataTypes |
+| `datatype show` | ShowDataType |
+| `datatype create` | CreateDataType |
+| `datatype edit` | EditDataType |
+| `datatype delete` | DeleteDataType |
+| `datatype apply` | ApplyDataType |
 
 Per-procedure request/response field specs live in
 `/workdir/notes/procedures/<Cmd>.md`.

@@ -333,6 +333,17 @@ public class RpcServer extends GhidraScript {
         register("ListFiles", new procedures.ghidra.framework.model.ListFilesHandler());
         register("FileMetadata", new procedures.ghidra.framework.model.FileMetadataHandler());
 
+        // Data-type management: list / show / create / edit / delete / apply. Built-ins
+        // (path "/" + BuiltIns/ANSI_C/windows_vs archive) are rejected by edit/delete;
+        // create uses DataTypeConflictHandler.DEFAULT_HANDLER and aborts on conflict
+        // (no auto-resolve per project policy).
+        register("ListDataTypes", new procedures.ghidra.program.model.data.ListDataTypesHandler());
+        register("ShowDataType", new procedures.ghidra.program.model.data.ShowDataTypeHandler());
+        register("CreateDataType", new procedures.ghidra.program.model.data.CreateDataTypeHandler());
+        register("EditDataType", new procedures.ghidra.program.model.data.EditDataTypeHandler());
+        register("DeleteDataType", new procedures.ghidra.program.model.data.DeleteDataTypeHandler());
+        register("ApplyDataType", new procedures.ghidra.program.model.data.ApplyDataTypeHandler());
+
         // Comment operations: 6 types x 4 ops = 24 procedures. Five CodeUnit-level
         // types (EOL/PRE/POST/REPEATABLE/PLATE) operate on the CodeUnit at the given
         // address; DECOMPILER is function-level (Function.setComment) and resolves

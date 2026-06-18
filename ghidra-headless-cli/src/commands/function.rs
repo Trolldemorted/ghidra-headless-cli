@@ -136,6 +136,36 @@ pub enum Cmd {
         #[arg(long, value_enum)]
         source: Option<Source>,
     },
+    /// Apply function-definition data types to matching symbols in the set
+    ApplyDataTypes {
+        /// Target file project path
+        #[arg(long = "file", value_name = "FILE")]
+        program: String,
+        /// Single entry point address (hex)
+        #[arg(long)]
+        address: Option<String>,
+        /// Address range START[:END] (repeatable)
+        #[arg(long)]
+        address_set: Vec<String>,
+        /// Symbol source type [default: user-defined]
+        #[arg(long, value_enum)]
+        source: Option<Source>,
+        /// Create bookmarks for applied types [default: true]
+        #[arg(long)]
+        create_bookmarks: Option<bool>,
+        /// Always replace existing signatures [default: false]
+        #[arg(long)]
+        always_replace: Option<bool>,
+    },
+    /// Capture function signatures in the set into the program's DTM
+    CaptureDataTypes {
+        #[arg(long = "file", value_name = "FILE")]
+        program: String,
+        #[arg(long)]
+        address: Option<String>,
+        #[arg(long)]
+        address_set: Vec<String>,
+    },
     /// Update convention, return type and parameters in one shot
     Update {
         #[arg(long = "file", value_name = "FILE")]
@@ -295,6 +325,42 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                 .opt_str("source", Source::opt(source))
                 .build(),
         ),
+        Cmd::ApplyDataTypes {
+            program,
+            address,
+            address_set,
+            source,
+            create_bookmarks,
+            always_replace,
+        } => {
+            common::require_address_or_set(&address, &address_set).map_err(common::log_arg_err)?;
+            let set = common::address_set(&address_set).map_err(common::log_arg_err)?;
+            client.run_simple(
+                Req::new("ApplyFunctionDataTypesCmd")
+                    .str("file", program)
+                    .opt_str("address", address)
+                    .opt_json("addressSet", set)
+                    .opt_str("source", Source::opt(source))
+                    .opt_bool("createBookmarks", create_bookmarks)
+                    .opt_bool("alwaysReplace", always_replace)
+                    .build(),
+            )
+        }
+        Cmd::CaptureDataTypes {
+            program,
+            address,
+            address_set,
+        } => {
+            common::require_address_or_set(&address, &address_set).map_err(common::log_arg_err)?;
+            let set = common::address_set(&address_set).map_err(common::log_arg_err)?;
+            client.run_simple(
+                Req::new("CaptureFunctionDataTypesCmd")
+                    .str("file", program)
+                    .opt_str("address", address)
+                    .opt_json("addressSet", set)
+                    .build(),
+            )
+        }
         Cmd::SetReturnType {
             program,
             address,

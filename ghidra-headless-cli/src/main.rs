@@ -50,11 +50,6 @@ enum Command {
         #[command(subcommand)]
         cmd: commands::analysis::Cmd,
     },
-    /// Function data-type apply/capture operations
-    Datatype {
-        #[command(subcommand)]
-        cmd: commands::datatype::Cmd,
-    },
     /// Project file operations (import, analyze)
     File {
         #[command(subcommand)]
@@ -64,6 +59,11 @@ enum Command {
     Comment {
         #[command(subcommand)]
         cmd: commands::comment::Cmd,
+    },
+    /// Data-type management: list / show / create / edit / delete / apply
+    Datatype {
+        #[command(subcommand)]
+        cmd: commands::datatype::Cmd,
     },
 }
 
@@ -86,9 +86,9 @@ fn main() {
         Command::Function { cmd } => commands::function::run(cmd, &client),
         Command::Stack { cmd } => commands::stack::run(cmd, &client),
         Command::Analysis { cmd } => commands::analysis::run(cmd, &client),
-        Command::Datatype { cmd } => commands::datatype::run(cmd, &client),
         Command::File { cmd } => commands::file::run(cmd, &client),
         Command::Comment { cmd } => commands::comment::run(cmd, &client),
+        Command::Datatype { cmd } => commands::datatype::run(cmd, &client),
     };
 
     if result.is_err() {
