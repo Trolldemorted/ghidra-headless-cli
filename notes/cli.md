@@ -161,6 +161,14 @@ These two are the only short flags (the task's stated exceptions to the
 | `xrefs` | GetXrefs |
 | `imports` | GetImports |
 | `exports` | GetExports |
+| `memory create-label` | CreateLabel |
+| `memory rename-label` | RenameLabel |
+| `memory delete-label` | DeleteLabel |
+| `memory set-primary` | SetPrimary |
+| `memory list-labels` | ListLabels |
+| `memory lookup-label` | LookupLabel |
+| `memory get-label` | GetLabel |
+| `memory read-bytes` | ReadBytes |
 
 Per-procedure request/response field specs live in
 `/workdir/notes/procedures/<Cmd>.md`.
@@ -295,3 +303,31 @@ $BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --addre
 * Mock server (`/workdir/testscripts/mock_rpc_server.py`) covers connection
   refused (exit 1), `success`/`error` modes, `-vv` raw ndjson, address-set and
   parameter encoding, client-side address validation, and base64 of `file load`.
+* Memory subcommand: all 8 verbs tested live against `/Mapeditor.exe`.
+  - `memory create-label --file /Mapeditor.exe --address 0x401000 --name g_tick`
+    → label visible in subsequent `list-labels`; idempotent on re-run.
+  - `memory list-labels --query dat` → 3 hits; `--limit 8` → 8 with `truncated=true`;
+    `--query` optional (empty/missing matches all `SymbolType.LABEL`, excludes
+    function entry-points / namespace labels / externals / dynamic).
+  - `memory lookup-label --query data_start` → 2 symbols (`data_start`,
+    `__data_start`) across all symbol types; `--address` narrows to a single
+    address; `--regex true` / `--ignore-case true` work like `find-by-name`.
+  - `memory get-label --address 0x401000` → `primary=data_start`,
+    `all=[{data_start, primary:true}, {__data_start, primary:false}]`.
+  - `memory set-primary --query __data_start --address 0x401000` promotes the
+    secondary; second call → `'<name>' is already the primary label at <addr>.`
+  - `memory rename-label --query g_tick --new-name g_frame` → exit 0;
+    `--query no_such_label` → `No label matched 'no_such_label'.`; collision
+    with existing name → `Duplicate name: 'g_frame' already exists.`.
+  - `memory delete-label --query g_frame` → exit 0; deleting a function
+    entry-point label → `'<name>' is a function entry-point label; use
+    'function delete' to remove the function itself.`.
+  - `memory read-bytes --address 0x401000 --length 16` (default `format=hex`)
+    → `f3 0f 1e fa b8 03 00 00 00 c3 66 0f 1f 44 00 00`.
+  - `memory read-bytes --address 0x401000 --length 32 --format dump` → 2 rows of
+    16 bytes each with the 8/8 gutter and ASCII column aligned.
+  - `memory read-bytes --length 100000` → `Length must be 1..65536.` (cap).
+  - `memory read-bytes --address 0xDEADBEEF` → `Address not in any memory
+    block: deadbeef.` (start-outside-block check).
+  - `memory read-bytes --format banana` → `Invalid 'format' 'banana': must
+    be hex or dump.` (exit 1).

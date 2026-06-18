@@ -1,3 +1,10 @@
+FROM rust AS cli-build
+
+WORKDIR /build
+COPY --from=cli . .
+RUN cargo build --release
+
+
 # Ghidra 12.x requires JDK 21.
 FROM eclipse-temurin:21-jdk-jammy
 
@@ -34,4 +41,5 @@ EXPOSE 18000
 # GROUP: Ghidra's launcher chain (analyzeHeadless -> launch.sh -> java) never execs, so the
 # JVM is a grandchild that a bare bash/tini would not signal — `docker stop` would then
 # SIGKILL after the grace period instead of stopping the JVM cleanly.
+COPY --from=cli-build /build/target/release/ghidra-headless-cli /ghidra-headless-cli 
 ENTRYPOINT ["/usr/bin/tini", "-g", "--", "bash", "/opt/ghidrascript/ghidra-headless.sh"]

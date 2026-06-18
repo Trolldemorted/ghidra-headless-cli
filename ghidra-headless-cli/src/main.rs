@@ -71,6 +71,11 @@ enum Command {
     Imports(commands::imports::Cmd),
     /// External exports (entry points this program exposes to other modules)
     Exports(commands::exports::Cmd),
+    /// Static-memory labels (create/rename/delete/set-primary/list/lookup/get) and raw byte reads
+    Memory {
+        #[command(subcommand)]
+        cmd: commands::memory::Cmd,
+    },
 }
 
 fn main() {
@@ -98,6 +103,7 @@ fn main() {
         Command::Xrefs(cmd) => commands::xrefs::run(cmd, &client),
         Command::Imports(cmd) => commands::imports::run(cmd, &client),
         Command::Exports(cmd) => commands::exports::run(cmd, &client),
+        Command::Memory { cmd } => commands::memory::run(cmd, &client),
     };
 
     if result.is_err() {

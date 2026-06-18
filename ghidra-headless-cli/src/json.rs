@@ -385,6 +385,12 @@ impl Req {
         self
     }
 
+    /// Required integer field.
+    pub fn int(mut self, key: &str, value: i64) -> Req {
+        self.0.push((key.to_string(), Json::Num(value as f64)));
+        self
+    }
+
     /// Optional boolean field.
     pub fn opt_bool(mut self, key: &str, value: Option<bool>) -> Req {
         if let Some(v) = value {
