@@ -47,6 +47,28 @@ e.g. `ghidra://ghidra.stronk.pw:13100/P3`. Hand this to `analyzeHeadless` *inste
 of* a local `<project_location> <project_name>` pair. Ghidra creates a hidden,
 throwaway **transient project** that proxies the server repo.
 
+**Whitespace / reserved chars in the URL.** Ghidra parses the URL with
+`java.net.URI` (strict, RFC 3986) — unencoded spaces, `?`, `#`, `[`, `]`,
+etc. throw `URISyntaxException: Illegal character in path` at
+`AnalyzeHeadless.launch:134`. Project names on a shared Ghidra Server are
+user-controlled and often contain spaces (e.g. `Battle Realms`). The
+**caller** must percent-encode any such chars in `GHIDRA_PROJECT` and
+`GHIDRA_FOLDER` before exporting them — the launcher passes the values
+through verbatim. Two working invocations:
+
+```bash
+# Bash, using jq (encodes '/' too — re-add it via sed):
+export GHIDRA_PROJECT=$(printf '%s' 'Battle Realms' | jq -sRr @uri | sed 's|%2F|/|g')
+# → Battle%20Realms
+
+# Python (encodes '/' by default; pass safe='/' to preserve it):
+export GHIDRA_PROJECT=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe="/"))' 'Battle Realms')
+# → Battle%20Realms
+```
+
+After encoding, the launcher builds `ghidra://host:port/Battle%20Realms`,
+which `java.net.URI` accepts.
+
 ## The three things that make it actually work
 
 1. **Login identity = JVM `user.name`, NOT `-connect`.**

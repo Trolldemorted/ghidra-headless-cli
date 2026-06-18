@@ -74,6 +74,15 @@ HEADLESS="$GHIDRA_INSTALL/support/analyzeHeadless"
 
 # Normalise folder so we build ghidra://host:port/repo/folder cleanly.
 folder="/${GHIDRA_FOLDER#/}"; folder="${folder%/}"
+
+# The project name and folder path are embedded in a ghidra://host:port/...
+# URL that Ghidra parses with java.net.URI (RFC 3986 strict). Spaces, '?',
+# '#', '[', ']' in those segments throw URISyntaxException
+# ("Illegal character in path") at AnalyzeHeadless.launch:134. The caller
+# MUST percent-encode any segment that contains such characters BEFORE
+# exporting it (e.g. via `printf '%s' "$x" | jq -sRr @uri | sed
+# 's|%2F|/|g'`, or Python `urllib.parse.quote(s, safe="/")`); the launcher
+# does NOT touch the values.
 URL="ghidra://${GHIDRA_HOST}:${GHIDRA_PORT}/${GHIDRA_PROJECT}${folder}"
 
 # Build the argument list. -noanalysis: these scripts drive edits on already-
