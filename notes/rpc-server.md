@@ -138,12 +138,12 @@ Each handler: parse JSON -> resolve args via `RpcContext` helpers
 monitor) and maps the boolean result + `getStatusMsg()` to the response. Bad input
 throws `IllegalArgumentException`, surfaced as the error message.
 
-## Procedures (42 total)
+## Procedures (68 total)
 
 All non-deprecated, concrete `Command`s in `ghidra.app.cmd.function` (36). The four
 **deprecated** ones are intentionally excluded: `AddParameterCommand`,
 `AddRegisterParameterCommand`, `AddStackParameterCommand`, `AddMemoryParameterCommand`
-(use `UpdateFunctionCommand` instead). Plus six procedures outside that package
+(use `UpdateFunctionCommand` instead). Plus 30 procedures outside that package
 (pre-registered in `RpcServer`, since the reflection fallback only covers
 `ghidra.app.cmd.function`):
 * `FlatDecompilerAPI` — decompile a function to C (program-level, read-only).
@@ -168,6 +168,21 @@ All non-deprecated, concrete `Command`s in `ghidra.app.cmd.function` (36). The f
   `startAnalysis(monitor)` (blocks), then marks the program analyzed. Imports land RAW;
   this recovers functions/disassembly. Holds an EXCLUSIVE checkout for the whole (possibly
   long) analysis. Optional `force` (default true) re-analyzes even if already analyzed.
+* `ListFiles`, `FileMetadata` — project-level read-only helpers. `ListFiles` walks the
+  `DomainFolder` tree (`folder`, `recursive`, `includeFolders`, `contentType`, `limit`);
+  `FileMetadata` returns a file's attributes plus its stored `metadata` map
+  (`DomainFile.getMetadata()` — for programs: Executable Format, Language ID, MD5/SHA256,
+  counts, …). Handlers in `procedures.ghidra.framework.model`.
+* `EolGet/Set/Append/Clear`, `PreGet/Set/Append/Clear`, `PostGet/Set/Append/Clear`,
+  `PlateGet/Set/Append/Clear`, `RepeatableGet/Set/Append/Clear`,
+  `DecompilerGet/Set/Append/Clear` — 24 comment procedures, 6 types × 4 ops.
+  Five CodeUnit-level types (`Eol`/`Pre`/`Post`/`Repeatable`/`Plate`) operate on the
+  `CodeUnit` at `address`; `Decompiler` is function-level (`Function.setComment`/
+  `getComment`), and the address resolves to the *containing* function.
+  Set/Append use `ghidra.app.cmd.comments.SetCommentCmd` / `AppendCommentCmd` for undo/redo;
+  `Decompiler` (no dedicated Command) runs inside `RpcContext.runWrite`. Handlers in
+  `procedures.ghidra.app.cmd.comments`; Get handlers are `mutates()` false.
+
 Per-procedure request specs (TypeScript interfaces) live in
 `/workdir/notes/procedures/<Cmd>.md`.
 

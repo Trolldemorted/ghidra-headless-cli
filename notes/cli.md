@@ -2,9 +2,12 @@
 
 A small, synchronous, dependency-light Rust CLI that talks to the Ghidra TCP
 ndjson RPC server (see [rpc-server.md](rpc-server.md)). One invocation = one
-request = one response. Subcommands mirror the server's 39 procedures, grouped by
+request = one response. Subcommands mirror the server's 44+24 procedures, grouped by
 the area they act on. Function-scoped operations are nested under `function`:
 tags under `function tag` and variable operations under `function variable`.
+Comment operations are nested under `comment`: each of the 6 Ghidra comment types
+(EOL/PRE/POST/PLATE/REPEATABLE/DECOMPILER) gets its own subcommand, and each
+type has `get`/`set`/`append`/`clear` ops.
 
 ## Location & build
 
@@ -121,6 +124,32 @@ These two are the only short flags (the task's stated exceptions to the
 | `datatype capture-function` | CaptureFunctionDataTypesCmd |
 | `file load` | ProgramLoader |
 | `file analyze` | Analyze |
+| `file list` | ListFiles |
+| `file metadata` | FileMetadata |
+| `comment eol get` | EolGet |
+| `comment eol set` | EolSet |
+| `comment eol append` | EolAppend |
+| `comment eol clear` | EolClear |
+| `comment pre get` | PreGet |
+| `comment pre set` | PreSet |
+| `comment pre append` | PreAppend |
+| `comment pre clear` | PreClear |
+| `comment post get` | PostGet |
+| `comment post set` | PostSet |
+| `comment post append` | PostAppend |
+| `comment post clear` | PostClear |
+| `comment plate get` | PlateGet |
+| `comment plate set` | PlateSet |
+| `comment plate append` | PlateAppend |
+| `comment plate clear` | PlateClear |
+| `comment repeatable get` | RepeatableGet |
+| `comment repeatable set` | RepeatableSet |
+| `comment repeatable append` | RepeatableAppend |
+| `comment repeatable clear` | RepeatableClear |
+| `comment decompiler get` | DecompilerGet |
+| `comment decompiler set` | DecompilerSet |
+| `comment decompiler append` | DecompilerAppend |
+| `comment decompiler clear` | DecompilerClear |
 
 Per-procedure request/response field specs live in
 `/workdir/notes/procedures/<Cmd>.md`.
@@ -162,6 +191,13 @@ $BIN -vv --host 127.0.0.1:18000 analysis stack \
 # Import a local binary, then analyze it
 $BIN --host 127.0.0.1:18000 file load --name foo.exe --file ./foo.exe --folder /imports
 $BIN --host 127.0.0.1:18000 file analyze --file /imports/foo.exe --force true
+
+# Manage comments: per-type get/set/append/clear
+$BIN --host 127.0.0.1:18000 comment eol get    --file /Mapeditor.exe --address 0x4024f1
+$BIN --host 127.0.0.1:18000 comment pre set    --file /Mapeditor.exe --address 0x4024f1 --text "loop entry"
+$BIN --host 127.0.0.1:18000 comment post append --file /Mapeditor.exe --address 0x4024f1 --text "fallthrough"
+$BIN --host 127.0.0.1:18000 comment plate clear --file /Mapeditor.exe --address 0x4024f1
+$BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --address 0x4024f1 --text "int main(int argc, char **argv)"
 ```
 
 ## Verification (2026-06-17, live against P3 @ ghidra.stronk.pw)

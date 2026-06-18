@@ -332,6 +332,36 @@ public class RpcServer extends GhidraScript {
         register("FindFunctionsByTag", new procedures.ghidra.program.model.listing.FindFunctionsByTagHandler());
         register("ListFiles", new procedures.ghidra.framework.model.ListFilesHandler());
         register("FileMetadata", new procedures.ghidra.framework.model.FileMetadataHandler());
+
+        // Comment operations: 6 types x 4 ops = 24 procedures. Five CodeUnit-level
+        // types (EOL/PRE/POST/REPEATABLE/PLATE) operate on the CodeUnit at the given
+        // address; DECOMPILER is function-level (Function.setComment) and resolves
+        // the address to the containing function. Set/Append use SetCommentCmd /
+        // AppendCommentCmd for proper undo/redo on the CodeUnit path.
+        register("EolGet", new procedures.ghidra.app.cmd.comments.EolGetHandler());
+        register("EolSet", new procedures.ghidra.app.cmd.comments.EolSetHandler());
+        register("EolAppend", new procedures.ghidra.app.cmd.comments.EolAppendHandler());
+        register("EolClear", new procedures.ghidra.app.cmd.comments.EolClearHandler());
+        register("PreGet", new procedures.ghidra.app.cmd.comments.PreGetHandler());
+        register("PreSet", new procedures.ghidra.app.cmd.comments.PreSetHandler());
+        register("PreAppend", new procedures.ghidra.app.cmd.comments.PreAppendHandler());
+        register("PreClear", new procedures.ghidra.app.cmd.comments.PreClearHandler());
+        register("PostGet", new procedures.ghidra.app.cmd.comments.PostGetHandler());
+        register("PostSet", new procedures.ghidra.app.cmd.comments.PostSetHandler());
+        register("PostAppend", new procedures.ghidra.app.cmd.comments.PostAppendHandler());
+        register("PostClear", new procedures.ghidra.app.cmd.comments.PostClearHandler());
+        register("PlateGet", new procedures.ghidra.app.cmd.comments.PlateGetHandler());
+        register("PlateSet", new procedures.ghidra.app.cmd.comments.PlateSetHandler());
+        register("PlateAppend", new procedures.ghidra.app.cmd.comments.PlateAppendHandler());
+        register("PlateClear", new procedures.ghidra.app.cmd.comments.PlateClearHandler());
+        register("RepeatableGet", new procedures.ghidra.app.cmd.comments.RepeatableGetHandler());
+        register("RepeatableSet", new procedures.ghidra.app.cmd.comments.RepeatableSetHandler());
+        register("RepeatableAppend", new procedures.ghidra.app.cmd.comments.RepeatableAppendHandler());
+        register("RepeatableClear", new procedures.ghidra.app.cmd.comments.RepeatableClearHandler());
+        register("DecompilerGet", new procedures.ghidra.app.cmd.comments.DecompilerGetHandler());
+        register("DecompilerSet", new procedures.ghidra.app.cmd.comments.DecompilerSetHandler());
+        register("DecompilerAppend", new procedures.ghidra.app.cmd.comments.DecompilerAppendHandler());
+        register("DecompilerClear", new procedures.ghidra.app.cmd.comments.DecompilerClearHandler());
     }
 
     private void register(String procedure, RpcProcedure handler) {

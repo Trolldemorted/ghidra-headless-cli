@@ -60,6 +60,11 @@ enum Command {
         #[command(subcommand)]
         cmd: commands::file::Cmd,
     },
+    /// Comment operations (EOL/PRE/POST/PLATE/REPEATABLE/DECOMPILER)
+    Comment {
+        #[command(subcommand)]
+        cmd: commands::comment::Cmd,
+    },
 }
 
 fn main() {
@@ -83,6 +88,7 @@ fn main() {
         Command::Analysis { cmd } => commands::analysis::run(cmd, &client),
         Command::Datatype { cmd } => commands::datatype::run(cmd, &client),
         Command::File { cmd } => commands::file::run(cmd, &client),
+        Command::Comment { cmd } => commands::comment::run(cmd, &client),
     };
 
     if result.is_err() {
