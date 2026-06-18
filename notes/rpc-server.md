@@ -9,19 +9,19 @@ access to the analyzed program and the full Ghidra API.
 
 | file | role |
 |------|------|
-| `/workdir/ghidrascript/RpcServer.java` | main script: socket accept loop, ndjson parse, dispatch |
-| `/workdir/ghidrascript/procedures/RpcProcedure.java` | handler interface (`execute` + `mutates()`) |
-| `/workdir/ghidrascript/procedures/RpcContext.java` | shared program access: lock, checkout/checkin, `applyCommand`, resolvers |
-| `/workdir/ghidrascript/procedures/RpcResponse.java` | response POJO (`success`, `error`) |
-| `/workdir/ghidrascript/procedures/ghidra/app/cmd/function/*Handler.java` | one handler per command (mirrors Ghidra's package) |
-| `/workdir/ghidrascript/procedures/ghidra/app/decompiler/flatapi/FlatDecompilerAPIHandler.java` | decompile-to-C procedure |
-| `/workdir/ghidrascript/procedures/ghidra/program/model/listing/DisassembleHandler.java` | disassemble-a-function procedure |
-| `/workdir/ghidrascript/procedures/ghidra/program/model/listing/FindFunctionsBy{Name,Tag}Handler.java` | search functions by name / by tag |
-| `/workdir/ghidrascript/procedures/StringQuery.java` | substring/regex matcher shared by the find procedures |
-| `/workdir/ghidrascript/procedures/ghidra/app/util/importer/ProgramLoaderHandler.java` | import a new program from bytes in the request |
-| `/workdir/ghidrascript/procedures/ghidra/app/plugin/core/analysis/AnalyzeHandler.java` | run full auto-analysis over a program |
-| `/workdir/ghidrascript/ghidra-headless.sh` | headless launcher (env-driven) |
-| `/workdir/ghidrascript/Dockerfile`, `.dockerignore` | package Ghidra + scripts into a container image (build context = this dir) |
+| `/workdir/ghidra-rpc-server/RpcServer.java` | main script: socket accept loop, ndjson parse, dispatch |
+| `/workdir/ghidra-rpc-server/procedures/RpcProcedure.java` | handler interface (`execute` + `mutates()`) |
+| `/workdir/ghidra-rpc-server/procedures/RpcContext.java` | shared program access: lock, checkout/checkin, `applyCommand`, resolvers |
+| `/workdir/ghidra-rpc-server/procedures/RpcResponse.java` | response POJO (`success`, `error`) |
+| `/workdir/ghidra-rpc-server/procedures/ghidra/app/cmd/function/*Handler.java` | one handler per command (mirrors Ghidra's package) |
+| `/workdir/ghidra-rpc-server/procedures/ghidra/app/decompiler/flatapi/FlatDecompilerAPIHandler.java` | decompile-to-C procedure |
+| `/workdir/ghidra-rpc-server/procedures/ghidra/program/model/listing/DisassembleHandler.java` | disassemble-a-function procedure |
+| `/workdir/ghidra-rpc-server/procedures/ghidra/program/model/listing/FindFunctionsBy{Name,Tag}Handler.java` | search functions by name / by tag |
+| `/workdir/ghidra-rpc-server/procedures/StringQuery.java` | substring/regex matcher shared by the find procedures |
+| `/workdir/ghidra-rpc-server/procedures/ghidra/app/util/importer/ProgramLoaderHandler.java` | import a new program from bytes in the request |
+| `/workdir/ghidra-rpc-server/procedures/ghidra/app/plugin/core/analysis/AnalyzeHandler.java` | run full auto-analysis over a program |
+| `/workdir/ghidra-rpc-server/ghidra-headless.sh` | headless launcher (env-driven) |
+| `/workdir/ghidra-rpc-server/Dockerfile`, `.dockerignore` | package Ghidra + scripts into a container image (build context = this dir) |
 | `/workdir/testscripts/rpc_client.py` | ndjson test client |
 | `/workdir/testscripts/VerifyFnCmd.java` | read-only persistence checker |
 | `/workdir/notes/procedures/<Cmd>.md` | one doc per procedure, request as a TypeScript interface |
@@ -224,8 +224,8 @@ GHIDRA_PASSWORD=... RPC_PORT=18080 ./ghidra-headless.sh
 
 ## Container image
 
-`ghidrascript/Dockerfile` + `.dockerignore` package Ghidra + JDK 21 + these scripts into
-one image that runs the server. Build **context = `ghidrascript/`** (so `.dockerignore`
+`ghidra-rpc-server/Dockerfile` + `.dockerignore` package Ghidra + JDK 21 + these scripts into
+one image that runs the server. Build **context = `ghidra-rpc-server/`** (so `.dockerignore`
 applies and the scripts are the only `COPY` source); Ghidra is downloaded in the image
 (pinned `12.1.2_PUBLIC_20260605`, overridable via `--build-arg GHIDRA_URL=...` /
 `GHIDRA_SHA256=...`). The remote server target + credentials are supplied at run time.
@@ -241,7 +241,7 @@ including the JVM). Plain `docker run --init` is NOT enough — it signals only 
 child, not the group.
 
 ```bash
-docker build -t ghidra-rpc /workdir/ghidrascript
+docker build -t ghidra-rpc /workdir/ghidra-rpc-server
 docker run --rm -p 18000:18000 \
   -e GHIDRA_ADDRESS=ghidra.stronk.pw:13100 -e GHIDRA_PROJECT=P3 \
   -e GHIDRA_USER=claude -e GHIDRA_PASSWORD=... ghidra-rpc

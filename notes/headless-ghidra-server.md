@@ -6,7 +6,7 @@ visible to every other Ghidra client — all driven from the command line / scri
 
 This is solved with Ghidra's **`analyzeHeadless`** (a.k.a. the Headless Analyzer)
 pointed at a `ghidra://` repository URL, plus a thin env-driven wrapper and a few
-GhidraScripts. Everything lives in `/workdir/ghidrascript/`.
+GhidraScripts. Everything lives in `/workdir/ghidra-rpc-server/`.
 
 ## TL;DR — run it
 
@@ -17,16 +17,16 @@ export GHIDRA_USER=claude                 # login user
 export GHIDRA_PASSWORD=300ef19481d5...    # login password (plaintext sent to server)
 
 # Read-only: list every program in the repo
-GHIDRA_SCRIPT=ServerProbe.java /workdir/ghidrascript/ghidra-headless.sh
+GHIDRA_SCRIPT=ServerProbe.java /workdir/ghidra-rpc-server/ghidra-headless.sh
 
 # Edit one program and COMMIT a struct (visible to other clients)
 GHIDRA_PROGRAM=Mapeditor.exe \
 GHIDRA_COMMIT_MSG="add ClaudeHeadlessStruct" \
-/workdir/ghidrascript/ghidra-headless.sh
+/workdir/ghidra-rpc-server/ghidra-headless.sh
 
 # Verify a fresh client sees it
 GHIDRA_PROGRAM=Mapeditor.exe GHIDRA_SCRIPT=VerifyStruct.java \
-/workdir/ghidrascript/ghidra-headless.sh
+/workdir/ghidra-rpc-server/ghidra-headless.sh
 ```
 
 ## Environment
@@ -85,7 +85,7 @@ throwaway **transient project** that proxies the server repo.
 - `-noanalysis` is passed by default so the committed diff is exactly your script's
   change (no re-analysis noise). Set `GHIDRA_ANALYSIS=1` to re-enable auto-analysis.
 
-## Scripts in /workdir/ghidrascript
+## Scripts in /workdir/ghidra-rpc-server
 
 | file | role |
 |------|------|
@@ -132,7 +132,7 @@ _JAVA_OPTIONS="-Duser.name=$GHIDRA_USER" \
   -p -noanalysis \
   -process Mapeditor.exe \
   -commit "add ClaudeHeadlessStruct" \
-  -scriptPath /workdir/ghidrascript \
+  -scriptPath /workdir/ghidra-rpc-server \
   -postScript CreateStructHeadless.java
 ```
 
