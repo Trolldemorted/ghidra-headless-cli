@@ -11,8 +11,23 @@ mod json;
 
 use clap::{Parser, Subcommand};
 use log::LevelFilter;
+use std::env;
 
 use client::Client;
+
+/// Default RPC host when neither --host nor $GHIDRA_RPC_HOST is set.
+const DEFAULT_HOST: &str = "127.0.0.1:18000";
+
+/// Default for clap's --host flag. Honours $GHIDRA_RPC_HOST so a shell can
+/// pre-set the target without repeating the address on every invocation;
+/// explicit --host always wins over the env var (clap substitutes this value
+/// only when the flag was omitted).
+fn default_host() -> String {
+    env::var("GHIDRA_RPC_HOST")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| DEFAULT_HOST.to_string())
+}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -21,8 +36,9 @@ use client::Client;
     version
 )]
 struct Cli {
-    /// RPC server address as host:port
-    #[arg(short = 'H', long, global = true, default_value = "127.0.0.1:18000")]
+    /// RPC server address as host:port. Resolved in order: explicit flag,
+    /// then $GHIDRA_RPC_HOST, then 127.0.0.1:18000.
+    #[arg(short = 'H', long, global = true, default_value_t = default_host())]
     host: String,
 
     /// Increase logging verbosity (-v debug, -vv trace with raw ndjson) [default: info]
