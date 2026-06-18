@@ -432,13 +432,36 @@ public class RpcContext {
         return requireFunctionAt(requireAddress(address));
     }
 
-    /** Resolve a data type by name/expression (e.g. "int", "char *", "MyStruct[4]"). */
+    /**
+     * Resolve a data type by name/expression (e.g. "int", "char *", "MyStruct[4]").
+     *
+     * <p>If the name starts with a single {@code '/'}, it is treated as a
+     * type <em>path</em> rather than a name and the leading slash is stripped
+     * before parsing. This lets callers paste the same identifier they would
+     * pass to {@code datatype show --path /X}: the Ghidra type whose canonical
+     * path is {@code /X} has name {@code X}, and {@code DataTypeParser} would
+     * otherwise misinterpret the leading slash as a category separator
+     * ("look up type String in category L" instead of "find type L_String").
+     * Multi-segment paths like {@code /cat/sub/Type} are also accepted, but
+     * the category prefix is dropped — only the leaf name is parsed, matching
+     * the unambiguous top-level-type case the rule covers. Path-based lookups
+     * that need category disambiguation must still go through {@code datatype
+     * show --path} first to discover the canonical name.
+     */
     public DataType dataType(String name) throws Exception {
         if (name == null || name.trim().isEmpty()) {
             return null;
         }
         DataTypeManager dtm = active().getDataTypeManager();
-        DataType dt = new DataTypeParser(dtm, dtm, null, AllowedDataTypes.ALL).parse(name);
+        // Normalise "leading-slash path" to "bare name" so both --data-type X
+        // and --data-type /X resolve the same type. trim() is reused so leading
+        // whitespace doesn't slip through.
+        String parsed = name.trim();
+        if (parsed.startsWith("/")) {
+            int lastSlash = parsed.lastIndexOf('/');
+            parsed = parsed.substring(lastSlash + 1);
+        }
+        DataType dt = new DataTypeParser(dtm, dtm, null, AllowedDataTypes.ALL).parse(parsed);
         if (dt == null) {
             throw new IllegalArgumentException("Unknown data type: " + name);
         }

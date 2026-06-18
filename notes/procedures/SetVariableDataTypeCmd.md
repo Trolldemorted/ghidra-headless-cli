@@ -28,3 +28,28 @@ interface SetVariableDataTypeCmdRequest {
 ```json
 {"procedure": "SetVariableDataTypeCmd", "file": "/Mapeditor.exe", "address": "0x401000", "name": "count", "dataType": "int"}
 ```
+
+## Notes
+
+**Data-type name vs path.** A type's canonical path (`datatype show --path /X`
+returns `{path:"/X"}`) starts with `/`, but its **name** does not. Ghidra's
+`DataTypeParser` treats a leading `/` as a category separator, so passing the
+path form as a *value* (e.g. `dataType: "/L_String"`) makes it look up
+"type `String` in category `L`" — which usually fails.
+
+The RPC server normalises this for you: a single leading `/` in `dataType`
+is stripped before parsing, so both forms resolve the same type:
+
+```
+dataType: "L_String"     # the name (preferred)
+dataType: "/L_String"    # the path form — also accepted, leading '/' dropped
+```
+
+For multi-segment paths like `/cat/sub/Type`, only the leaf (`Type`) is
+matched against the type table. That works when `Type` is unambiguous across
+categories; if you need a specific category's `Type`, look it up first with
+`datatype show --path /cat/sub/Type` to find a distinguishing name. The same
+normalisation applies to every procedure that takes a data-type value:
+`AddStackVarCmd`, `AddRegisterVarCmd`, `AddMemoryVarCmd`, `SetReturnDataTypeCmd`,
+`UpdateFunctionCommand`, `ApplyFunctionSignatureCmd`, `ApplyDataTypeCmd`,
+`CreateDataTypeCmd` (`base`, `fields[].type`), `EditDataTypeCmd`, `ReplaceDataTypeCmd`.
