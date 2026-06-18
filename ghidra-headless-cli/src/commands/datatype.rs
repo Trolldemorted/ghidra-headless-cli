@@ -93,6 +93,11 @@ pub enum Cmd {
         /// Target file project path
         #[arg(long = "file", value_name = "FILE")]
         program: String,
+        /// Full data-type path (e.g. /Demangler/L_String). Disambiguates when
+        /// the same name appears in multiple categories (as with archive
+        /// stubs). Mutually exclusive with --name+--category.
+        #[arg(long, value_name = "PATH", conflicts_with = "name")]
+        path: Option<String>,
         /// One of: struct, union, enum, typedef [default: required unless --definition is given]
         #[arg(long)]
         kind: Option<String>,
@@ -211,6 +216,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             definition, fields, entries, base, enum_size, client),
         Cmd::Replace {
             program,
+            path,
             kind,
             name,
             category,
@@ -219,8 +225,8 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             entries,
             base,
             enum_size,
-        } => run_create_or_replace("ReplaceDataType", program, kind, name, category,
-            definition, fields, entries, base, enum_size, client),
+        } => run_replace(program, path, kind, name, category, definition, fields,
+            entries, base, enum_size, client),
         Cmd::Edit {
             program,
             path,
@@ -274,9 +280,6 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
 
 /// Parse a user-supplied JSON literal (or None) and emit a clear error on
 /// malformed input. Used for the `--fields` and `--entries` arrays.
-/// Shared dispatch for `create` and `replace`. The only difference is the
-/// server-side procedure name: `CreateDataType` fails on name collision;
-/// `ReplaceDataType` uses `REPLACE_HANDLER` to silently overwrite in place.
 fn run_create_or_replace(
     procedure: &'static str,
     program: String,
@@ -309,6 +312,66 @@ fn run_create_or_replace(
     let response = client.invoke(
         Req::new(procedure)
             .str("file", program)
+            .opt_str("kind", kind)
+            .opt_str("name", name)
+            .opt_str("category", category)
+            .opt_str("definition", definition)
+            .opt_json("fields", fields_json)
+            .opt_json("entries", entries_json)
+            .opt_str("base", base)
+            .opt_int("enumSize", enum_size)
+            .build(),
+    )?;
+    print_show(&response);
+    Ok(())
+}
+
+/// `datatype replace` dispatch. Mirrors `run_create_or_replace` but adds
+/// `--path` (preferred when the same name appears in multiple categories,
+/// as with archive stubs). On the path form, `--name` and `--category`
+/// are derived from the path and conflicts_with blocks them; the user
+/// still supplies `--kind` (or `--definition`).
+fn run_replace(
+    program: String,
+    path: Option<String>,
+    kind: Option<String>,
+    name: Option<String>,
+    category: Option<String>,
+    definition: Option<String>,
+    fields: Option<String>,
+    entries: Option<String>,
+    base: Option<String>,
+    enum_size: Option<i64>,
+    client: &Client,
+) -> Result<(), ()> {
+    // --definition wins over the explicit JSON arrays: when given, the
+    // C snippet is authoritative and we don't need --kind/--name/--fields/...
+    // On the --path form, --name and --category are derived from the path
+    // (and clap's conflicts_with blocks them). --kind is still required
+    // unless --definition is given.
+    let (kind, name, fields_json, entries_json, base) = if definition.is_some() {
+        (None, None, None, None, None)
+    } else if path.is_some() {
+        // --path provides name+category; --kind, --fields/--entries, --base
+        // still come from the user.
+        let k = kind
+            .ok_or_else(|| common::log_arg_err("--kind is required (or pass --definition)".to_string()))?;
+        let f = parse_opt_json("fields", fields)?;
+        let e = parse_opt_json("entries", entries)?;
+        (Some(k), None, f, e, base)
+    } else {
+        let k = kind
+            .ok_or_else(|| common::log_arg_err("--kind is required (or pass --definition/--path)".to_string()))?;
+        let n = name
+            .ok_or_else(|| common::log_arg_err("--name is required (or pass --definition/--path)".to_string()))?;
+        let f = parse_opt_json("fields", fields)?;
+        let e = parse_opt_json("entries", entries)?;
+        (Some(k), Some(n), f, e, base)
+    };
+    let response = client.invoke(
+        Req::new("ReplaceDataType")
+            .str("file", program)
+            .opt_str("path", path)
             .opt_str("kind", kind)
             .opt_str("name", name)
             .opt_str("category", category)
