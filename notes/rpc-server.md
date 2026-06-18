@@ -35,7 +35,7 @@ Handlers live in package `procedures.ghidra.app.cmd.function`, named `<GhidraCmd
 * One JSON object per line (UTF-8, `\n`-terminated); the `"procedure"` field is a
   Ghidra command's **simple name** (e.g. `"SetFunctionNameCmd"`).
 * Program-related procedures (the default — see `RpcProcedure.needsProgram()`) also
-  carry a **mandatory `"program"`** field: the target program's project path
+  carry a **mandatory `"file"`** field: the target program's project path
   (e.g. `"/Mapeditor.exe"`; a bare name with no `/` is resolved by name search). One
   server addresses **every program in the repository**, not just the one it launched on.
 * Exactly one JSON response per request: `{"success":true,...}` or
@@ -43,7 +43,7 @@ Handlers live in package `procedures.ghidra.app.cmd.function`, named `<GhidraCmd
 * Long-lived connection; many clients at once (one thread per connection).
 
 ```
--> {"procedure":"SetFunctionNameCmd","program":"/Mapeditor.exe","address":"0x4024f1","name":"main"}
+-> {"procedure":"SetFunctionNameCmd","file":"/Mapeditor.exe","address":"0x4024f1","name":"main"}
 <- {"success":true}
 ```
 
@@ -58,7 +58,7 @@ missing field each return an error and keep the connection open.
 
 **The server starts with ZERO programs open** and is not bound to any one program: it
 opens each request's target on demand. For a procedure with `needsProgram()` true (every
-current one), `dispatch` reads the mandatory `"program"` path, resolves it against the
+current one), `dispatch` reads the mandatory `"file"` path, resolves it against the
 project (`ProjectData.getFile(path)`, else a recursive name search), checks the versioned
 file out (exclusive) **before** opening it, then opens it —
 `DomainFile.getDomainObject(consumer, upgrade, recover, monitor)` — caching the instance
@@ -67,7 +67,7 @@ in `RpcContext` keyed by canonical path. The resolved program becomes the reques
 ...) operate on it, so handlers never name the program themselves. On shutdown
 `closeAll()` releases every program the server opened. Procedures that act on the whole
 project rather than one program (e.g. `ProgramLoader`) set `needsProgram()` false and take
-no `"program"` field; `RpcContext.project()` gives them the project.
+no `"file"` field; `RpcContext.project()` gives them the project.
 
 There is no seeded/launcher program: `analyzeHeadless` is run as a **`-preScript` with
 no `-process`** (a pre-script runs once even when no program is processed; a post-script
@@ -161,7 +161,7 @@ All non-deprecated, concrete `Command`s in `ghidra.app.cmd.function` (36). The f
   tag→function index in the API). Both share `procedures.StringQuery` (`contains` for name,
   `exact` for tag) and return `{count, truncated, functions:[{name, address, tags?}]}`.
 * `ProgramLoader` — import a new program from base64 bytes in the request (PROJECT-level:
-  `needsProgram()` false, no `"program"` field; saves + adds to version control itself).
+  `needsProgram()` false, no `"file"` field; saves + adds to version control itself).
   Wraps the `ProgramLoader` builder (the older `AutoImporter` is deprecated).
 * `Analyze` — run full auto-analysis over a program (program-level, mutating). Mirrors the
   headless analyzer: `AutoAnalysisManager.initializeOptions()` → `reAnalyzeAll(null)` →
@@ -278,7 +278,7 @@ overload leaves the `ByteProvider` name null, which NPEs filename-sniffing loade
 launcher (`-preScript`, no `-process`, writeable project) reporting `0 programs open`.
 Targeting `/Mapeditor.exe` on demand: read decompile OK; `SetFunctionNameCmd` rename
 succeeded and the check-in **pushed v21→v22→v23** (confirmed by an independent JVM).
-Error cases clean (missing/unknown `"program"`, bare-name resolution). The per-request
+Error cases clean (missing/unknown `"file"`, bare-name resolution). The per-request
 checkout is **TRANSIENT** (session-scoped): after the server JVM exits the repo shows
 `checkouts=none`, so the zero-program server leaves **no stale checkout** — an
 improvement over the old commit-mode trigger.

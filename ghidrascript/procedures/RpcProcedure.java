@@ -28,7 +28,7 @@ public interface RpcProcedure {
 
     /**
      * Whether this procedure targets a specific program. When true (the default), the
-     * request must carry a mandatory {@code "program"} field (its project path); the
+     * request must carry a mandatory {@code "file"} field (its project path); the
      * framework resolves and checks it out before {@link #execute} and exposes it as the
      * {@link RpcContext}'s active program. Procedures that act on the project as a whole
      * (e.g. importing a new binary) override this to false.

@@ -13,7 +13,7 @@ the push fails.
 ```typescript
 interface CreateExternalFunctionCmdRequest {
   procedure: "CreateExternalFunctionCmd";
-  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
+  file: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   library: string;              // external library name
   name: string;
   address?: string;             // optional memory address
@@ -26,5 +26,5 @@ interface CreateExternalFunctionCmdRequest {
 
 ## Example
 ```json
-{"procedure": "CreateExternalFunctionCmd", "program": "/Mapeditor.exe", "library": "KERNEL32.DLL", "name": "Sleep"}
+{"procedure": "CreateExternalFunctionCmd", "file": "/Mapeditor.exe", "library": "KERNEL32.DLL", "name": "Sleep"}
 ```

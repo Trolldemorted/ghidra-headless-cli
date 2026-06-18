@@ -13,7 +13,7 @@ the push fails.
 ```typescript
 interface SetVariableNameCmdRequest {
   procedure: "SetVariableNameCmd";
-  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
+  file: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address: string;              // hex, e.g. "0x401000"
   oldName: string;
   newName: string;
@@ -26,5 +26,5 @@ interface SetVariableNameCmdRequest {
 
 ## Example
 ```json
-{"procedure": "SetVariableNameCmd", "program": "/Mapeditor.exe", "address": "0x401000", "oldName": "local_8", "newName": "count"}
+{"procedure": "SetVariableNameCmd", "file": "/Mapeditor.exe", "address": "0x401000", "oldName": "local_8", "newName": "count"}
 ```

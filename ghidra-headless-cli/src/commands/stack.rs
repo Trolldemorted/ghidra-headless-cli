@@ -9,8 +9,8 @@ use crate::json::Req;
 pub enum Cmd {
     /// Set the stack-depth-change value at an address
     SetDepthChange {
-        /// Target program project path
-        #[arg(long)]
+        /// Target file project path
+        #[arg(long = "file", value_name = "FILE")]
         program: String,
         #[arg(long)]
         address: String,
@@ -20,7 +20,7 @@ pub enum Cmd {
     },
     /// Remove the stack-depth-change value at an address
     RemoveDepthChange {
-        #[arg(long)]
+        #[arg(long = "file", value_name = "FILE")]
         program: String,
         #[arg(long)]
         address: String,
@@ -35,14 +35,14 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             stack_depth_change,
         } => client.run_simple(
             Req::new("SetStackDepthChangeCommand")
-                .str("program", program)
+                .str("file", program)
                 .str("address", address)
                 .opt_int("stackDepthChange", stack_depth_change)
                 .build(),
         ),
         Cmd::RemoveDepthChange { program, address } => client.run_simple(
             Req::new("RemoveStackDepthChangeCommand")
-                .str("program", program)
+                .str("file", program)
                 .str("address", address)
                 .build(),
         ),

@@ -21,7 +21,7 @@ tags under `function tag` and variable operations under `function variable`.
 
 Deliberately minimal (the task asked to avoid dependencies; no async, no serde):
 `clap` (derive, subcommands), `log`, `simple_logger`. JSON serialization and
-parsing are hand-rolled in `src/json.rs`; base64 (for `program load`) in
+parsing are hand-rolled in `src/json.rs`; base64 (for `file load`) in
 `src/common.rs`.
 
 ## Source layout
@@ -72,7 +72,7 @@ These two are the only short flags (the task's stated exceptions to the
 * `function update --parameter <[NAME=]DATATYPE>` (repeatable):
   `--parameter "count=int" --parameter "void *"` →
   `[{name:"count",dataType:"int"},{dataType:"void *"}]`.
-* `program load --file <PATH>` reads the local file and base64-encodes it into
+* `file load --file <PATH>` reads the local file and base64-encodes it into
   the request's `bytes`.
 
 ## Command groups → procedures
@@ -119,8 +119,8 @@ These two are the only short flags (the task's stated exceptions to the
 | `function find-by-tag` | FindFunctionsByTag |
 | `datatype apply-function` | ApplyFunctionDataTypesCmd |
 | `datatype capture-function` | CaptureFunctionDataTypesCmd |
-| `program load` | ProgramLoader |
-| `program analyze` | Analyze |
+| `file load` | ProgramLoader |
+| `file analyze` | Analyze |
 
 Per-procedure request/response field specs live in
 `/workdir/notes/procedures/<Cmd>.md`.
@@ -131,37 +131,37 @@ Per-procedure request/response field specs live in
 BIN=/workdir/ghidra-headless-cli/target/release/ghidra-headless-cli
 
 # Decompile to clean C on stdout (logs on stderr)
-$BIN --host 127.0.0.1:18000 function decompile --program /Mapeditor.exe --address 0x4024f1 > fn.c
+$BIN --host 127.0.0.1:18000 function decompile --file /Mapeditor.exe --address 0x4024f1 > fn.c
 
 # Disassemble a function (one "<address>  <bytes>  <repr>" line per instruction on stdout)
-$BIN --host 127.0.0.1:18000 function disassemble --program /Mapeditor.exe --address 0x4024f1
-$BIN --host 127.0.0.1:18000 function disassemble --program /Mapeditor.exe --address 0x4024f1 --bytes false
+$BIN --host 127.0.0.1:18000 function disassemble --file /Mapeditor.exe --address 0x4024f1
+$BIN --host 127.0.0.1:18000 function disassemble --file /Mapeditor.exe --address 0x4024f1 --bytes false
 
 # Find functions by name ("<address>  <name>" per match); substring, regex, or case-insensitive
-$BIN --host 127.0.0.1:18000 function find-by-name --program /Mapeditor.exe --query fn_cmd
-$BIN --host 127.0.0.1:18000 function find-by-name --program /Mapeditor.exe --query "^FUN_0040" --regex true --limit 50
+$BIN --host 127.0.0.1:18000 function find-by-name --file /Mapeditor.exe --query fn_cmd
+$BIN --host 127.0.0.1:18000 function find-by-name --file /Mapeditor.exe --query "^FUN_0040" --regex true --limit 50
 
 # Find functions by tag ("<address>  <name>  [tag,...]" per match)
 # Plain query = EXACT tag name ("has this tag"); use --regex for a substring/pattern.
-$BIN --host 127.0.0.1:18000 function find-by-tag --program /Mapeditor.exe --query RPC_TAG
-$BIN --host 127.0.0.1:18000 function find-by-tag --program /Mapeditor.exe --query RPC --regex true
+$BIN --host 127.0.0.1:18000 function find-by-tag --file /Mapeditor.exe --query RPC_TAG
+$BIN --host 127.0.0.1:18000 function find-by-tag --file /Mapeditor.exe --query RPC --regex true
 
 # Rename a function (mutating: checked out, checked in on success)
 $BIN --host 127.0.0.1:18000 function set-name \
-  --program /Mapeditor.exe --address 0x401000 --name main --source user-defined
+  --file /Mapeditor.exe --address 0x401000 --name main --source user-defined
 
 # Update a signature in one shot
-$BIN --host 127.0.0.1:18000 function update --program /Mapeditor.exe --address 0x401000 \
+$BIN --host 127.0.0.1:18000 function update --file /Mapeditor.exe --address 0x401000 \
   --calling-convention __stdcall --return-type int \
   --parameter "count=int" --parameter "void *" --update-type dynamic-storage-formal-params
 
 # Stack analysis over a range, with raw ndjson tracing
 $BIN -vv --host 127.0.0.1:18000 analysis stack \
-  --program /Mapeditor.exe --address-set 0x401000:0x401050 --force-processing true
+  --file /Mapeditor.exe --address-set 0x401000:0x401050 --force-processing true
 
 # Import a local binary, then analyze it
-$BIN --host 127.0.0.1:18000 program load --name foo.exe --file ./foo.exe --folder /imports
-$BIN --host 127.0.0.1:18000 program analyze --program /imports/foo.exe --force true
+$BIN --host 127.0.0.1:18000 file load --name foo.exe --file ./foo.exe --folder /imports
+$BIN --host 127.0.0.1:18000 file analyze --file /imports/foo.exe --force true
 ```
 
 ## Verification (2026-06-17, live against P3 @ ghidra.stronk.pw)
@@ -184,4 +184,4 @@ $BIN --host 127.0.0.1:18000 program analyze --program /imports/foo.exe --force t
   `No program found for '/NoSuchProgram.exe'.` — both verbatim, exit 1.
 * Mock server (`/workdir/testscripts/mock_rpc_server.py`) covers connection
   refused (exit 1), `success`/`error` modes, `-vv` raw ndjson, address-set and
-  parameter encoding, client-side address validation, and base64 of `program load`.
+  parameter encoding, client-side address validation, and base64 of `file load`.

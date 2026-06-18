@@ -35,7 +35,7 @@ import ghidra.util.task.TaskMonitor;
  * try-with-resources, which releases the loaded program(s).
  *
  * This is a PROJECT-level procedure ({@link #needsProgram()} = false): it takes no
- * {@code "program"} field. It persists the result itself — save into the project, then
+ * {@code "file"} field. It persists the result itself — save into the project, then
  * (in a shared repository) add to version control so other clients see it — so it is not
  * routed through the dispatch check-in path ({@link #mutates()} = false). Like every
  * procedure it runs under the single dispatch lock, so the import is serialized against

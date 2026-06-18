@@ -7,8 +7,8 @@ use crate::json::{Json, Req};
 
 #[derive(Args, Debug)]
 pub struct FindByNameArgs {
-    /// Target program project path
-    #[arg(long)]
+    /// Target file project path
+    #[arg(long = "file", value_name = "FILE")]
     program: String,
     /// Substring to search for in function names (or a regex with --regex)
     #[arg(long)]
@@ -26,8 +26,8 @@ pub struct FindByNameArgs {
 
 #[derive(Args, Debug)]
 pub struct FindByTagArgs {
-    /// Target program project path
-    #[arg(long)]
+    /// Target file project path
+    #[arg(long = "file", value_name = "FILE")]
     program: String,
     /// Exact tag name a function must have (or a regex over tag names with --regex)
     #[arg(long)]
@@ -46,7 +46,7 @@ pub struct FindByTagArgs {
 pub fn run_by_name(args: FindByNameArgs, client: &Client) -> Result<(), ()> {
     let response = client.invoke(
         Req::new("FindFunctionsByName")
-            .str("program", args.program)
+            .str("file", args.program)
             .str("query", args.query)
             .opt_bool("regex", args.regex)
             .opt_bool("ignoreCase", args.ignore_case)
@@ -60,7 +60,7 @@ pub fn run_by_name(args: FindByNameArgs, client: &Client) -> Result<(), ()> {
 pub fn run_by_tag(args: FindByTagArgs, client: &Client) -> Result<(), ()> {
     let response = client.invoke(
         Req::new("FindFunctionsByTag")
-            .str("program", args.program)
+            .str("file", args.program)
             .str("query", args.query)
             .opt_bool("regex", args.regex)
             .opt_bool("ignoreCase", args.ignore_case)

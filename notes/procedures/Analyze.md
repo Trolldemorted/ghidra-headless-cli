@@ -30,7 +30,7 @@ shared programs others may need.
 ```typescript
 interface AnalyzeRequest {
   procedure: "Analyze";
-  program: string;   // project path of the target, e.g. "/imports/foo.exe"
+  file: string;   // project path of the target, e.g. "/imports/foo.exe"
   force?: boolean;    // re-analyze even if already analyzed; default true.
                       // when false, an already-analyzed program is left untouched.
 }
@@ -52,7 +52,7 @@ or `{ "success": false, "error": "<message>" }`.
 ## Example
 Request:
 ```json
-{"procedure": "Analyze", "program": "/imports/analyze_test_true", "force": true}
+{"procedure": "Analyze", "file": "/imports/analyze_test_true", "force": true}
 ```
 Response:
 ```json

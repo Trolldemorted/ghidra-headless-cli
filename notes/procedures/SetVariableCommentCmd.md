@@ -13,7 +13,7 @@ the push fails.
 ```typescript
 interface SetVariableCommentCmdRequest {
   procedure: "SetVariableCommentCmd";
-  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
+  file: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address: string;              // hex, e.g. "0x401000"
   name: string;                 // variable name
   comment: string;
@@ -25,5 +25,5 @@ interface SetVariableCommentCmdRequest {
 
 ## Example
 ```json
-{"procedure": "SetVariableCommentCmd", "program": "/Mapeditor.exe", "address": "0x401000", "name": "count", "comment": "loop counter"}
+{"procedure": "SetVariableCommentCmd", "file": "/Mapeditor.exe", "address": "0x401000", "name": "count", "comment": "loop counter"}
 ```

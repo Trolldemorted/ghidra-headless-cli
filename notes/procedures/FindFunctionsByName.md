@@ -17,7 +17,7 @@ Not a `ghidra.app.cmd.function` command; pre-registered in `RpcServer`, handler 
 ```typescript
 interface FindFunctionsByNameRequest {
   procedure: "FindFunctionsByName";
-  program: string;     // project path of the target program, e.g. "/Mapeditor.exe"
+  file: string;     // project path of the target program, e.g. "/Mapeditor.exe"
   query: string;       // substring, or a regex when regex=true
   regex?: boolean;     // treat query as a regex; default false
   ignoreCase?: boolean; // case-insensitive match; default false
@@ -44,7 +44,7 @@ or `{ "success": false, "error": "<message>" }` (e.g. `"Invalid regex: <detail>"
 ## Example
 Request:
 ```json
-{"procedure": "FindFunctionsByName", "program": "/Mapeditor.exe", "query": "fn_cmd"}
+{"procedure": "FindFunctionsByName", "file": "/Mapeditor.exe", "query": "fn_cmd"}
 ```
 Response:
 ```json
@@ -54,5 +54,5 @@ Response:
 
 Regex, anchored, capped:
 ```json
-{"procedure": "FindFunctionsByName", "program": "/Mapeditor.exe", "query": "^FUN_0040", "regex": true, "limit": 50}
+{"procedure": "FindFunctionsByName", "file": "/Mapeditor.exe", "query": "^FUN_0040", "regex": true, "limit": 50}
 ```

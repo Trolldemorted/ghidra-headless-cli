@@ -13,7 +13,7 @@ the push fails.
 ```typescript
 interface AddStackVarCmdRequest {
   procedure: "AddStackVarCmd";
-  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
+  file: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address: string;              // hex, e.g. "0x401000"
   stackOffset?: number;         // default 0
   name?: string;
@@ -27,5 +27,5 @@ interface AddStackVarCmdRequest {
 
 ## Example
 ```json
-{"procedure": "AddStackVarCmd", "program": "/Mapeditor.exe", "address": "0x401000", "stackOffset": -8, "name": "buf", "dataType": "char[16]"}
+{"procedure": "AddStackVarCmd", "file": "/Mapeditor.exe", "address": "0x401000", "stackOffset": -8, "name": "buf", "dataType": "char[16]"}
 ```

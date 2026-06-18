@@ -13,7 +13,7 @@ the push fails.
 ```typescript
 interface SetVariableDataTypeCmdRequest {
   procedure: "SetVariableDataTypeCmd";
-  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
+  file: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address: string;              // hex, e.g. "0x401000"
   name: string;                 // variable name
   dataType: string;
@@ -26,5 +26,5 @@ interface SetVariableDataTypeCmdRequest {
 
 ## Example
 ```json
-{"procedure": "SetVariableDataTypeCmd", "program": "/Mapeditor.exe", "address": "0x401000", "name": "count", "dataType": "int"}
+{"procedure": "SetVariableDataTypeCmd", "file": "/Mapeditor.exe", "address": "0x401000", "name": "count", "dataType": "int"}
 ```

@@ -7,8 +7,8 @@ use crate::json::{Json, Req};
 
 #[derive(Args, Debug)]
 pub struct DecompileArgs {
-    /// Target program project path
-    #[arg(long)]
+    /// Target file project path
+    #[arg(long = "file", value_name = "FILE")]
     program: String,
     /// Function entry address (hex)
     #[arg(long)]
@@ -21,7 +21,7 @@ pub struct DecompileArgs {
 pub fn run(args: DecompileArgs, client: &Client) -> Result<(), ()> {
     let response = client.invoke(
         Req::new("FlatDecompilerAPI")
-            .str("program", args.program)
+            .str("file", args.program)
             .str("address", args.address)
             .opt_int("timeoutSecs", args.timeout_secs)
             .build(),

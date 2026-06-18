@@ -13,7 +13,7 @@ the push fails.
 ```typescript
 interface FunctionPurgeAnalysisCmdRequest {
   procedure: "FunctionPurgeAnalysisCmd";
-  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
+  file: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address?: string;             // single entry point, OR
   addressSet?: AddressRange[];  // explicit ranges (one of address/addressSet required)
 }
@@ -24,5 +24,5 @@ interface FunctionPurgeAnalysisCmdRequest {
 
 ## Example
 ```json
-{"procedure": "FunctionPurgeAnalysisCmd", "program": "/Mapeditor.exe", "address": "0x401000"}
+{"procedure": "FunctionPurgeAnalysisCmd", "file": "/Mapeditor.exe", "address": "0x401000"}
 ```

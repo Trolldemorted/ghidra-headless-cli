@@ -10,8 +10,8 @@ use crate::json::Req;
 pub enum Cmd {
     /// Analyze stack references for functions in the set
     Stack {
-        /// Target program project path
-        #[arg(long)]
+        /// Target file project path
+        #[arg(long = "file", value_name = "FILE")]
         program: String,
         /// Single entry point address (hex)
         #[arg(long)]
@@ -25,7 +25,7 @@ pub enum Cmd {
     },
     /// Newer stack-analysis pass over the set
     StackNew {
-        #[arg(long)]
+        #[arg(long = "file", value_name = "FILE")]
         program: String,
         #[arg(long)]
         address: Option<String>,
@@ -37,7 +37,7 @@ pub enum Cmd {
     },
     /// Result-state-based stack analysis over the set
     StackResultState {
-        #[arg(long)]
+        #[arg(long = "file", value_name = "FILE")]
         program: String,
         #[arg(long)]
         address: Option<String>,
@@ -49,7 +49,7 @@ pub enum Cmd {
     },
     /// Compute stack purge for functions in the set
     Purge {
-        #[arg(long)]
+        #[arg(long = "file", value_name = "FILE")]
         program: String,
         #[arg(long)]
         address: Option<String>,
@@ -58,7 +58,7 @@ pub enum Cmd {
     },
     /// Identify and commit parameters/return via the decompiler
     DecompilerParamId {
-        #[arg(long)]
+        #[arg(long = "file", value_name = "FILE")]
         program: String,
         #[arg(long)]
         address: Option<String>,
@@ -79,7 +79,7 @@ pub enum Cmd {
     },
     /// Recover switch tables for the function at an address
     DecompilerSwitch {
-        #[arg(long)]
+        #[arg(long = "file", value_name = "FILE")]
         program: String,
         #[arg(long)]
         address: String,
@@ -89,7 +89,7 @@ pub enum Cmd {
     },
     /// Decompiler-based calling-convention analysis for a function
     DecompilerConvention {
-        #[arg(long)]
+        #[arg(long = "file", value_name = "FILE")]
         program: String,
         #[arg(long)]
         address: String,
@@ -149,7 +149,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             let set = common::address_set(&address_set).map_err(common::log_arg_err)?;
             client.run_simple(
                 Req::new("FunctionPurgeAnalysisCmd")
-                    .str("program", program)
+                    .str("file", program)
                     .opt_str("address", address)
                     .opt_json("addressSet", set)
                     .build(),
@@ -168,7 +168,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             let set = common::address_set(&address_set).map_err(common::log_arg_err)?;
             client.run_simple(
                 Req::new("DecompilerParameterIdCmd")
-                    .str("program", program)
+                    .str("file", program)
                     .opt_str("address", address)
                     .opt_json("addressSet", set)
                     .opt_str("source", Source::opt(source))
@@ -184,7 +184,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             timeout,
         } => client.run_simple(
             Req::new("DecompilerSwitchAnalysisCmd")
-                .str("program", program)
+                .str("file", program)
                 .str("address", address)
                 .opt_int("timeout", timeout)
                 .build(),
@@ -195,7 +195,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             timeout,
         } => client.run_simple(
             Req::new("DecompilerParallelConventionAnalysisCmd")
-                .str("program", program)
+                .str("file", program)
                 .str("address", address)
                 .opt_int("timeout", timeout)
                 .build(),
@@ -217,7 +217,7 @@ fn run_set_force(
     let set = common::address_set(&address_set).map_err(common::log_arg_err)?;
     client.run_simple(
         Req::new(procedure)
-            .str("program", program)
+            .str("file", program)
             .opt_str("address", address)
             .opt_json("addressSet", set)
             .opt_bool("forceProcessing", force_processing)

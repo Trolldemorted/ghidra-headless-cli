@@ -98,6 +98,14 @@ impl Json {
         }
     }
 
+    /// Borrow an object's fields as `(key, value)` pairs, in document order.
+    pub fn as_object(&self) -> Option<&[(String, Json)]> {
+        match self {
+            Json::Obj(fields) => Some(fields),
+            _ => None,
+        }
+    }
+
     /// Parse a JSON document from text.
     pub fn parse(text: &str) -> Result<Json, String> {
         let mut parser = Parser {

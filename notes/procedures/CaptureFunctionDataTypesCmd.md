@@ -13,7 +13,7 @@ the push fails.
 ```typescript
 interface CaptureFunctionDataTypesCmdRequest {
   procedure: "CaptureFunctionDataTypesCmd";
-  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
+  file: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address?: string;             // single entry point, OR
   addressSet?: AddressRange[];  // explicit ranges (one of address/addressSet required)
 }
@@ -24,5 +24,5 @@ interface CaptureFunctionDataTypesCmdRequest {
 
 ## Example
 ```json
-{"procedure": "CaptureFunctionDataTypesCmd", "program": "/Mapeditor.exe", "address": "0x401000"}
+{"procedure": "CaptureFunctionDataTypesCmd", "file": "/Mapeditor.exe", "address": "0x401000"}
 ```

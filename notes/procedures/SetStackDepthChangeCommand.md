@@ -13,7 +13,7 @@ the push fails.
 ```typescript
 interface SetStackDepthChangeCommandRequest {
   procedure: "SetStackDepthChangeCommand";
-  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
+  file: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address: string;              // hex, e.g. "0x401000"
   stackDepthChange?: number;    // default 0
 }
@@ -24,5 +24,5 @@ interface SetStackDepthChangeCommandRequest {
 
 ## Example
 ```json
-{"procedure": "SetStackDepthChangeCommand", "program": "/Mapeditor.exe", "address": "0x401010", "stackDepthChange": -4}
+{"procedure": "SetStackDepthChangeCommand", "file": "/Mapeditor.exe", "address": "0x401010", "stackDepthChange": -4}
 ```

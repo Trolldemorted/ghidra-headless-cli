@@ -22,7 +22,7 @@ with [FindFunctionsByName](FindFunctionsByName.md) (`procedures.StringQuery`).
 ```typescript
 interface FindFunctionsByTagRequest {
   procedure: "FindFunctionsByTag";
-  program: string;     // project path of the target program, e.g. "/Mapeditor.exe"
+  file: string;     // project path of the target program, e.g. "/Mapeditor.exe"
   query: string;       // exact tag name, or a regex over tag names when regex=true
   regex?: boolean;     // treat query as a regex; default false
   ignoreCase?: boolean; // case-insensitive match; default false
@@ -49,7 +49,7 @@ or `{ "success": false, "error": "<message>" }` (e.g. `"Invalid regex: <detail>"
 ## Example
 Request:
 ```json
-{"procedure": "FindFunctionsByTag", "program": "/Mapeditor.exe", "query": "RPC"}
+{"procedure": "FindFunctionsByTag", "file": "/Mapeditor.exe", "query": "RPC"}
 ```
 Response:
 ```json

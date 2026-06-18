@@ -55,10 +55,10 @@ enum Command {
         #[command(subcommand)]
         cmd: commands::datatype::Cmd,
     },
-    /// Project-level program operations (import, analyze)
-    Program {
+    /// Project file operations (import, analyze)
+    File {
         #[command(subcommand)]
-        cmd: commands::program::Cmd,
+        cmd: commands::file::Cmd,
     },
 }
 
@@ -82,7 +82,7 @@ fn main() {
         Command::Stack { cmd } => commands::stack::run(cmd, &client),
         Command::Analysis { cmd } => commands::analysis::run(cmd, &client),
         Command::Datatype { cmd } => commands::datatype::run(cmd, &client),
-        Command::Program { cmd } => commands::program::run(cmd, &client),
+        Command::File { cmd } => commands::file::run(cmd, &client),
     };
 
     if result.is_err() {

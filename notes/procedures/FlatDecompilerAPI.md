@@ -13,7 +13,7 @@ This is the only non-`ghidra.app.cmd.function` procedure; it is pre-registered i
 ```typescript
 interface FlatDecompilerAPIRequest {
   procedure: "FlatDecompilerAPI";
-  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
+  file: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address: string;        // function entry, hex, e.g. "0x401000"
   timeoutSecs?: number;   // decompiler timeout (s); omit/0 = library default
 }
@@ -32,8 +32,8 @@ or `{ "success": false, "error": "<message>" }`.
 
 ## Example
 ```json
-{"procedure": "FlatDecompilerAPI", "program": "/Mapeditor.exe", "address": "0x401000"}
+{"procedure": "FlatDecompilerAPI", "file": "/Mapeditor.exe", "address": "0x401000"}
 ```
 ```json
-{"procedure": "FlatDecompilerAPI", "program": "/Mapeditor.exe", "address": "0x401000", "timeoutSecs": 120}
+{"procedure": "FlatDecompilerAPI", "file": "/Mapeditor.exe", "address": "0x401000", "timeoutSecs": 120}
 ```

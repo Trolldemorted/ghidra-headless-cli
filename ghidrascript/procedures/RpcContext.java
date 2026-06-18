@@ -39,7 +39,7 @@ import ghidra.util.task.TaskMonitor;
  *
  * PROGRAM SELECTION: the server is not bound to a single program. Every
  * program-related procedure (see {@link RpcProcedure#needsProgram()}) carries a
- * mandatory {@code "program"} field — the target's project path (e.g.
+ * mandatory {@code "file"} field — the target's project path (e.g.
  * {@code "/Mapeditor.exe"}). {@link #dispatch} resolves it once per request via
  * {@link #openProgram}, opening (and caching) the program from the project, and stores
  * it as the request's {@linkplain #active() active program}. All resolvers
@@ -107,6 +107,25 @@ public class RpcContext {
         return project;
     }
 
+    /**
+     * Resolve a project path (or bare name, like program resolution) to its
+     * {@link DomainFile}. Unlike {@link #program()} this does NOT open or check out the
+     * file — it inspects the project tree only, so it works for any content type and any
+     * file regardless of checkout state. Throws {@link IllegalArgumentException} if the
+     * project is unavailable or no such file exists.
+     */
+    public DomainFile requireDomainFile(String path) {
+        if (project == null) {
+            throw new IllegalArgumentException(
+                "No project is available; cannot select file '" + path + "'.");
+        }
+        DomainFile df = resolveFile(path);
+        if (df == null) {
+            throw new IllegalArgumentException("No file found for '" + path + "'.");
+        }
+        return df;
+    }
+
     // ---------------------------------------------------------------------------
     // Dispatch: select program -> checkout -> execute -> (if mutating) checkin,
     // all under one lock.
@@ -116,7 +135,7 @@ public class RpcContext {
      * Run a procedure with exclusive program access. Holds {@link #lock} across the
      * whole sequence so program selection, checkout, mutation and check-in cannot
      * interleave with other clients. For program-related procedures the mandatory
-     * {@code "program"} field selects the target; per policy the file is checked out
+     * {@code "file"} field selects the target; per policy the file is checked out
      * first and every successful mutating procedure is checked in immediately (the call
      * fails if the push fails).
      */
@@ -125,9 +144,9 @@ public class RpcContext {
         try {
             Program program = null;
             if (procedure.needsProgram()) {
-                String path = optStr(request, "program");
+                String path = optStr(request, "file");
                 if (path == null || path.isEmpty()) {
-                    return RpcResponse.error("Missing required field 'program'.");
+                    return RpcResponse.error("Missing required field 'file'.");
                 }
                 try {
                     program = openProgram(path); // checks the file out before opening it

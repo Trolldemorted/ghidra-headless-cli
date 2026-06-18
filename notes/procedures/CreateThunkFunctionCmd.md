@@ -13,7 +13,7 @@ the push fails.
 ```typescript
 interface CreateThunkFunctionCmdRequest {
   procedure: "CreateThunkFunctionCmd";
-  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
+  file: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address: string;              // hex, e.g. "0x401000"
   referencedFunctionAddress?: string; // thunked function; omit to auto-detect
   checkExisting?: boolean;       // default false (used when auto-detecting)
@@ -25,5 +25,5 @@ interface CreateThunkFunctionCmdRequest {
 
 ## Example
 ```json
-{"procedure": "CreateThunkFunctionCmd", "program": "/Mapeditor.exe", "address": "0x401000", "referencedFunctionAddress": "0x419580"}
+{"procedure": "CreateThunkFunctionCmd", "file": "/Mapeditor.exe", "address": "0x401000", "referencedFunctionAddress": "0x419580"}
 ```

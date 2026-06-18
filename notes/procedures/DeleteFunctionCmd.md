@@ -13,7 +13,7 @@ the push fails.
 ```typescript
 interface DeleteFunctionCmdRequest {
   procedure: "DeleteFunctionCmd";
-  program: string;              // project path of the target program, e.g. "/Mapeditor.exe"
+  file: string;              // project path of the target program, e.g. "/Mapeditor.exe"
   address: string;              // hex, e.g. "0x401000"
 }
 ```
@@ -23,5 +23,5 @@ interface DeleteFunctionCmdRequest {
 
 ## Example
 ```json
-{"procedure": "DeleteFunctionCmd", "program": "/Mapeditor.exe", "address": "0x401000"}
+{"procedure": "DeleteFunctionCmd", "file": "/Mapeditor.exe", "address": "0x401000"}
 ```

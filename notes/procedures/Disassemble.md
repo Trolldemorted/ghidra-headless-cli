@@ -25,7 +25,7 @@ imported program has no instructions yet.
 ```typescript
 interface DisassembleRequest {
   procedure: "Disassemble";
-  program: string;        // project path of the target program, e.g. "/Mapeditor.exe"
+  file: string;        // project path of the target program, e.g. "/Mapeditor.exe"
   address: string;        // function entry, hex, e.g. "0x401000"
   bytes?: boolean;        // include raw instruction bytes (hex); default true
 }
@@ -53,7 +53,7 @@ or `{ "success": false, "error": "<message>" }` (e.g. `"No function at <addr>."`
 ## Example
 Request:
 ```json
-{"procedure": "Disassemble", "program": "/Mapeditor.exe", "address": "0x4024f1"}
+{"procedure": "Disassemble", "file": "/Mapeditor.exe", "address": "0x4024f1"}
 ```
 Response (truncated):
 ```json
@@ -67,7 +67,7 @@ Response (truncated):
 
 Without raw bytes:
 ```json
-{"procedure": "Disassemble", "program": "/Mapeditor.exe", "address": "0x4024f1", "bytes": false}
+{"procedure": "Disassemble", "file": "/Mapeditor.exe", "address": "0x4024f1", "bytes": false}
 ```
 
 ## Typical flow

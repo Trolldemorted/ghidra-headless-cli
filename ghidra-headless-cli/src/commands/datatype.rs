@@ -10,8 +10,8 @@ use crate::json::Req;
 pub enum Cmd {
     /// Apply function-definition data types to matching symbols in the set
     ApplyFunction {
-        /// Target program project path
-        #[arg(long)]
+        /// Target file project path
+        #[arg(long = "file", value_name = "FILE")]
         program: String,
         /// Single entry point address (hex)
         #[arg(long)]
@@ -31,7 +31,7 @@ pub enum Cmd {
     },
     /// Capture function signatures in the set into the program's DTM
     CaptureFunction {
-        #[arg(long)]
+        #[arg(long = "file", value_name = "FILE")]
         program: String,
         #[arg(long)]
         address: Option<String>,
@@ -54,7 +54,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             let set = common::address_set(&address_set).map_err(common::log_arg_err)?;
             client.run_simple(
                 Req::new("ApplyFunctionDataTypesCmd")
-                    .str("program", program)
+                    .str("file", program)
                     .opt_str("address", address)
                     .opt_json("addressSet", set)
                     .opt_str("source", Source::opt(source))
@@ -72,7 +72,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             let set = common::address_set(&address_set).map_err(common::log_arg_err)?;
             client.run_simple(
                 Req::new("CaptureFunctionDataTypesCmd")
-                    .str("program", program)
+                    .str("file", program)
                     .opt_str("address", address)
                     .opt_json("addressSet", set)
                     .build(),

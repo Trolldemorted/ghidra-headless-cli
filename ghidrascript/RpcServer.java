@@ -7,7 +7,7 @@
 //
 // Wire protocol (newline-delimited JSON / ndjson):
 //   - One JSON object per line; every request has a string "procedure" field.
-//   - Program-related procedures also require a "program" field: the target program's
+//   - Program-related procedures also require a "file" field: the target program's
 //     project path (e.g. "/Mapeditor.exe"). The server opens/caches it from the project,
 //     so one server can serve every program in the repository, not just one.
 //   - Exactly one JSON response object per request, on its own line.
@@ -330,6 +330,8 @@ public class RpcServer extends GhidraScript {
         register("Disassemble", new procedures.ghidra.program.model.listing.DisassembleHandler());
         register("FindFunctionsByName", new procedures.ghidra.program.model.listing.FindFunctionsByNameHandler());
         register("FindFunctionsByTag", new procedures.ghidra.program.model.listing.FindFunctionsByTagHandler());
+        register("ListFiles", new procedures.ghidra.framework.model.ListFilesHandler());
+        register("FileMetadata", new procedures.ghidra.framework.model.FileMetadataHandler());
     }
 
     private void register(String procedure, RpcProcedure handler) {

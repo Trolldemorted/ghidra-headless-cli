@@ -21,12 +21,12 @@ import ghidra.program.util.GhidraProgramUtilities;
  * completes — there is no GUI analysis tool in a headless server.
  *
  * Program-targeted and mutating (the defaults), so {@link RpcContext#dispatch} resolves
- * the {@code "program"} field, takes an EXCLUSIVE checkout BEFORE opening, and checks the
+ * the {@code "file"} field, takes an EXCLUSIVE checkout BEFORE opening, and checks the
  * new version in afterward. CONCURRENCY: that exclusive checkout is held for the ENTIRE
  * analysis, which can run for minutes on a large binary; for its duration this server is
  * single-flight (the dispatch lock) AND no other repository client can check the file out.
  *
- * Request: {@code {"procedure":"Analyze","program":"/imports/foo.exe","force":true}} —
+ * Request: {@code {"procedure":"Analyze","file":"/imports/foo.exe","force":true}} —
  * {@code force} (default true) re-analyzes even if already analyzed; when false an
  * already-analyzed program is left untouched and reported as such.
  */

@@ -10,8 +10,8 @@ use crate::json::Req;
 pub enum Cmd {
     /// Add a stack variable to a function
     AddStack {
-        /// Target program project path
-        #[arg(long)]
+        /// Target file project path
+        #[arg(long = "file", value_name = "FILE")]
         program: String,
         /// Function entry address (hex)
         #[arg(long)]
@@ -31,7 +31,7 @@ pub enum Cmd {
     },
     /// Add a register variable to a function
     AddRegister {
-        #[arg(long)]
+        #[arg(long = "file", value_name = "FILE")]
         program: String,
         #[arg(long)]
         address: String,
@@ -50,7 +50,7 @@ pub enum Cmd {
     },
     /// Add a memory variable to a function
     AddMemory {
-        #[arg(long)]
+        #[arg(long = "file", value_name = "FILE")]
         program: String,
         #[arg(long)]
         address: String,
@@ -69,7 +69,7 @@ pub enum Cmd {
     },
     /// Delete a named variable from a function
     Delete {
-        #[arg(long)]
+        #[arg(long = "file", value_name = "FILE")]
         program: String,
         #[arg(long)]
         address: String,
@@ -79,7 +79,7 @@ pub enum Cmd {
     },
     /// Rename a variable in a function
     SetName {
-        #[arg(long)]
+        #[arg(long = "file", value_name = "FILE")]
         program: String,
         #[arg(long)]
         address: String,
@@ -93,7 +93,7 @@ pub enum Cmd {
     },
     /// Set a variable's data type
     SetType {
-        #[arg(long)]
+        #[arg(long = "file", value_name = "FILE")]
         program: String,
         #[arg(long)]
         address: String,
@@ -108,7 +108,7 @@ pub enum Cmd {
     },
     /// Set the comment on a variable
     SetComment {
-        #[arg(long)]
+        #[arg(long = "file", value_name = "FILE")]
         program: String,
         #[arg(long)]
         address: String,
@@ -131,7 +131,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             source,
         } => client.run_simple(
             Req::new("AddStackVarCmd")
-                .str("program", program)
+                .str("file", program)
                 .str("address", address)
                 .opt_int("stackOffset", stack_offset)
                 .opt_str("name", name)
@@ -148,7 +148,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             source,
         } => client.run_simple(
             Req::new("AddRegisterVarCmd")
-                .str("program", program)
+                .str("file", program)
                 .str("address", address)
                 .str("register", register)
                 .opt_str("name", name)
@@ -165,7 +165,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             source,
         } => client.run_simple(
             Req::new("AddMemoryVarCmd")
-                .str("program", program)
+                .str("file", program)
                 .str("memoryAddress", memory_address)
                 .str("address", address)
                 .opt_str("name", name)
@@ -179,7 +179,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             name,
         } => client.run_simple(
             Req::new("DeleteVariableCmd")
-                .str("program", program)
+                .str("file", program)
                 .str("address", address)
                 .str("name", name)
                 .build(),
@@ -192,7 +192,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             source,
         } => client.run_simple(
             Req::new("SetVariableNameCmd")
-                .str("program", program)
+                .str("file", program)
                 .str("address", address)
                 .str("oldName", old_name)
                 .str("newName", new_name)
@@ -207,7 +207,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             source,
         } => client.run_simple(
             Req::new("SetVariableDataTypeCmd")
-                .str("program", program)
+                .str("file", program)
                 .str("address", address)
                 .str("name", name)
                 .str("dataType", data_type)
@@ -221,7 +221,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             comment,
         } => client.run_simple(
             Req::new("SetVariableCommentCmd")
-                .str("program", program)
+                .str("file", program)
                 .str("address", address)
                 .str("name", name)
                 .str("comment", comment)

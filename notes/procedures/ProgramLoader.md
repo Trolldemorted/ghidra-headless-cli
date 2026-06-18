@@ -8,7 +8,7 @@ Wraps Ghidra's `ghidra.app.util.importer.ProgramLoader` builder
 the client, the file is **embedded in the request as base64** (`bytes`) rather than
 referenced by a server-side path. (Replaces the deprecated `AutoImporter`.)
 
-Project-level: unlike the function commands this takes **no `program`** field. It saves
+Project-level: unlike the function commands this takes **no `file`** field. It saves
 the imported program into the project and, in a shared repository, adds it to version
 control so other clients see it immediately. A name collision does not fail — Ghidra
 auto-uniquifies (e.g. `foo.exe` -> `foo.exe.0`); the response's `imported`/`primary`
