@@ -17,29 +17,29 @@ import procedures.RpcProcedure;
 import procedures.RpcResponse;
 
 /**
- * Procedure CreateDataType: create a struct / union / enum / typedef.
+ * Procedure ReplaceDataType: create or REPLACE a struct / union / enum / typedef.
  *
- * Two input shapes (either wins; {@code definition} wins when both given):
- *   1. explicit {@code kind} + {@code name} + (fields|entries|base)
- *   2. {@code definition}: a C snippet parsed by {@link CDefinitionParser}
+ * Same input shapes as {@link CreateDataType} (explicit kind+name+pieces, or a
+ * {@code definition} C snippet). The difference is the conflict policy: this
+ * procedure uses {@link DataTypeConflictHandler#REPLACE_HANDLER}, so a name
+ * clash silently overwrites the existing type in place. References in
+ * function signatures, applied data, and other types are preserved.
  *
- * <p><b>Fail on name collision.</b> If a type with the same name already
- * exists in the target category, the call returns
- * {@code success:false} with the error
- * {@code Data type 'X' already exists in /category.}. Use
- * {@code ReplaceDataType} to overwrite an existing type in place.
+ * Use {@link CreateDataType} if you want a name clash to be an error.
  *
  * <p>Implementation note: type construction AND category.addDataType must
  * run inside the same transaction; the DTM refuses to add a type outside
  * an active transaction ("Transaction has not been started").
  */
-public final class CreateDataTypeHandler implements RpcProcedure {
+public final class ReplaceDataTypeHandler implements RpcProcedure {
 
     @Override
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
         DataTypeManager dtm = ctx.program().getDataTypeManager();
 
-        // C-snippet path. Parse, then pre-check the parsed name.
+        // Fast path: a C snippet. The snippet's embedded name is the type's
+        // name; `name` on the request is ignored on this path. CParser
+        // rejects anonymous types (see CDefinitionParser).
         String defn = RpcContext.optStr(req, "definition");
         if (defn != null && !defn.isEmpty()) {
             DataType parsed;
@@ -48,17 +48,11 @@ public final class CreateDataTypeHandler implements RpcProcedure {
             } catch (IllegalArgumentException e) {
                 return RpcResponse.error(e.getMessage());
             }
-            CategoryPath cp = parsed.getCategoryPath();
-            DataType existing = dtm.getDataType(cp, parsed.getName());
-            if (existing != null) {
-                return RpcResponse.error("Data type '" + parsed.getName()
-                    + "' already exists in " + cp + ".");
-            }
             DataType[] result = {null};
             Throwable[] err = {null};
-            ctx.runWrite("CreateDataType", () -> {
+            ctx.runWrite("ReplaceDataType", () -> {
                 try {
-                    result[0] = dtm.addDataType(parsed, DataTypeConflictHandler.DEFAULT_HANDLER);
+                    result[0] = dtm.addDataType(parsed, DataTypeConflictHandler.REPLACE_HANDLER);
                 } catch (Throwable t) {
                     err[0] = t;
                 }
@@ -72,21 +66,19 @@ public final class CreateDataTypeHandler implements RpcProcedure {
                 new DataTypeSerializer(dtm).describe(result[0]));
         }
 
-        // Explicit-JSON path. Build the type, pre-check the name, add.
+        // Explicit-JSON path: build the type piece-by-piece and add it. The
+        // per-kind builders live below; conflict policy is REPLACE (mirrors
+        // the C-snippet path so both routes behave the same way).
         String kind = RpcContext.reqStr(req, "kind").toLowerCase();
         String name = RpcContext.reqStr(req, "name");
         if (name.isEmpty()) return RpcResponse.error("Missing 'name'.");
         final CategoryPath cp = DataTypeOps.normalizePath(RpcContext.optStr(req, "category"));
         Category category = dtm.getCategory(cp);
         if (category == null) return RpcResponse.error("No data-type category for '" + cp + "'.");
-        if (dtm.getDataType(cp, name) != null) {
-            return RpcResponse.error("Data type '" + name
-                + "' already exists in " + cp + ".");
-        }
 
         DataType[] result = {null};
         Throwable[] err = {null};
-        ctx.runWrite("CreateDataType", () -> {
+        ctx.runWrite("ReplaceDataType", () -> {
             try {
                 DataType dt;
                 switch (kind) {
@@ -97,7 +89,7 @@ public final class CreateDataTypeHandler implements RpcProcedure {
                     default: throw new IllegalArgumentException("Unknown kind '" + kind
                         + "' (use struct|union|enum|typedef).");
                 }
-                result[0] = category.addDataType(dt, DataTypeConflictHandler.DEFAULT_HANDLER);
+                result[0] = category.addDataType(dt, DataTypeConflictHandler.REPLACE_HANDLER);
             } catch (Throwable t) {
                 err[0] = t;
             }

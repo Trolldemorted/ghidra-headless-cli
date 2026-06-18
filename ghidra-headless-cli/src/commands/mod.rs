@@ -11,4 +11,6 @@ pub mod function;
 pub mod stack;
 pub mod tag;
 pub mod variable;
+pub mod exports;
+pub mod imports;
 pub mod xrefs;

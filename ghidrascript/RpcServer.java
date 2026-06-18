@@ -330,16 +330,20 @@ public class RpcServer extends GhidraScript {
         register("Disassemble", new procedures.ghidra.program.model.listing.DisassembleHandler());
         register("FindFunctionsByName", new procedures.ghidra.program.model.listing.FindFunctionsByNameHandler());
         register("FindFunctionsByTag", new procedures.ghidra.program.model.listing.FindFunctionsByTagHandler());
+        register("GetXrefs", new procedures.ghidra.program.model.listing.GetXrefsHandler());
+        register("GetImports", new procedures.ghidra.program.model.listing.GetImportsHandler());
+        register("GetExports", new procedures.ghidra.program.model.listing.GetExportsHandler());
         register("ListFiles", new procedures.ghidra.framework.model.ListFilesHandler());
         register("FileMetadata", new procedures.ghidra.framework.model.FileMetadataHandler());
 
-        // Data-type management: list / show / create / edit / delete / apply. Built-ins
-        // (path "/" + BuiltIns/ANSI_C/windows_vs archive) are rejected by edit/delete;
-        // create uses DataTypeConflictHandler.DEFAULT_HANDLER and aborts on conflict
-        // (no auto-resolve per project policy).
+        // Data-type management: list / show / create / replace / edit / delete / apply.
+        // Built-ins (path "/" + BuiltIns/ANSI_C/windows_vs archive) are rejected by
+        // edit/delete. Create fails on a name collision; Replace uses
+        // DataTypeConflictHandler.REPLACE_HANDLER (silently overwrites in place).
         register("ListDataTypes", new procedures.ghidra.program.model.data.ListDataTypesHandler());
         register("ShowDataType", new procedures.ghidra.program.model.data.ShowDataTypeHandler());
         register("CreateDataType", new procedures.ghidra.program.model.data.CreateDataTypeHandler());
+        register("ReplaceDataType", new procedures.ghidra.program.model.data.ReplaceDataTypeHandler());
         register("EditDataType", new procedures.ghidra.program.model.data.EditDataTypeHandler());
         register("DeleteDataType", new procedures.ghidra.program.model.data.DeleteDataTypeHandler());
         register("ApplyDataType", new procedures.ghidra.program.model.data.ApplyDataTypeHandler());

@@ -67,6 +67,10 @@ enum Command {
     },
     /// Cross-references: list references TO a function / symbol / address
     Xrefs(commands::xrefs::Cmd),
+    /// External imports (libraries this program pulls symbols from)
+    Imports(commands::imports::Cmd),
+    /// External exports (entry points this program exposes to other modules)
+    Exports(commands::exports::Cmd),
 }
 
 fn main() {
@@ -92,6 +96,8 @@ fn main() {
         Command::Comment { cmd } => commands::comment::run(cmd, &client),
         Command::Datatype { cmd } => commands::datatype::run(cmd, &client),
         Command::Xrefs(cmd) => commands::xrefs::run(cmd, &client),
+        Command::Imports(cmd) => commands::imports::run(cmd, &client),
+        Command::Exports(cmd) => commands::exports::run(cmd, &client),
     };
 
     if result.is_err() {

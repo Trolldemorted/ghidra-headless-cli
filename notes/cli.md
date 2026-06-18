@@ -158,6 +158,9 @@ These two are the only short flags (the task's stated exceptions to the
 | `datatype edit` | EditDataType (supports `--definition`) |
 | `datatype delete` | DeleteDataType |
 | `datatype apply` | ApplyDataType |
+| `xrefs` | GetXrefs |
+| `imports` | GetImports |
+| `exports` | GetExports |
 
 Per-procedure request/response field specs live in
 `/workdir/notes/procedures/<Cmd>.md`.
@@ -208,7 +211,7 @@ $BIN --host 127.0.0.1:18000 comment plate clear --file /Mapeditor.exe --address 
 $BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --address 0x4024f1 --text "int main(int argc, char **argv)"
 ```
 
-## Verification (2026-06-17, live against P3 @ ghidra.stronk.pw)
+## Verification (2026-06-18, live against P3 @ ghidra.stronk.pw)
 
 * Read-only `function decompile /Mapeditor.exe 0x4024f1` → exit 0, full C source on stdout
   (escaped newlines/quotes parsed correctly by the hand-rolled JSON parser),
@@ -236,11 +239,57 @@ $BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --addre
   `C snippet name 'X' does not match target 'Y'. The snippet must
   declare the target's name (e.g. `struct Y { ... };`).` On the server
   side, the C snippet is parsed by Ghidra's `CParser` directly into the
-  program DTM and added via `DataTypeConflictHandler.REPLACE_HANDLER` —
-  a name clash on `create` replaces the existing type in place
-  (references preserved). On `edit`, `--definition` replaces the type's
-  body wholesale. `kind` mismatch returns `C snippet kind 'X' does not
-  match target 'Y'.`; bad parse returns `C parse error: …` verbatim.
+  program DTM. `create` uses `DEFAULT_HANDLER` and FAILS on a name
+  collision (`Data type /Y/Foo already exists.`); `datatype replace` is
+  the explicit `REPLACE_HANDLER` path that silently overwrites in place.
+  On `edit`, `--definition` replaces the type's body wholesale. `kind`
+  mismatch returns `C snippet kind 'X' does not match target 'Y'.`;
+  bad parse returns `C parse error: …` verbatim.
+* Cross-references: `xrefs --to <spec> --type function|symbol|address`.
+  Resolved function/symbol/address (the target itself is echoed in the
+  response so the caller can see what was hit) and listed every caller
+  with ref type, operand index, offcut flag, and the enclosing function.
+  `--type` defaults to `function`. Tested all three resolve modes against
+  `/dt-1781777965 main` (resolved to `00101040`, returned the
+  `_elfSectionHeaders` DATA ref at `00000310` op=0 and the external
+  UNCONDITIONAL_CALL ref at `00001018`). Error paths: `--type foo` →
+  `Invalid 'type' 'foo': must be function, symbol, or address.` (exit 1);
+  unknown target → `No function matched 'NoSuchFunction'.` (exit 1);
+  `--limit 1` → truncated, single ref returned.
+* Imports: `imports --file <F> [--type function] [--limit N]`. Iterates
+  `Program.getExternalManager().getExternalLocations(libraryName)` per
+  library, returns each entry's name / EXTERNAL-space address / original
+  imported name / source / isFunction. Default `type=all` includes both
+  function and data imports. Ghidra's own `DEFAULT` stubs are filtered
+  out so the response only contains symbols the binary actually pulled
+  in (`IMPORTED`) or that the user later annotated (`USER_DEFINED`).
+  Tested on `/noanno-1781782566`: 2 imports under `<EXTERNAL>` —
+  `__libc_start_main` and `__cxa_finalize`, both `function`, both
+  `IMPORTED`. `--type function` produces the same set (no data imports
+  to filter). `--limit 1` → truncated after the first entry. Invalid
+  `--type` → `Invalid 'type' 'foo': must be all or function.` (exit 1).
+  Unknown program → `No program found for '/NoSuch'.` (exit 1).
+* Exports: `exports --file <F> [--type function] [--limit N]`. Iterates
+  `SymbolTable.getSymbolIterator()` in address order, filters
+  `Symbol.isExternalEntryPoint() && Symbol.isPrimary()` (and rejects any
+  address in EXTERNAL space, which would be an import not an export).
+  Each row carries the in-program address (NOT `EXTERNAL:`), the
+  `SymbolType` string, `isFunction`, and `isThunk`. Tested on
+  `/noanno-1781782566`: 12 exports (7 functions + 5 labels) including
+  `_init`, `main`, `_start`, `frame_dummy`, `add`, `_fini`, plus
+  `_IO_stdin_used` / `data_start` / etc. as labels. `--type function`
+  narrows to 7 rows. `--limit 1` → truncated, single export returned.
+  Error paths identical to imports (`--type foo`, unknown program).
+  Resolved function/symbol/address (the target itself is echoed in the
+  response so the caller can see what was hit) and listed every caller
+  with ref type, operand index, offcut flag, and the enclosing function.
+  `--type` defaults to `function`. Tested all three resolve modes against
+  `/dt-1781777965 main` (resolved to `00101040`, returned the
+  `_elfSectionHeaders` DATA ref at `00000310` op=0 and the external
+  UNCONDITIONAL_CALL ref at `00001018`). Error paths: `--type foo` →
+  `Invalid 'type' 'foo': must be function, symbol, or address.` (exit 1);
+  unknown target → `No function matched 'NoSuchFunction'.` (exit 1);
+  `--limit 1` → truncated, single ref returned.
 * Error paths: bad address → `No function at deadbeef.`; unknown program →
   `No program found for '/NoSuchProgram.exe'.` — both verbatim, exit 1.
 * Mock server (`/workdir/testscripts/mock_rpc_server.py`) covers connection
