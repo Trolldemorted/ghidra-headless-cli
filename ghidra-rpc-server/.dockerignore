@@ -1,6 +1,7 @@
 # Docker build files themselves
 Dockerfile
 .dockerignore
+/build-containers.sh
 
 # VCS / editor cruft
 .git
