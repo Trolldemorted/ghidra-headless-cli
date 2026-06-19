@@ -167,7 +167,9 @@ pub struct ApplyTypeArgs {
     /// Address range as START[:END] (repeatable). When given, --address is ignored.
     #[arg(long = "address-set", value_name = "START[:END]")]
     pub address_set: Vec<String>,
-    /// Byte length to consume at a single address [default: type's length]
+    /// Byte length to consume at a single address. Only honored for Dynamic
+    /// types (typedefs, strings, FactoryDataType); a mismatch against a
+    /// fixed-length type (int, char, struct, ...) is rejected. [default: type's length]
     #[arg(long)]
     pub length: Option<i64>,
 }

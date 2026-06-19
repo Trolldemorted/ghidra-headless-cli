@@ -356,6 +356,10 @@ $BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --addre
     'function delete' to remove the function itself.`.
   - `memory read-bytes --address 0x401000 --length 16` (default `format=hex`)
     → `f3 0f 1e fa b8 03 00 00 00 c3 66 0f 1f 44 00 00`.
+  - `memory apply-type --type int --address 0x401000` → lays 4 bytes;
+    `--length 1` → `Cannot override length for non-Dynamic type 'int'
+    (4 bytes); 'length' is only honored for Dynamic types …`; `--length 4`
+    (equal) silently accepts; `--type string --length 8` (Dynamic) → 8 bytes.
   - `memory read-bytes --address 0x401000 --length 32 --format dump` → 2 rows of
     16 bytes each with the 8/8 gutter and ASCII column aligned.
   - `memory read-bytes --length 100000` → `Length must be 1..65536.` (cap).

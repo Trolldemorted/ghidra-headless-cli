@@ -42,8 +42,21 @@ interface ApplyDataTypeResponse {
   new data. Both operations run inside one Ghidra transaction.
 - For ranges, the type is applied at every aligned address within every
   supplied range. The `length` field is only meaningful for single-address
-  applications (it caps the bytes consumed below the type's natural
-  length, e.g. applying `int` with `length=2` to consume only 2 bytes).
+  applications.
+- **`length` is only honored for Dynamic types** (typedefs, strings,
+  `FactoryDataType`-based composites). For fixed-length types (int, char,
+  struct, union, primitive pointer, ...) Ghidra's
+  `Listing.createData(addr, dt, len)` silently overwrites `len` with
+  `dt.getLength()`, so a `length` that differs from the type's natural
+  length would be a no-op. To avoid the silent-ignore footgun, the call
+  rejects mismatched `length` against non-Dynamic types with a clear
+  error. A `length` that equals `dt.getLength()` is silently accepted
+  (no-op hint). Examples:
+  - `apply-type --type int --address 0x401000 --length 1` → error
+    (`Cannot override length for non-Dynamic type 'int' (4 bytes)`).
+  - `apply-type --type int --address 0x401000 --length 4` → ok, lays 4.
+  - `apply-type --type string --address 0x401000 --length 8` → ok,
+    Dynamic type honors the hint.
 - An out-of-range or unmapped address returns
   `Insufficent memory at address XXXXXXXX (length: N bytes)`. The
   transaction is rolled back on this error.

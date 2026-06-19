@@ -33,9 +33,30 @@ public final class ApplyDataTypeHandler implements RpcProcedure {
         String typeText = RpcContext.reqStr(req, "type");
         DataType dt = ctx.requireDataType(typeText);
 
+        // Ghidra's Listing.createData(addr, dt, len) honors `len` ONLY for
+        // Dynamic types (typedefs of arrays, strings, FactoryDataType-based
+        // composites). For fixed-length types (int, char, struct, union,
+        // primitive pointer, ...) it silently overwrites `len` with
+        // dt.getLength(). Treating --length as a hint that works
+        // everywhere would be a footgun: passing --length 1 on int lays 4
+        // bytes, surprising the caller. So when --length is supplied for a
+        // non-Dynamic type AND it differs from dt.getLength(), hard-error.
+        // Equal-length requests are silently accepted (no-op hint).
+        boolean lengthRequested = req.has("length");
+        boolean isDynamic = dt instanceof ghidra.program.model.data.Dynamic;
+        int requestedLen = (int) Math.min((long) dt.getLength(), Integer.MAX_VALUE);
+        if (lengthRequested) {
+            requestedLen = RpcContext.optInt(req, "length", requestedLen);
+            if (!isDynamic && requestedLen != dt.getLength()) {
+                return RpcResponse.error(
+                    "Cannot override length for non-Dynamic type '" + dt.getName()
+                    + "' (" + dt.getLength() + " bytes); 'length' is only honored for Dynamic types "
+                    + "(typedefs, strings, FactoryDataType). Drop --length or pick a Dynamic type.");
+            }
+        }
+        int len = requestedLen;
+
         AddressSetView range = ctx.addressSet(req);
-        int len = RpcContext.optInt(req, "length", (int) Math.min((long) dt.getLength(),
-                Integer.MAX_VALUE));
 
         int[] created = {0};
         long[] bytes = {0};
