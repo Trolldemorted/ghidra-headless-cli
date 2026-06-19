@@ -26,8 +26,14 @@ interface ApplyDataTypeResponse {
   success: true;
   type: string;             // display name, e.g. "MyStruct"
   path: string | null;      // full DTM path of the resolved type, or null for primitives
-  created: number;          // number of data units laid
+  created: number;          // number of data units laid (1 for --address,
+                             // 1 per --address-set entry)
   bytes: number;            // total bytes consumed
+  warnings?: string[];      // one entry per --address-set range where the
+                             // type's length is shorter than the range.
+                             // Format: "START:END (type consumes N of M bytes)".
+                             // Absent when all ranges exactly match the
+                             // type's length or only --address was used.
 }
 ```
 
@@ -40,9 +46,28 @@ interface ApplyDataTypeResponse {
 - **Reads-then-mutates**: existing code units are cleared first via
   `Listing.clearCodeUnits`, so an existing instruction doesn't fight the
   new data. Both operations run inside one Ghidra transaction.
-- For ranges, the type is applied at every aligned address within every
-  supplied range. The `length` field is only meaningful for single-address
-  applications.
+- **Range semantics: single-application per entry.** Each element of
+  `addressSet` lays the type ONCE at `start`, consuming
+  `dt.getLength()` bytes (or `length` for Dynamic types). The `end` is
+  an upper bound. This matches the GUI's press-D-and-type behavior:
+  apply once at the cursor, let the type's length extend it. To fill a
+  region with copies of a type, pass multiple `addressSet` entries
+  stepped by the type's length. The previous implementation iterated
+  every byte in the range and laid the type at each address, which
+  produced overlapping copies for any type that consumes more than one
+  byte (the user-reported "17×16-byte struct over a 16-byte range" bug).
+- **Pre-validation.** Before any mutation, every range is checked
+  against the type's length:
+  - **Type longer than range** → whole call rejected with `Type 'X'
+    consumes N bytes but range A:B is only M byte(s). Widen the range,
+    shorten the type, or remove the entry from addressSet.`
+  - **Type shorter than range** → mutation proceeds; the response
+    carries a `warnings` entry for the range, listing the uncovered
+    byte count. The CLI prints the warning on stderr so the user can
+    decide whether to widen the type or narrow the range.
+  - **Type exactly matches range** → no warning.
+  - **Single-address (`--address`)** → no size check (the type naturally
+    extends forward from the single address).
 - **`length` is only honored for Dynamic types** (typedefs, strings,
   `FactoryDataType`-based composites). For fixed-length types (int, char,
   struct, union, primitive pointer, ...) Ghidra's
@@ -60,7 +85,7 @@ interface ApplyDataTypeResponse {
 - An out-of-range or unmapped address returns
   `Insufficent memory at address XXXXXXXX (length: N bytes)`. The
   transaction is rolled back on this error.
-- `created` counts the number of `Listing.createData` calls that returned
-  non-null; if the address falls inside an existing data structure that's
-  smaller than `length`, fewer units may be laid. `bytes` is the sum of
-  those units' lengths.
+- `created` is the number of `Listing.createData` calls that returned
+  non-null. For `--address` it's 1. For `--address-set` it's 1 per
+  range element (the type is laid once per range). `bytes` is the sum
+  of those units' lengths.

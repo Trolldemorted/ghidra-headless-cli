@@ -2,7 +2,8 @@
 
 Grouped RPC procedures for working with **static memory addresses** in a
 program: data labels (create / rename / delete / set-primary / list / lookup /
-get) and raw byte reads. Eight procedures, one per verb.
+get), raw byte reads, applying a data type at an address, and clearing
+listing entries. Ten procedures, one per verb.
 
 | procedure     | mutates? | request                                                          | response                          |
 |---------------|----------|------------------------------------------------------------------|-----------------------------------|
@@ -14,6 +15,8 @@ get) and raw byte reads. Eight procedures, one per verb.
 | LookupLabel   | no       | `file, query, regex?, ignoreCase?, address?`                     | `{count, refs[]}`                 |
 | GetLabel      | no       | `file, address`                                                  | `{address, primary, all[]}`       |
 | ReadBytes     | no       | `file, address, length, format?` (max length 65536)              | `{address, length, bytesRead, data}` |
+| ApplyDataType | yes      | `file, type, address?, length?, addressSet?`                     | `{type, path?, created, bytes, warnings?}` |
+| ClearCodeUnits| yes      | `file, address?, addressSet?, clearContext?`                     | `{ranges, cleared}`               |
 
 Mutations run in a transaction via `RpcContext.runWrite`; the program is
 checked back in on success, rolled back on error. Like all other mutating
@@ -205,6 +208,8 @@ ghidra-headless-cli memory list-labels  --file /Mapeditor.exe [--query g_] [--re
 ghidra-headless-cli memory lookup-label --file /Mapeditor.exe <NAME> [--regex true] [--ignore-case true] [--address 0x401000]
 ghidra-headless-cli memory get-label    --file /Mapeditor.exe --address 0x401000
 ghidra-headless-cli memory read-bytes   --file /Mapeditor.exe --address 0x401000 --length 16 [--format hex|dump]
+ghidra-headless-cli memory apply-type   --file /Mapeditor.exe --type int --address 0x401000
+ghidra-headless-cli memory undefine     --file /Mapeditor.exe --address 0x401000
 ```
 
 Note on `--regex` / `--ignore-case`: clap's `Option<bool>` requires an

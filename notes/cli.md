@@ -172,6 +172,7 @@ These two are the only short flags (the task's stated exceptions to the
 | `memory get-label` | GetLabel |
 | `memory read-bytes` | ReadBytes |
 | `memory apply-type` | ApplyDataType |
+| `memory undefine` | ClearCodeUnits |
 | `string search` | SearchStrings |
 | `string get` | GetString |
 | `string define` | DefineString |
@@ -511,3 +512,62 @@ $BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --addre
     delete). Path-based comparison catches both stale and current
     handles. Cycle-safe via an IdentityHashMap-based `seen` set so a
     struct with a pointer-to-self doesn't loop forever.
+
+* Apply-type `--address-set` single-application semantics (added
+  2026-06-19, fixes the 17×16-byte bug): each `addressSet` entry lays
+  the type ONCE at `start`, consuming `dt.getLength()` bytes; `end` is
+  an upper bound. Pre-validates every range against the type length
+  (whole call rejected if any range is too small; response carries a
+  `warnings` array if any range is larger than the type). The CLI
+  prints the warnings on stderr.
+  - User-reported bug:
+    `memory apply-type --type /TaskContainer --address-set 0x100000:0x100010`
+    on `/noanno-1781782566` → was `applied TaskContainer (17 entries,
+    272 bytes)` (overlapping copies). Now: `applied TaskContainer
+    (1 entries, 16 bytes)` + `note: 1 range(s) had uncovered bytes; the
+    type's length was shorter than the range end-to-start:` +
+    `  00100000:00100010 (type consumes 16 of 17 bytes)`. Matches the
+    GUI's press-D-and-type behavior.
+  - `memory apply-type --type int --address-set 0x100400:0x100413` (4-byte
+    type, 20-byte range) → `applied int (1 entries, 4 bytes)` + warning
+    `00100400:00100413 (type consumes 4 of 20 bytes)`.
+  - `memory apply-type --type /TaskContainer --address-set 0x100300:0x100305`
+    (16-byte type, 6-byte range) → exit 1 with `Type 'TaskContainer'
+    consumes 16 bytes but range 00100300:00100305 is only 6 byte(s).`.
+  - Single `--address` mode unchanged: `memory apply-type --type
+    /TaskContainer --address 0x100200` → `applied TaskContainer
+    (1 entries, 16 bytes)`, no warnings (single-address entries skip
+    the size check).
+  - `--length` Dynamic-only behavior unchanged (see `apply_type_length`
+    memory entry); `length` equal to `dt.getLength()` is silently
+    accepted for non-Dynamic types.
+
+* `memory undefine` (added 2026-06-19; 92nd procedure `ClearCodeUnits`)
+  is the inverse of `apply-type` and mirrors the GUI's "Clear Code
+  Bytes" action. Bytes are preserved; only Data/Instruction listing
+  entries are removed. Single `--address` clears the containing unit
+  (Ghidra semantics: clearing mid-unit clears the whole unit); each
+  `--address-set START[:END]` clears the inclusive range.
+  - Roundtrip smoke test on `/noanno-1781782566`:
+    1. `memory apply-type --type qword --address 0x103fc0` → `applied
+       qword (1 entries, 8 bytes)`.
+    2. `memory undefine --address 0x103fc0` → `cleared 1 code unit(s)
+       across 1 range(s)`.
+    3. `memory apply-type --type dword --address 0x103fc8` → `applied
+       dword (1 entries, 4 bytes)`.
+    4. `memory undefine --address-set 0x103fc8:0x103fcb` → `cleared 1
+       code unit(s) across 1 range(s)`.
+    5. `memory undefine --address 0x103fc0` (re-clear) → `cleared 1
+       code unit(s) across 1 range(s)` (no error, already-undefined
+       addresses are a no-op).
+  - Error paths:
+    - `memory undefine` (no args) → exit 1 with `Missing 'address' or
+      'addressSet'.`.
+    - `memory undefine --address-set 0x103fc0:0x103fbf` → exit 1 with
+      `addressSet entry end '00103fbf' precedes start '00103fc0'.`.
+    - `memory undefine --address-set 0xdeadbeef:0xdeadbeef` → exit 0
+      with `cleared 0 code unit(s) across 1 range(s)` (unmapped
+      addresses are a silent no-op; the `cleared` count tells the
+      caller nothing was there).
+    - `memory undefine --file /NoSuchFile --address 0x1000` → exit 1
+      with `No program found for '/NoSuchFile'.`.

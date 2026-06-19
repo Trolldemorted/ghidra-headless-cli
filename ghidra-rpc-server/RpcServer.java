@@ -363,6 +363,11 @@ public class RpcServer extends GhidraScript {
         register("LookupLabel", new procedures.ghidra.program.model.listing.LookupLabelHandler());
         register("GetLabel", new procedures.ghidra.program.model.listing.GetLabelHandler());
         register("ReadBytes", new procedures.ghidra.program.model.listing.ReadBytesHandler());
+        // Memory undefine: remove listing entries (Data/Instruction definitions)
+        // at one or more addresses; bytes are preserved. Mirrors the GUI's
+        // "Clear Code Bytes" action; useful for undoing an apply-type, fixing
+        // accidental overlaps, or stripping disassembled instructions.
+        register("ClearCodeUnits", new procedures.ghidra.program.model.listing.ClearCodeUnitsHandler());
         // Strings: substring/regex search over the program's defined-string set
         // (--query optional; empty = list all), point lookup at one address,
         // mutating DefineString for materializing a string at an address, and

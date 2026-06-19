@@ -1,6 +1,7 @@
 //! `memory` subcommand: static-memory labels (create / rename / delete /
-//! set-primary / list / lookup / get), raw byte reads, and applying a data
-//! type at an address. Wires to 9 separate RPC procedures — one per verb.
+//! set-primary / list / lookup / get), raw byte reads, applying a data
+//! type at an address, and undefine (clearing the listing at an
+//! address). Wires to 10 separate RPC procedures — one per verb.
 
 use clap::{Args, Subcommand};
 
@@ -30,6 +31,11 @@ pub enum Cmd {
     ReadBytes(ReadBytesArgs),
     /// Apply a data type at an address (or address range)
     ApplyType(ApplyTypeArgs),
+    /// Remove the Data/Instruction listing entries at an address (or range);
+    /// bytes are preserved. Inverse of `apply-type`. Useful for undoing an
+    /// apply, fixing accidental overlaps, or stripping disassembled
+    /// instructions.
+    Undefine(UndefineArgs),
 }
 
 #[derive(Args, Debug)]
@@ -153,10 +159,20 @@ pub struct ReadBytesArgs {
 }
 
 /// Args for `memory apply-type`. Lays a data type at a single address or
-/// across a range; the only `memory` verb that consumes a type definition.
-/// Was previously `datatype apply` — moved because it operates on program
-/// memory (clears the existing code unit, then `Listing.createData`) rather
-/// than on the DTM.
+/// across one or more ranges; the only `memory` verb that consumes a type
+/// definition. Was previously `datatype apply` — moved because it operates
+/// on program memory (clears the existing code unit, then
+/// `Listing.createData`) rather than on the DTM.
+///
+/// Range semantics (single-application): each `--address-set START[:END]`
+/// lays the type ONCE at `START`, consuming `dt.getLength()` bytes (or
+/// `--length` for Dynamic types). The `END` is an upper bound. If the
+/// type is shorter than the range, the response carries a `warnings`
+/// array (logged on stderr) listing the uncovered bytes. If the type is
+/// longer than the range, the whole call is rejected before mutation
+/// runs. This matches the GUI's press-D-and-type behavior. To fill a
+/// region with copies of the type, pass multiple `--address-set` entries
+/// stepped by the type's length.
 #[derive(Args, Debug)]
 pub struct ApplyTypeArgs {
     /// Target file project path
@@ -168,7 +184,9 @@ pub struct ApplyTypeArgs {
     /// Single address to apply at (hex)
     #[arg(long, conflicts_with = "address_set")]
     pub address: Option<String>,
-    /// Address range as START[:END] (repeatable). When given, --address is ignored.
+    /// Address range as START[:END] (repeatable). Each range lays the type
+    /// ONCE at START, consuming dt.getLength() bytes; END is an upper bound.
+    /// --address is ignored when any --address-set is given.
     #[arg(long = "address-set", value_name = "START[:END]")]
     pub address_set: Vec<String>,
     /// Byte length to consume at a single address. Only honored for Dynamic
@@ -176,6 +194,31 @@ pub struct ApplyTypeArgs {
     /// fixed-length type (int, char, struct, ...) is rejected. [default: type's length]
     #[arg(long)]
     pub length: Option<i64>,
+}
+
+/// Args for `memory undefine`. Clears listing entries (Data / Instruction
+/// definitions) at one address or one-or-more ranges; the underlying
+/// bytes are preserved. This is the inverse of `apply-type` and mirrors
+/// the GUI's "Clear Code Bytes" action.
+#[derive(Args, Debug)]
+pub struct UndefineArgs {
+    /// Target file project path
+    #[arg(long = "file", value_name = "FILE")]
+    pub program: String,
+    /// Single address to clear (hex). Clears the code unit at this address
+    /// (and, per Ghidra semantics, the containing unit's min address if
+    /// the address is in the middle of a multi-byte definition).
+    #[arg(long, conflicts_with = "address_set")]
+    pub address: Option<String>,
+    /// Address range as START[:END] (repeatable). Clears everything in
+    /// `[START, END]` inclusive. --address is ignored when any --address-set
+    /// is given.
+    #[arg(long = "address-set", value_name = "START[:END]")]
+    pub address_set: Vec<String>,
+    /// Also drop references and analysis context [default: false]. When
+    /// false, only the listing entries are removed; references are kept.
+    #[arg(long)]
+    pub clear_context: Option<bool>,
 }
 
 pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
@@ -249,6 +292,30 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                     .collect();
                 req = req.opt_json("addressSet", Some(Json::Arr(items)));
                 req.build()
+            } else {
+                req.opt_str("address", a.address.clone()).build()
+            }
+        }
+        Cmd::Undefine(a) => {
+            let req = Req::new("ClearCodeUnits")
+                .str("file", a.program.clone())
+                .opt_bool("clearContext", a.clear_context);
+            if !a.address_set.is_empty() {
+                let items: Vec<Json> = a
+                    .address_set
+                    .iter()
+                    .map(|s| {
+                        let parts: Vec<&str> = s.splitn(2, ':').collect();
+                        let start = parts[0].to_string();
+                        let end = parts.get(1).map(|e| (*e).to_string());
+                        let mut fields = vec![("start".to_string(), Json::Str(start))];
+                        if let Some(e) = end {
+                            fields.push(("end".to_string(), Json::Str(e)));
+                        }
+                        Json::Obj(fields)
+                    })
+                    .collect();
+                req.opt_json("addressSet", Some(Json::Arr(items))).build()
             } else {
                 req.opt_str("address", a.address.clone()).build()
             }
@@ -345,6 +412,37 @@ fn print_response(cmd: &Cmd, response: &Json) {
                 response.get("type").and_then(Json::as_str).unwrap_or("?"),
                 created,
                 bytes
+            );
+            // Surface partial-coverage warnings from the server. The server
+            // emits one entry per --address-set range where the type's
+            // consumption is shorter than the range (e.g. an 8-byte struct
+            // over a 32-byte range leaves 24 bytes uncovered). The user
+            // can decide whether to widen the type, narrow the range, or
+            // pass more --address-set entries to fill the gap.
+            if let Some(arr) = response.get("warnings").and_then(Json::as_array) {
+                if !arr.is_empty() {
+                    log::info!(
+                        "note: {} range(s) had uncovered bytes; the type's \
+                         length was shorter than the range end-to-start:",
+                        arr.len()
+                    );
+                    for w in arr {
+                        let s = match w {
+                            Json::Str(s) => s.as_str(),
+                            _ => "?",
+                        };
+                        log::info!("  {}", s);
+                    }
+                }
+            }
+        }
+        Cmd::Undefine(_) => {
+            let ranges = response.get("ranges").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+            let cleared = response.get("cleared").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+            log::info!(
+                "cleared {} code unit(s) across {} range(s)",
+                cleared,
+                ranges
             );
         }
     }
