@@ -96,12 +96,37 @@ Rules:
 - `kind` and `name` are optional when `definition` is given (the parsed
   type's kind and name are used). On the explicit-JSON path, both are
   required.
-- **Anonymous snippets are rejected.** `struct { int x; };` returns
+- **Anonymous OUTER types are rejected.** `struct { int x; };` returns
   `C snippet must define a NAMED type. Got an anonymous struct/union/enum
   body — write e.g. `struct Foo { int x; };` with an identifier.`
-  Ghidra's CParser handles anonymous types inconsistently (sometimes
+  Ghidra's CParser handles anonymous outer types inconsistently (sometimes
   returning the last field's type, sometimes auto-naming to `enum_1`),
   so we surface a clear error instead.
+- **Anonymous NESTED types are auto-named.** A `struct { … }` or
+  `union { … }` used as a field type inside a named outer type is valid C,
+  so CParser accepts it — and because the DTM requires every composite to
+  have a name, CParser assigns one from a per-DTM counter:
+  `_struct_1`, `_struct_2`, … (and `_union_N` / `_enum_N` for the other
+  kinds). The field is still usable; the type just has a generated name.
+  If that generated name is already taken in the DTM (by a prior parse,
+  a built-in, or an imported archive), `addDataType` with
+  `REPLACE_HANDLER` resolves the collision by suffixing `.conflict`
+  (then `.conflict1`, …). Example:
+
+  ```c
+  // Sent:
+  union MyUnion { struct { int x; int y; } s; int z; };
+  // After parsing, the field `s` shows up as type `_struct_2` (or
+  // `_struct_2.conflict` if that name was already in the DTM).
+  ```
+
+  **Recommendation:** if you want a predictable name, declare the nested
+  type explicitly:
+
+  ```c
+  union MyUnion { struct Inner { int x; int y; } s; int z; };
+  //                 ^^^^^^ now lands as `Inner`, no auto-name, no .conflict
+  ```
 - The snippet must produce exactly ONE type. Forward declarations and
   multi-type snippets return an error.
 - The closing brace of struct/union/enum must be followed by `;`. Without

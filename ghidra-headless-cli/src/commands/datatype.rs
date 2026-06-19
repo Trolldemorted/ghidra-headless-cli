@@ -72,6 +72,10 @@ pub enum Cmd {
         /// snippets ("struct { int x; };") return an error — the snippet must
         /// declare a name. Existing types with the same name are REPLACED in
         /// place (references preserved).
+        /// NOTE: anonymous NESTED types ("union U { struct { int x; } s; };")
+        /// are valid C; CParser auto-names them `_struct_N` (suffixing
+        /// `.conflict` on collision). Name nested types explicitly if you
+        /// want predictable field types.
         #[arg(long)]
         definition: Option<String>,
         /// Fields as a JSON array (struct/union): [{"name":"x","type":"int"}]
@@ -115,6 +119,10 @@ pub enum Cmd {
         /// snippets ("struct { int x; };") return an error — the snippet must
         /// declare a name. Existing types with the same name are REPLACED in
         /// place (references preserved).
+        /// NOTE: anonymous NESTED types ("union U { struct { int x; } s; };")
+        /// are valid C; CParser auto-names them `_struct_N` (suffixing
+        /// `.conflict` on collision). Name nested types explicitly if you
+        /// want predictable field types.
         #[arg(long)]
         definition: Option<String>,
         /// Fields as a JSON array (struct/union): [{"name":"x","type":"int"}]
