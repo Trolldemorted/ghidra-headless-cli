@@ -70,6 +70,29 @@ pub fn require_address_or_set(
     Ok(())
 }
 
+/// Parse a numeric CLI value that may be decimal (`16`, `232`) or hex with
+/// a `0x` / `0X` prefix (`0xe8`, `0X0E8`). Returns an error message naming
+/// the field on failure (so callers can wrap with `log_arg_err` for the
+/// standard CLI error format). Accepts an optional leading `+` / `-` for
+/// the decimal case; hex is unsigned (negative hex is nonsensical for
+/// the byte-length and address-offset fields this is used for).
+pub fn parse_int_dec_or_hex(field: &str, raw: &str) -> Result<i64, String> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return Err(format!("--{}: empty value", field));
+    }
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        // `i64::from_str_radix` requires no prefix — we stripped it.
+        // Don't allow a stray sign on hex; it's almost always a typo
+        // (e.g. `-0x10` slipping through autocomplete).
+        i64::from_str_radix(hex, 16)
+            .map_err(|e| format!("--{}: invalid hex '{}': {}", field, raw, e))
+    } else {
+        s.parse::<i64>()
+            .map_err(|e| format!("--{}: invalid number '{}': {}", field, raw, e))
+    }
+}
+
 /// Parse a `--parameter` value of the form `[NAME=]DATATYPE` into a JSON object
 /// `{ "name"?: ..., "dataType": ... }`.
 pub fn parse_parameter(raw: &str) -> Result<Json, String> {

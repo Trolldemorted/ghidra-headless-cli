@@ -6,6 +6,7 @@
 use clap::{Args, Subcommand};
 
 use crate::client::Client;
+use crate::common;
 use crate::json::{Json, Req};
 
 #[derive(Subcommand, Debug)]
@@ -150,9 +151,10 @@ pub struct ReadBytesArgs {
     /// Start address
     #[arg(long)]
     pub address: String,
-    /// Number of bytes to read [default: 16]
+    /// Number of bytes to read. Accepts decimal (`16`) or hex with `0x`
+    /// prefix (`0xe8`).
     #[arg(long, default_value = "16")]
-    pub length: i64,
+    pub length: String,
     /// Output format: hex | dump [default: hex]
     #[arg(long, value_name = "FMT", default_value = "hex")]
     pub format: String,
@@ -267,7 +269,8 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
         Cmd::ReadBytes(a) => Req::new("ReadBytes")
             .str("file", a.program.clone())
             .str("address", a.address.clone())
-            .int("length", a.length)
+            .int("length", common::parse_int_dec_or_hex("length", &a.length)
+                .map_err(common::log_arg_err)?)
             .str("format", a.format.clone())
             .build(),
         Cmd::ApplyType(a) => {
