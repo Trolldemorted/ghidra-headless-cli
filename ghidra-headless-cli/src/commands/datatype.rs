@@ -36,6 +36,8 @@
 //!
 //! See `notes/procedures/CreateDataType.md` for full details.
 
+use std::collections::BTreeMap;
+
 use clap::Subcommand;
 
 use crate::client::Client;
@@ -61,6 +63,9 @@ pub enum Cmd {
         /// Cap the number of results [default: 0 = unlimited]
         #[arg(long)]
         limit: Option<i64>,
+        /// Emit the raw server `types[]` array as JSON (for jq / scripts) [default: false]
+        #[arg(long)]
+        json: bool,
     },
     /// Show a single data type by full path (kind/fields/entries/etc.)
     Show {
@@ -241,7 +246,21 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             recursive,
             kind,
             limit,
+            json,
         } => {
+            // Compute the print_list args BEFORE moving the strings
+            // into the RPC builder. We clone all three short strings
+            // (file path, optional category, optional kind) so the
+            // owned values can be moved into `str`/`opt_str` below
+            // while the printer still gets references with the same
+            // text. Negligible cost (≤ ~256 bytes each).
+            let program_for_print = program.clone();
+            let program_ref: &str = &program_for_print;
+            let category_for_print = category.clone();
+            let category_ref: Option<&str> = category_for_print.as_deref();
+            let kind_for_print = kind.clone();
+            let kind_ref: Option<&str> = kind_for_print.as_deref();
+            let recursive_flag = recursive.unwrap_or(true);
             let response = client.invoke(
                 Req::new("ListDataTypes")
                     .str("file", program)
@@ -251,7 +270,8 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                     .opt_int("limit", limit)
                     .build(),
             )?;
-            print_list(&response);
+            print_list(&response, program_ref, category_ref,
+                recursive_flag, kind_ref, json)?;
             Ok(())
         }
         Cmd::Show { program, path, json } => {
@@ -482,24 +502,329 @@ fn parse_opt_json(name: &str, value: Option<String>) -> Result<Option<Json>, ()>
     }
 }
 
-fn print_list(response: &Json) {
+fn print_list(
+    response: &Json,
+    file: &str,
+    category: Option<&str>,
+    recursive: bool,
+    kind: Option<&str>,
+    want_json: bool,
+) -> Result<(), ()> {
     let count = response.get("count").and_then(Json::as_f64).unwrap_or(0.0) as i64;
     let truncated = response.get("truncated").and_then(Json::as_bool).unwrap_or(false);
+
+    // ---- --json path: dump the raw server `types[]` array verbatim.
+    //
+    // The output is the raw ndjson-style JSON the server returned, so
+    // consumers can pipe to `jq`. We print the array on a single line
+    // (the server's own serializer keeps it compact), which jq parses
+    // directly. A `head -1` then sees just `[` — for a quick smoke test
+    // of "did the server return anything", `jq 'length'` is the move.
+    if want_json {
+        if let Some(types) = response.get("types") {
+            println!("{}", types);
+        } else {
+            // No `types` key on error responses — surface the error so
+            // the script doesn't silently get empty output.
+            if let Some(err) = response.get("error").and_then(Json::as_str) {
+                return Err(common::log_arg_err(err.to_string()));
+            }
+            println!("[]");
+        }
+        return Ok(());
+    }
+
+    // ---- Tree path.
+    //
+    // Header on stderr so scripts that `2>/dev/null` get the tree alone
+    // on stdout. Includes the file + category + filter context so the
+    // user always knows what scope they're looking at.
+    let scope = category.unwrap_or("/");
+    let kind_str = match kind {
+        None | Some("") | Some("all") => "all kinds".to_string(),
+        Some(k) => format!("kind={}", k),
+    };
+    let recurse_str = if recursive { "recursive" } else { "non-recursive" };
     log::info!(
-        "found {} type{}{}",
+        "{}: {} type{}{} ({}, {}, {})",
+        file,
         count,
         if count == 1 { "" } else { "s" },
-        if truncated { " (truncated by limit)" } else { "" }
+        if truncated { " (truncated)" } else { "" },
+        recurse_str,
+        scope,
+        kind_str,
     );
-    if let Some(arr) = response.get("types").and_then(Json::as_array) {
-        for t in arr {
-            let name = t.get("name").and_then(Json::as_str).unwrap_or("?");
-            let kind = t.get("kind").and_then(Json::as_str).unwrap_or("?");
-            let size = t.get("size").and_then(Json::as_f64).unwrap_or(0.0) as i64;
-            let src = t.get("source").and_then(Json::as_str).unwrap_or("");
-            println!("{}\t{}\t{}\t{}", name, kind, size, src);
+
+    let arr = match response.get("types").and_then(Json::as_array) {
+        Some(a) => a,
+        None => return Ok(()), // success but empty (no types key — defensive)
+    };
+    let rows: Vec<TypeRow> = arr.iter().map(TypeRow::from_json).collect();
+
+    if rows.is_empty() {
+        // Distinguish "filter matched nothing" from "category is empty" —
+        // both are useful diagnostics.
+        log::info!("(no types matched)");
+        return Ok(());
+    }
+
+    let scope_root = category.unwrap_or("/");
+    print_tree(&rows, scope_root);
+    Ok(())
+}
+
+/// One row of the server's `types[]` array, flattened into typed fields.
+struct TypeRow {
+    name: String,
+    kind: String,
+    size: i64,
+    /// Full path, e.g. "/Demangler/L_String" or "/ClaudeHeadlessStruct".
+    path: String,
+    /// Coarse source: "USER" | "BUILTIN" | "ARCHIVE" (or unknown).
+    source: String,
+    /// Optional archive name (e.g. "windows_vs", "Mapeditor.exe").
+    source_archive: Option<String>,
+}
+
+impl TypeRow {
+    fn from_json(j: &Json) -> TypeRow {
+        let path = j.get("path").and_then(Json::as_str).unwrap_or("/?").to_string();
+        let name = j.get("name").and_then(Json::as_str)
+            .map(String::from)
+            .unwrap_or_else(|| {
+                // Fall back to the last path segment if `name` is missing.
+                path.rsplit_once('/').map(|(_, n)| n.to_string())
+                    .unwrap_or_else(|| path.clone())
+            });
+        TypeRow {
+            name,
+            kind: j.get("kind").and_then(Json::as_str).unwrap_or("?").to_string(),
+            size: j.get("size").and_then(Json::as_f64).unwrap_or(0.0) as i64,
+            path,
+            source: j.get("source").and_then(Json::as_str).unwrap_or("").to_string(),
+            source_archive: j.get("sourceArchive").and_then(Json::as_str)
+                .map(String::from),
         }
     }
+
+    /// Human-readable source label per the format in the plan:
+    /// `program (user)` / `built-in (builtin)` / `<archive> (builtin)`
+    /// / `<archive> (archive)`.
+    fn source_label(&self) -> String {
+        match (self.source.as_str(), self.source_archive.as_deref()) {
+            ("USER", _) => "program (user)".to_string(),
+            ("BUILTIN", None) => "built-in (builtin)".to_string(),
+            ("BUILTIN", Some(a)) => format!("{} (builtin)", a),
+            ("ARCHIVE", Some(a)) => format!("{} (archive)", a),
+            ("ARCHIVE", None) => "? (archive)".to_string(),
+            (other, _) if !other.is_empty() => other.to_string(),
+            _ => "?".to_string(),
+        }
+    }
+
+    /// Category path component: everything in `path` before the last `/`.
+    /// `/ClaudeHeadlessStruct` -> "/" (root category); `/Demangler/L_String`
+    /// -> "/Demangler". Trailing slashes normalized away.
+    fn category_path(&self) -> String {
+        match self.path.rsplit_once('/') {
+            Some((cat, _)) => {
+                if cat.is_empty() { "/".to_string() } else { cat.to_string() }
+            }
+            None => "/".to_string(),
+        }
+    }
+}
+
+/// Print `rows` as a tree grouped by category path under the given
+/// `scope_root`.
+///
+/// `scope_root` is the category the user asked for (defaults to `/`).
+/// Types whose `category_path()` equals `scope_root` print flush-left
+/// with no connector; types under subcategories of `scope_root` print
+/// with the standard tree indenting.
+///
+/// Layout (matches the approved preview):
+///   - "Root-level" types (category == scope_root) sit flush-left
+///     with NO connector.
+///   - Each child category prints as a `<lastSeg>/` header. If the
+///     child is a direct child of the scope root, the header is
+///     flush-left; deeper headers carry `├── ` / `└── `.
+///   - Types under a category are indented one level deeper with
+///     `├── ` / `└── ` connectors.
+///   - Only the LAST segment of each category path is shown in the
+///     header — the indentation conveys the full path. A row at
+///     `/Demangler/std/ios_base` lives under `Demangler/std/ios_base/`
+///     in the tree.
+///
+/// The DTM allows empty intermediate categories: a row at
+/// `/Demangler/std/ios_base` doesn't imply `/Demangler` or
+/// `/Demangler/std` have direct rows. We synthesize their headers
+/// so the user can see the full path context.
+fn print_tree(rows: &[TypeRow], scope_root: &str) {
+    // Group by category path.
+    let mut by_cat: BTreeMap<String, Vec<&TypeRow>> = BTreeMap::new();
+    for r in rows {
+        by_cat.entry(r.category_path()).or_default().push(r);
+    }
+
+    // Snapshot of all category paths the server returned. Used to
+    // find children at deeper levels even when intermediate
+    // categories have no direct rows.
+    let known_paths: Vec<String> = by_cat.keys().cloned().collect();
+
+    // "Root" rows for this view: types whose category IS the scope
+    // root. For the un-scoped (`scope_root == "/"`) case this is the
+    // program's top-level DTM. For a scoped call like
+    // `--category /Demangler`, this is types living directly in
+    // `/Demangler` (rare — the server usually returns sub-categories
+    // like `/Demangler/std` rather than `/Demangler` itself).
+    let root_rows = by_cat.remove(scope_root).unwrap_or_default();
+    print_rows_flat(&root_rows);
+
+    // Walk children of the scope root. Skip the scope-root itself
+    // (already represented as the flush-left rows above).
+    let root_children: Vec<String> = known_paths
+        .iter()
+        .filter(|p| *p != scope_root && is_immediate_child(p, scope_root))
+        .cloned()
+        .collect();
+    for (i, child_path) in root_children.iter().enumerate() {
+        // `child_indent` is the prefix for THIS category's header
+        // line. For root-level categories it's "" (flush-left); for
+        // nested categories the caller computes the indent by
+        // prepending "    " (4 spaces) per level of nesting.
+        let child_indent = String::new();
+        print_category(child_path, &child_indent, &mut by_cat, &known_paths,
+            true /* parent_is_root_level */, i, root_children.len());
+    }
+}
+
+/// Print a category header + its rows + nested children.
+///
+/// `indent` — the prefix already printed on the line where THIS
+/// header sits. For root-level categories it's "" (flush-left); for
+/// nested categories it's the accumulated indentation of the parent
+/// chain (4 spaces per level).
+///
+/// `parent_is_root_level` — true when the parent of this category is
+/// the scope root. In that case the header itself is flush-left
+/// (matches the user preview).
+fn print_category(
+    path: &str,
+    indent: &str,
+    by_cat: &mut BTreeMap<String, Vec<&TypeRow>>,
+    known_paths: &[String],
+    parent_is_root_level: bool,
+    sibling_idx: usize,
+    sibling_count: usize,
+) {
+    let cat_rows: Vec<&TypeRow> = by_cat.remove(path).unwrap_or_default();
+    let last_seg = last_segment(path);
+    let cat_header = format!("{}/", last_seg);
+
+    // The connector for THIS header line. For root-level categories
+    // the user preview shows no connector (just `Demangler/` flush-
+    // left). For deeper categories, the connector is `├── ` or
+    // `└── ` depending on whether this is the last sibling at its
+    // level.
+    let conn = if parent_is_root_level {
+        ""
+    } else {
+        if sibling_idx + 1 == sibling_count { "└── " } else { "├── " }
+    };
+    println!("{}{}{}", indent, conn, cat_header);
+
+    // Print rows directly in this category (if any). Each row gets
+    // an extra 4-space indent (one nesting level deeper than the
+    // header) plus the standard `├── ` / `└── ` connector.
+    if !cat_rows.is_empty() {
+        let (name_w, kind_w) = widths_for(&cat_rows);
+        let row_indent = format!("{}    ", indent);
+        for (i, r) in cat_rows.iter().enumerate() {
+            let last = i + 1 == cat_rows.len();
+            let row_conn = if last { "└── " } else { "├── " };
+            print_row(&format!("{}{}", row_indent, row_conn), r, name_w, kind_w);
+        }
+    }
+
+    // Recurse into immediate child categories. Pass sibling info so
+    // each child knows its own connector; child indent is 4 spaces
+    // deeper than this category's indent.
+    let children: Vec<String> = known_paths
+        .iter()
+        .filter(|p| is_immediate_child(p, path))
+        .cloned()
+        .collect();
+    let child_indent = format!("{}    ", indent);
+    for (i, child_path) in children.iter().enumerate() {
+        print_category(child_path, &child_indent, by_cat, known_paths,
+            false, i, children.len());
+    }
+}
+
+/// Print a slice of root-level rows flush-left with no connector.
+fn print_rows_flat(rows: &[&TypeRow]) {
+    if rows.is_empty() { return; }
+    let (name_w, kind_w) = widths_for(rows);
+    for r in rows {
+        print_row("", r, name_w, kind_w);
+    }
+}
+
+/// Compute column widths (name, kind) for a slice of rows.
+fn widths_for(rows: &[&TypeRow]) -> (usize, usize) {
+    let mut name_w = 0usize;
+    let mut kind_w = 0usize;
+    for r in rows {
+        if r.name.chars().count() > name_w { name_w = r.name.chars().count(); }
+        if r.kind.chars().count() > kind_w { kind_w = r.kind.chars().count(); }
+    }
+    if name_w < 4 { name_w = 4; }
+    if kind_w < 6 { kind_w = 6; }
+    (name_w, kind_w)
+}
+
+/// True when `child_path` is exactly one level below `parent`.
+///
+/// For root parent (`""`), immediate children are paths like "/PE"
+/// or "/Demangler"; "/Demangler/std" is two levels deep and its
+/// immediate parent is "/Demangler" (synthesized).
+///
+/// For non-root parent like "/PE" or "/Demangler", immediate children
+/// are "/PE/Sub" or "/Demangler/std"; deeper paths (e.g.
+/// "/Demangler/std/ios_base") are not immediate — they belong to the
+/// next level down.
+///
+/// Edge case: parent "/" is treated as the root (so "/PE" is an
+/// immediate child of "/", even though we build the prefix as "//"
+/// which never matches a real path — handled by the explicit check).
+fn is_immediate_child(child_path: &str, parent: &str) -> bool {
+    if parent.is_empty() || parent == "/" {
+        if !child_path.starts_with('/') { return false; }
+        // Count slashes: "/PE" has 1 (immediate); "/Demangler/std"
+        // has 2 (two levels deep — not immediate).
+        child_path.matches('/').count() == 1
+    } else {
+        let prefix = format!("{}/", parent);
+        if !child_path.starts_with(&prefix) { return false; }
+        child_path[prefix.len()..].matches('/').count() == 0
+    }
+}
+
+/// Last path segment of a category path. `/PE` -> "PE";
+/// `/Demangler/std` -> "std".
+fn last_segment(path: &str) -> &str {
+    path.rsplit_once('/').map(|(_, seg)| seg).unwrap_or(path)
+}
+
+/// Print one type row at the given prefix (which already includes
+/// any connector characters). No newline appended implicitly.
+fn print_row(prefix: &str, r: &TypeRow, name_w: usize, kind_w: usize) {
+    print!("{}{:<name_w$}  {:<kind_w$}  {:>4}  {}",
+        prefix, r.name, r.kind, r.size, r.source_label(),
+        name_w = name_w, kind_w = kind_w);
+    println!();
 }
 
 fn print_show(response: &Json, want_json: bool) -> Result<(), ()> {
