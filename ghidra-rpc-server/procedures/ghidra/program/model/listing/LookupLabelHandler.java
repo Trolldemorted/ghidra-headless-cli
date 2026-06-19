@@ -59,6 +59,27 @@ public final class LookupLabelHandler implements RpcProcedure {
                 s.isPrimary()
             ));
         }
+        // getSymbolIterator() only returns symbols with real DB records, so
+        // it misses auto-generated DAT_<addr> placeholders that Ghidra
+        // synthesizes on demand. Probe st.getSymbols(query) — which has a
+        // built-in getSymbolForDynamicName fallback — for any match we
+        // haven't already recorded.
+        if (!query.isEmpty() && results.isEmpty()) {
+            SymbolIterator dynIt = st.getSymbols(query);
+            while (dynIt.hasNext()) {
+                Symbol s = dynIt.next();
+                if (!matches.test(s.getName())) continue;
+                if (addr != null && !s.getAddress().equals(addr)) continue;
+                results.add(new LabelMatch(
+                    s.getName(),
+                    s.getAddress().toString(),
+                    s.getSource() == null ? null : s.getSource().toString(),
+                    s.getSymbolType().toString(),
+                    s.isExternal(),
+                    s.isPrimary()
+                ));
+            }
+        }
         return new LookupLabelResponse(results.size(), results);
     }
 

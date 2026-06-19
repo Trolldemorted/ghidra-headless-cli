@@ -57,10 +57,15 @@ final class LabelLookup {
             if (exact != null) return new LabelLookup(exact, null);
             return new LabelLookup(null, all);
         }
-        // Program-wide exact-name lookup. Symbols with the same name can
-        // exist in different namespaces, so use the iterator instead of
-        // getLabelOrFunctionSymbols to keep namespaces out of the picture.
-        SymbolIterator it = st.getSymbolIterator();
+        // Program-wide exact-name lookup. st.getSymbols(name) is the
+        // name-indexed iterator that ALSO consults the dynamic-name table
+        // (Ghidra synthesizes `DAT_<addr>` placeholders on demand from
+        // getSymbolForDynamicName when no DB record exists). The plain
+        // st.getSymbolIterator() only returns symbols with real DB
+        // records, so it misses auto-generated DAT_… labels even though
+        // `get-label --address` finds them via getPrimarySymbol. Using
+        // getSymbols(name) keeps the lookup consistent with get-label.
+        SymbolIterator it = st.getSymbols(name);
         List<Symbol> matches = new ArrayList<>();
         while (it.hasNext()) {
             Symbol s = it.next();

@@ -338,6 +338,10 @@ $BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --addre
   - `memory lookup-label --query data_start` → 2 symbols (`data_start`,
     `__data_start`) across all symbol types; `--address` narrows to a single
     address; `--regex true` / `--ignore-case true` work like `find-by-name`.
+    Auto-generated `DAT_<addr>` placeholders are reachable via the
+    dynamic-name probe (see `Memory.md` → `LookupLabel`), so a substring
+    search for `DAT_` that matches one such label will surface it even
+    though `list-labels` skips it.
   - `memory get-label --address 0x401000` → `primary=data_start`,
     `all=[{data_start, primary:true}, {__data_start, primary:false}]`.
   - `memory set-primary --query __data_start --address 0x401000` promotes the

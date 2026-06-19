@@ -75,10 +75,15 @@ alongside the function symbol; the function is NOT renamed — use
   "query": "g_tick", "newName": "g_frame", "source": "USER_DEFINED" }
 ```
 
-Looks up the symbol by `query` (exact name match). On hit, calls
-`Symbol.setName(newName, source)`. Throws `DuplicateNameException` if
-`newName` is already in use by another symbol in the same namespace — caught
-and returned as a clear error.
+Looks up the symbol by `query` (exact name match) via
+`SymbolTable.getSymbols(query)`, which falls back to Ghidra's
+dynamic-name table for auto-generated `DAT_<addr>` placeholders. On hit,
+calls `Symbol.setName(newName, source)`. Throws `DuplicateNameException`
+if `newName` is already in use by another symbol in the same namespace —
+caught and returned as a clear error. Renaming a dynamic `DAT_…` label
+will fail (dynamic labels are read-only); the workaround is to
+`create-label` a USER_DEFINED label at the same address, which makes the
+existing dynamic label a secondary shadow.
 
 ### DeleteLabel
 
@@ -87,10 +92,15 @@ and returned as a clear error.
   "query": "g_tick" }
 ```
 
-Calls `Symbol.delete()` on the resolved symbol. Refuses to delete
+Looks up the symbol by `query` (exact name match) via
+`SymbolTable.getSymbols(query)`, which falls back to Ghidra's
+dynamic-name table for auto-generated `DAT_<addr>` placeholders. Calls
+`Symbol.delete()` on the resolved symbol. Refuses to delete
 `SymbolType.FUNCTION` symbols (use `function delete` for that). The
 `deleted` field on the response is the boolean return from Ghidra's
-`Symbol.delete()`.
+`Symbol.delete()`. Dynamic `DAT_…` labels cannot be deleted directly
+(they're synthesized); create a USER_DEFINED label at the address to
+shadow them.
 
 ### SetPrimary
 
@@ -128,6 +138,16 @@ Same matching semantics as `ListLabels` but returns *all* symbol types
 (function entry-point labels, namespace labels, external imports, ...). Use
 this when you want to ask "is there anything with this name, and where?".
 `--address` narrows the search to a single address.
+
+**Auto-generated `DAT_<addr>` labels.** Ghidra synthesizes `DAT_xxxxxxxx`
+labels on demand for any address that has been defined but has no real
+symbol record — these are the labels `memory get-label --address <X>`
+returns when X is a typed byte that has no user/analysis name. The
+name-indexed `SymbolTable.getSymbols(query)` API (used by `RenameLabel` /
+`DeleteLabel` / `LookupLabel`) has a built-in dynamic-name fallback that
+finds these, so lookups by query succeed. `list-labels` still skips them
+(via its `s.isDynamic()` filter) — use `lookup-label` instead when
+working with `DAT_…` names.
 
 ### GetLabel
 
