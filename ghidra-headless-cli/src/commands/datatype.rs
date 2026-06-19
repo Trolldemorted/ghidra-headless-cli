@@ -55,6 +55,9 @@ pub enum Cmd {
         /// Full data-type path, e.g. /ELF/Elf64_Ehdr
         #[arg(long)]
         path: String,
+        /// Emit the raw JSON `detail` object instead of the C declaration [default: false]
+        #[arg(long)]
+        json: bool,
     },
     /// Create a struct / union / enum / typedef
     Create {
@@ -216,14 +219,14 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             print_list(&response);
             Ok(())
         }
-        Cmd::Show { program, path } => {
+        Cmd::Show { program, path, json } => {
             let response = client.invoke(
                 Req::new("ShowDataType")
                     .str("file", program)
                     .str("path", path)
                     .build(),
             )?;
-            print_show(&response);
+            print_show(&response, json)?;
             Ok(())
         }
         Cmd::Create {
@@ -281,7 +284,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                     .opt_json("addEntries", add_entries_json)
                     .build(),
             )?;
-            print_show(&response);
+            print_show(&response, false)?;
             Ok(())
         }
         Cmd::Delete { program, path } => {
@@ -371,7 +374,7 @@ fn run_create_or_replace(
             .opt_int("enumSize", enum_size)
             .build(),
     )?;
-    print_show(&response);
+    print_show(&response, false)?;
     Ok(())
 }
 
@@ -431,7 +434,7 @@ fn run_replace(
             .opt_int("enumSize", enum_size)
             .build(),
     )?;
-    print_show(&response);
+    print_show(&response, false)?;
     Ok(())
 }
 
@@ -464,19 +467,51 @@ fn print_list(response: &Json) {
     }
 }
 
-fn print_show(response: &Json) {
-    // The kind/path/size headline IS the deliverable when scripting (e.g.
-    // `datatype show --path /X | head -1`); put it on stdout as a TSV line so
-    // it's directly pipeable. Detail lines also on stdout (still data); no
-    // status to emit on stderr for a single-object response.
+fn print_show(response: &Json, want_json: bool) -> Result<(), ()> {
+    // Default: print the C declaration (newest, most readable output).
+    // The headline TSV line (`kind<TAB>path<TAB>size`) stays at the top so
+    // scripts that pipe to `head -1` or awk on the path still work — that's
+    // the one piece of output that is identical whether you want C or JSON.
+    //
+    // --json: dump the raw `detail` object as the existing `key: value`
+    // listing, for callers that need offset/size per field, enum values,
+    // packed/alignment, etc.
     let kind = response.get("kind").and_then(Json::as_str).unwrap_or("?");
+    let name = response.get("name").and_then(Json::as_str).unwrap_or("?");
     let path = response.get("path").and_then(Json::as_str).unwrap_or("?");
     let size = response.get("size").and_then(Json::as_f64).unwrap_or(0.0) as i64;
     println!("{}\t{}\t{}", kind, path, size);
-    if let Some(detail) = response.get("detail").and_then(Json::as_object) {
-        for (key, value) in detail {
-            println!("{}: {}", key, scalar_or_inline(value));
+
+    if want_json {
+        if let Some(detail) = response.get("detail").and_then(Json::as_object) {
+            for (key, value) in detail {
+                println!("{}: {}", key, scalar_or_inline(value));
+            }
         }
+        return Ok(());
+    }
+
+    // C output: require the server-generated `c` field (Ghidra's
+    // DataTypeWriter). If it is missing or empty, fail loudly with a
+    // non-zero exit — do NOT silently fall back to the JSON detail, because
+    // that would re-route output without the user knowing it. The user can
+    // rerun with --json to inspect the structured view.
+    match response.get("c").and_then(Json::as_str) {
+        Some(s) if !s.is_empty() => {
+            // Print each line on its own; preserve indentation. The headline
+            // TSV line already announces the type, so the C declaration
+            // appears below it.
+            for line in s.lines() {
+                println!("{}", line);
+            }
+            Ok(())
+        }
+        _ => Err(common::log_arg_err(format!(
+            "server returned no C declaration for '{}' (path={}, kind={}). \
+             The C writer did not produce output for this type. \
+             Retry with --json to see the structured view.",
+            name, path, kind
+        ))),
     }
 }
 

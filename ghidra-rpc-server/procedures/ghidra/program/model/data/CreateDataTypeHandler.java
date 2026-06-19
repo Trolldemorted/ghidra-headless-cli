@@ -76,8 +76,7 @@ public final class CreateDataTypeHandler implements RpcProcedure {
                 return RpcResponse.error("addDataType returned null for '"
                     + parsed.getName() + "'.");
             }
-            return new ShowDataTypeHandler.ShowResponse(
-                new DataTypeSerializer(dtm).describe(result[0]));
+            return new ShowDataTypeHandler.ShowResponse(dtm, result[0]);
         }
 
         // Explicit-JSON path. Build the type, pre-check the name, add.
@@ -117,8 +116,7 @@ public final class CreateDataTypeHandler implements RpcProcedure {
         if (result[0] == null) {
             return RpcResponse.error("addDataType returned null for '" + name + "'.");
         }
-        return new ShowDataTypeHandler.ShowResponse(
-            new DataTypeSerializer(dtm).describe(result[0]));
+        return new ShowDataTypeHandler.ShowResponse(dtm, result[0]);
     }
 
     private DataType createStruct(JsonObject req, String name, CategoryPath cp,
