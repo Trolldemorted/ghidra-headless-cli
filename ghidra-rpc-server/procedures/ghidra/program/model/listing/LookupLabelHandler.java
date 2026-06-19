@@ -62,22 +62,30 @@ public final class LookupLabelHandler implements RpcProcedure {
         // getSymbolIterator() only returns symbols with real DB records, so
         // it misses auto-generated DAT_<addr> placeholders that Ghidra
         // synthesizes on demand. Probe st.getSymbols(query) — which has a
-        // built-in getSymbolForDynamicName fallback — for any match we
-        // haven't already recorded.
-        if (!query.isEmpty() && results.isEmpty()) {
+        // built-in getSymbolForDynamicName fallback — and add any new match
+        // we haven't already recorded. We run this unconditionally (not
+        // gated on results.isEmpty()) so a partial DB hit doesn't hide a
+        // dynamic match at a different address. The match predicate and
+        // address filter still apply, so unrelated extras are skipped.
+        if (!query.isEmpty()) {
+            java.util.Set<String> seen = new java.util.HashSet<>();
+            for (LabelMatch m : results) seen.add(m.name + "@" + m.address);
             SymbolIterator dynIt = st.getSymbols(query);
             while (dynIt.hasNext()) {
                 Symbol s = dynIt.next();
                 if (!matches.test(s.getName())) continue;
                 if (addr != null && !s.getAddress().equals(addr)) continue;
-                results.add(new LabelMatch(
-                    s.getName(),
-                    s.getAddress().toString(),
-                    s.getSource() == null ? null : s.getSource().toString(),
-                    s.getSymbolType().toString(),
-                    s.isExternal(),
-                    s.isPrimary()
-                ));
+                String key = s.getName() + "@" + s.getAddress();
+                if (seen.add(key)) {
+                    results.add(new LabelMatch(
+                        s.getName(),
+                        s.getAddress().toString(),
+                        s.getSource() == null ? null : s.getSource().toString(),
+                        s.getSymbolType().toString(),
+                        s.isExternal(),
+                        s.isPrimary()
+                    ));
+                }
             }
         }
         return new LookupLabelResponse(results.size(), results);

@@ -145,9 +145,18 @@ symbol record — these are the labels `memory get-label --address <X>`
 returns when X is a typed byte that has no user/analysis name. The
 name-indexed `SymbolTable.getSymbols(query)` API (used by `RenameLabel` /
 `DeleteLabel` / `LookupLabel`) has a built-in dynamic-name fallback that
-finds these, so lookups by query succeed. `list-labels` still skips them
-(via its `s.isDynamic()` filter) — use `lookup-label` instead when
-working with `DAT_…` names.
+finds these on **exact** query match, so lookups like
+`--query DAT_006cbb30` succeed. `list-labels` still skips them (via its
+`s.isDynamic()` filter) — use `lookup-label` instead when working with
+`DAT_…` names.
+
+**Substring search over `DAT_…` labels is partial.** The main iterator
+walks real DB records, and the dynamic-name probe synthesizes at most
+one match for the **exact** query — substring queries like `--query
+DAT_006c` may miss `DAT_006cbb30` because Ghidra does not enumerate the
+dynamic-symbol address space for partial names. The reliable pattern:
+look up the address with `get-label --address <X>`, then use the exact
+returned name with `rename-label` / `delete-label` / `lookup-label`.
 
 ### GetLabel
 

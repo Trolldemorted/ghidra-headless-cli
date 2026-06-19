@@ -19,7 +19,10 @@ pub enum Cmd {
     SetPrimary(SetPrimaryArgs),
     /// List all data labels (substring match)
     ListLabels(ListLabelsArgs),
-    /// Look up symbols by name (substring/regex/case; --address narrows)
+    /// Look up symbols by name (substring/regex/case; --address narrows).
+    /// Auto-generated DAT_<addr> labels match on the exact name only —
+    /// substring queries like `DAT_006c` may miss `DAT_006cbb30`. Use
+    /// `get-label --address` to resolve the exact name first.
     LookupLabel(LookupLabelArgs),
     /// Get the primary label (and all secondary labels) at an address
     GetLabel(GetLabelArgs),
@@ -110,7 +113,8 @@ pub struct ListLabelsArgs {
 pub struct LookupLabelArgs {
     #[arg(long = "file", value_name = "FILE")]
     pub program: String,
-    /// Name to search for (substring by default)
+    /// Name to search for (substring by default; for DAT_<addr> use the
+    /// exact name returned by `get-label --address`)
     #[arg(long)]
     pub query: String,
     /// Treat --query as a regex [default: false]
