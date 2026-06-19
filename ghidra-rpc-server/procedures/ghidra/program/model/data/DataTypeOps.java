@@ -53,6 +53,16 @@ final class DataTypeOps {
      * callers should check {@link #isBuiltIn} before mutating. A single slash
      * between the (possibly empty) category prefix and the name means "root
      * category" — e.g. {@code "/byte"} → category {@code "/"}, name {@code "byte"}.
+     *
+     * <p><b>Archive-stub fallback.</b> When the program DTM has no entry at
+     * {@code path} (e.g. the path lives only in an upstream archive like
+     * {@code Battle_Realms_F.exe}, or the user just deleted a user-defined
+     * type and the program's record of the category is now empty), the
+     * merged view is searched: every {@link SourceArchive} is asked for
+     * its types via {@link DataTypeManager#getDataTypes(SourceArchive)}, and
+     * the first match wins. The result may be an archive-resolved stub.
+     * Use {@link #isLocalProgramType} before mutating, and use
+     * {@link #archiveName} to surface the source in error messages.
      */
     static DataType requireDataTypeByPath(RpcContext ctx, String path) {
         if (path == null || path.trim().isEmpty()) {
@@ -78,10 +88,84 @@ final class DataTypeOps {
         String catPrefix = slash == 0 ? "/" : p.substring(0, slash);
         CategoryPath cp = new CategoryPath(catPrefix);
         DataType dt = dtm.getDataType(cp, name);
-        if (dt == null) {
+        if (dt != null) {
+            return dt;
+        }
+        // Fall back to the merged view: search every open source archive.
+        // This is what makes `datatype show /Demangler/L_String` work when
+        // /Demangler lives only in the Battle_Realms_F.exe archive.
+        DataType stubMatch = null;
+        int stubMatches = 0;
+        for (SourceArchive arc : dtm.getSourceArchives()) {
+            if (arc == null) continue;
+            for (DataType t : dtm.getDataTypes(arc)) {
+                if (!name.equals(t.getName())) continue;
+                CategoryPath tcp = t.getCategoryPath();
+                if (tcp == null) continue;
+                String tCatPath = tcp.getName();
+                String tFullPath = (tCatPath == null || tCatPath.isEmpty())
+                    ? ("/" + t.getName())
+                    : (tCatPath + "/" + t.getName());
+                if (tFullPath.equals(p)) {
+                    stubMatch = t;
+                    stubMatches++;
+                    if (stubMatches > 1) break;
+                }
+            }
+            if (stubMatches > 1) break;
+        }
+        if (stubMatches > 1) {
+            throw new IllegalArgumentException(
+                "Multiple types match path '" + p + "' across open source archives; "
+                + "this should not happen — please report as a bug.");
+        }
+        if (stubMatch == null) {
             throw new IllegalArgumentException("No data type at path '" + p + "'.");
         }
-        return dt;
+        return stubMatch;
+    }
+
+    /**
+     * True when the type is a program-DTM type (user-defined or pulled in
+     * by analysis) — i.e. it has no source archive, or its source archive
+     * is the program's local archive. Archive-resolved stubs (from
+     * upstream archives or built-ins) return false.
+     */
+    static boolean isLocalProgramType(DataType dt) {
+        if (dt == null) return false;
+        SourceArchive arc = dt.getSourceArchive();
+        if (arc == null) return true;
+        // Built-ins (int, char, etc.) are NOT local: they live in the
+        // BUILT_IN_ARCHIVE_UNIVERSAL_ID archive.
+        ghidra.util.UniversalID builtInId =
+            ghidra.program.model.data.DataTypeManager.BUILT_IN_ARCHIVE_UNIVERSAL_ID;
+        if (arc.getSourceArchiveID().equals(builtInId)) {
+            return false;
+        }
+        // The program's local archive is identified by
+        // DataTypeManager.LOCAL_ARCHIVE_UNIVERSAL_ID. A type whose
+        // source archive is anything else is a non-local archive stub.
+        ghidra.util.UniversalID localId =
+            ghidra.program.model.data.DataTypeManager.LOCAL_ARCHIVE_UNIVERSAL_ID;
+        return arc.getSourceArchiveID().equals(localId);
+    }
+
+    /**
+     * Render a source archive's display name (or "(program)" for local
+     * types, "(built-in)" for the canonical built-in archive). Useful
+     * for human-readable error messages.
+     */
+    static String archiveName(DataType dt) {
+        if (dt == null) return "(none)";
+        SourceArchive arc = dt.getSourceArchive();
+        if (arc == null) return "(program)";
+        ghidra.util.UniversalID builtInId =
+            ghidra.program.model.data.DataTypeManager.BUILT_IN_ARCHIVE_UNIVERSAL_ID;
+        if (arc.getSourceArchiveID().equals(builtInId)) {
+            return "(built-in)";
+        }
+        String n = arc.getName();
+        return n == null || n.isEmpty() ? arc.getSourceArchiveID().toString() : n;
     }
 
     /**

@@ -49,10 +49,18 @@ public final class CreateDataTypeHandler implements RpcProcedure {
                 return RpcResponse.error(e.getMessage());
             }
             CategoryPath cp = parsed.getCategoryPath();
-            DataType existing = dtm.getDataType(cp, parsed.getName());
+            Category category = dtm.getCategory(cp);
+            if (category == null) {
+                return RpcResponse.error("No data-type category for '" + cp + "'.");
+            }
+            // Category.getDataType(name) sees archive-resolved stubs too —
+            // DataTypeManager.getDataType(cp, name) only sees the program DTM
+            // and misses auto-typed defaults pulled in from upstream archives,
+            // allowing silent duplicates when the user-defined name collides
+            // with an archive-resolved type of the same name.
+            DataType existing = category.getDataType(parsed.getName());
             if (existing != null) {
-                return RpcResponse.error("Data type '" + parsed.getName()
-                    + "' already exists in " + cp + ".");
+                return RpcResponse.error(collisionMessage(parsed.getName(), cp, existing));
             }
             DataType[] result = {null};
             Throwable[] err = {null};
@@ -79,9 +87,12 @@ public final class CreateDataTypeHandler implements RpcProcedure {
         final CategoryPath cp = DataTypeOps.normalizePath(RpcContext.optStr(req, "category"));
         Category category = dtm.getCategory(cp);
         if (category == null) return RpcResponse.error("No data-type category for '" + cp + "'.");
-        if (dtm.getDataType(cp, name) != null) {
-            return RpcResponse.error("Data type '" + name
-                + "' already exists in " + cp + ".");
+        // See note above: Category.getDataType(name) sees archive-resolved
+        // stubs (auto-typed defaults pulled in from upstream archives),
+        // DataTypeManager.getDataType(cp, name) does not.
+        DataType existing = category.getDataType(name);
+        if (existing != null) {
+            return RpcResponse.error(collisionMessage(name, cp, existing));
         }
 
         DataType[] result = {null};
@@ -149,5 +160,31 @@ public final class CreateDataTypeHandler implements RpcProcedure {
             DataTypeManager dtm, RpcContext ctx) throws Exception {
         return new TypedefDataType(cp, name,
             ctx.requireDataType(RpcContext.reqStr(req, "base")), dtm);
+    }
+
+    /**
+     * Render a clear "name already in use" message that tells the user what
+     * they're colliding with (size, kind, source/archive) so they can decide
+     * whether to use {@code ReplaceDataType}, pick a different name, or
+     * inline the layout. {@code source} comes from
+     * {@link DataType#getSourceArchive()} — non-null means the existing type
+     * is an archive-resolved stub (the silent-duplicate case this guard was
+     * added for); null means a user-defined type already lives in the program
+     * DTM, which the previous (incomplete) check also caught.
+     */
+    private static String collisionMessage(String name, CategoryPath cp, DataType existing) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Data type '").append(name).append("' already exists in ")
+          .append(cp).append(" (kind=").append(DataTypeSerializer.kindOf(existing))
+          .append(", size=").append(existing.getLength());
+        ghidra.program.model.data.SourceArchive archive = existing.getSourceArchive();
+        if (archive != null) {
+            sb.append(", source=archive:").append(archive.getName())
+              .append(" — use 'replace' to overwrite or pick a different name");
+        } else {
+            sb.append(", source=program — use 'replace' to overwrite");
+        }
+        sb.append(").");
+        return sb.toString();
     }
 }

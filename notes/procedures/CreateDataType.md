@@ -1,9 +1,9 @@
 # DataType — Create
 
-Create (or replace) a struct / union / enum / typedef. Program-level and
-mutating. Built-in types cannot be edited/created (the root category only
-accepts types from the BUILT_IN archive), but user-defined types at any
-name are accepted.
+Create a struct / union / enum / typedef. Program-level and mutating.
+Fails on a name collision in the target category (whether the existing
+type is archive-resolved or local). To overwrite an existing type in
+place, use [`ReplaceDataType`](ReplaceDataType.md) instead.
 
 ## Request
 ```typescript
@@ -12,7 +12,7 @@ interface CreateDataTypeRequest {
   file: string;
   // Explicit-JSON path. Required when `definition` is NOT given.
   kind?: "struct" | "union" | "enum" | "typedef";
-  name: string;             // type name; existing types with the same name are REPLACED
+  name: string;             // type name; existing types with the same name cause an ERROR
   category?: string;        // target category [default: "/" = root]
   // struct / union:
   fields?: Array<{ name: string; type: string }>;
@@ -36,14 +36,15 @@ Same shape as `ShowDataType` — the freshly-created type, fully described.
 
 ## Notes
 
-- **Conflict policy: REPLACE in place.** A name clash in the target category
-  is resolved by `DataTypeConflictHandler.REPLACE_HANDLER`: the existing
-  type is replaced at its path, identity preserved so all references
-  (function signatures, applied data, other types) keep working. There
-  is no `success:false` for "already exists" — the existing type is
-  silently upgraded to the new definition. To get strict-fail behaviour
-  (delete-then-create), use `datatype show` first to confirm whether the
-  name is in use, then `datatype delete` if you'd rather not replace.
+- **Conflict policy: strict-fail.** A name clash in the target category —
+  whether the existing type is archive-resolved (a stub pulled in from
+  an upstream archive) or a local program-DTM type — causes the call
+  to return `success:false` with a message of the form
+  `Data type 'X' already exists in /Y (kind=..., size=..., source=...).
+  The source field tells you whether you're colliding with a BUILTIN,
+  ARCHIVE, or program-DTM type, and the response points you at the
+  right next step. To overwrite in place, use
+  [`ReplaceDataType`](ReplaceDataType.md).
 - `type` (in `fields`) and `base` (typedef) are parsed via
   `RpcContext.requireDataType` against the program's DTM, so any existing
   type in the program can be referenced (including arrays: `MyStruct[4]`).
@@ -55,6 +56,18 @@ Same shape as `ShowDataType` — the freshly-created type, fully described.
 - `enumSize` ≤ 0 falls back to 4 (default).
 - Both type construction and `Category.addDataType` run inside one Ghidra
   transaction so partial-creation rollback is automatic on error.
+
+## See also
+
+- [`ReplaceDataType`](ReplaceDataType.md) — overwrite an existing type
+  in place (GUI "Replace..." semantic). Accepts `--path` to
+  disambiguate when the same name appears in multiple categories.
+- [`ShowDataType`](ShowDataType.md) — read-only inspection of any type
+  by path.
+- [`EditDataType`](EditDataType.md) — non-destructive edits (rename,
+  move, append fields, replace fields). Cannot change total size or
+  typedef base kind.
+- [`DeleteDataType`](DeleteDataType.md) — remove a user-defined type.
 
 ## `definition` — C-snippet input
 

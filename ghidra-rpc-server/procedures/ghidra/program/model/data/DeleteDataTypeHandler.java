@@ -32,9 +32,15 @@ public final class DeleteDataTypeHandler implements RpcProcedure {
         if (DataTypeOps.isBuiltIn(ctx, dt)) {
             return RpcResponse.error("Cannot delete built-in type '" + dt.getName() + "'.");
         }
-        // remove(List, TaskMonitor) is the non-deprecated entry point and returns
-        // void; we treat any exception (cancellation, conflict, in-use) as a
-        // hard failure and surface it verbatim.
+        // For archive-resolved types we let Ghidra decide: if the type lives
+        // in a real upstream archive (BuiltInTypes, Mapeditor.exe, ...),
+        // dtm.remove() will either no-op or throw — and we surface that as
+        // a clear error pointing at `datatype replace` as the right verb.
+        // We do NOT pre-check isLocalProgramType() because a freshly
+        // replaced type lives in the archive's domain (GUI Replace puts
+        // the new entry in the archive's local copy) and should still be
+        // deletable; only true upstream stubs are immutable.
+        final String errorRef = errorRefFor(ctx, dt, path);
         ctx.runWrite("DeleteDataType", () -> {
             try {
                 ctx.program().getDataTypeManager()
@@ -43,11 +49,35 @@ public final class DeleteDataTypeHandler implements RpcProcedure {
                 throw new RuntimeException(e.getMessage(), e);
             }
         });
+        // Post-check: if the type is still there (Ghidra silently no-op'd),
+        // the deletion didn't happen. This catches the "archive stub is
+        // immutable" case that the GUI handles by disabling the menu item.
+        DataType stillThere = null;
+        try {
+            stillThere = DataTypeOps.requireDataTypeByPath(ctx, path);
+        } catch (IllegalArgumentException ignored) {
+            // Expected: the type is gone.
+        }
+        if (stillThere != null) {
+            return RpcResponse.error(errorRef);
+        }
         JsonObject o = new JsonObject();
         o.addProperty("success", true);
         o.addProperty("path", path);
         o.addProperty("deleted", true);
         return new DeleteResponse(o);
+    }
+
+    /**
+     * Build the "use replace instead" error message for a type Ghidra
+     * refused to delete. Tells the user exactly which archive the type
+     * came from, so they know what's blocking the delete.
+     */
+    private static String errorRefFor(RpcContext ctx, DataType dt, String path) {
+        return "Cannot delete '" + dt.getName() + "' at '" + path
+            + "' (source archive: " + DataTypeOps.archiveName(dt) + "). "
+            + "Archive-resolved types are immutable; use `datatype replace` to "
+            + "shadow the entry with a user-defined version under the same name.";
     }
 
     static final class DeleteResponse extends RpcResponse {

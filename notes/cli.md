@@ -156,6 +156,7 @@ These two are the only short flags (the task's stated exceptions to the
 | `datatype list` | ListDataTypes |
 | `datatype show` | ShowDataType |
 | `datatype create` | CreateDataType (supports `--definition`) |
+| `datatype replace` | ReplaceDataType (supports `--path`; GUI "Replace..." semantic) |
 | `datatype edit` | EditDataType (supports `--definition`) |
 | `datatype delete` | DeleteDataType |
 | `xrefs` | GetXrefs |
@@ -242,7 +243,9 @@ $BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --addre
 * Mutating `function set-repeatable-comment` → `success`, exit 0 (server checked
   the new version in); reset afterward.
 * Data-type management: `datatype create --definition`, `--fields`, `--base`,
-  `--enum-size`; `datatype edit --definition`, `--add-fields`, `--replace-fields`.
+  `--enum-size`; `datatype edit --definition`, `--add-fields`, `--replace-fields`;
+  `datatype replace --path /X/Y --kind struct --fields ...` and
+  `datatype replace --path /X/Y --definition 'struct Y { ... };'`.
   `--definition` requires a NAMED C snippet — `struct Foo { … };`, not
   `struct { … };`. Anonymous snippets return `C snippet must define a
   NAMED type. Got an anonymous struct/union/enum body — write e.g.
@@ -256,9 +259,26 @@ $BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --addre
   program DTM. `create` uses `DEFAULT_HANDLER` and FAILS on a name
   collision (`Data type /Y/Foo already exists.`); `datatype replace` is
   the explicit `REPLACE_HANDLER` path that silently overwrites in place.
-  On `edit`, `--definition` replaces the type's body wholesale. `kind`
-  mismatch returns `C snippet kind 'X' does not match target 'Y'.`;
-  bad parse returns `C parse error: …` verbatim.
+  `datatype replace` also accepts `--path` (full path) instead of
+  `--name`+`--category`; the two are mutually exclusive on the clap
+  side. `--path` is the disambiguating form when the same name appears
+  in multiple categories (as with archive stubs). Path errors: a
+  relative path → `'path' must be absolute (start with '/'): 'X'.`;
+  trailing-slash path → `'path' must end with a type name: '/X/'.`;
+  nonexistent category → `No data-type category for '/X'.` Parent
+  categories in `--path` are auto-created on the `replace` path (both
+  C-snippet and explicit-JSON) — `replace --path /MyTest/Sub/Bar ...`
+  creates `/MyTest/Sub` if it didn't exist. The C-snippet path
+  re-parents the parsed type to match `--path` so
+  `--path /MyTest/L_String --definition 'struct L_String { ... };'`
+  lands at `/MyTest/L_String`, not at root. On `edit`,
+  `--definition` replaces the type's body wholesale. `kind` mismatch
+  returns `C snippet kind 'X' does not match target 'Y'.`; bad parse
+  returns `C parse error: …` verbatim. Tested `datatype replace
+  --path /CLIENT_ID --kind struct --fields '[...]'` and
+  `datatype replace --path /L_String --definition 'struct L_String { ... };'`
+  on `/Mapeditor.exe`: both replaced the existing entries; subsequent
+  `datatype show` reflected the new fields.
 * Cross-references: `xrefs --to <spec> --type function|symbol|address`.
   Resolved function/symbol/address (the target itself is echoed in the
   response so the caller can see what was hit) and listed every caller

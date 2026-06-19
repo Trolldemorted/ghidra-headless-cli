@@ -134,8 +134,13 @@ final class DataTypeSerializer {
 
     /** Path string ({@code /Category/Sub/Name}); empty when the type has no category. */
     static String pathOf(DataType dt) {
-        String p = dt.getCategoryPath().getName();
-        return (p == null || p.isEmpty()) ? "/" + dt.getName() : p + "/" + dt.getName();
+        // CategoryPath.getPath() returns the full category path ("/" for
+        // root, "/MyTest" for /MyTest, "/MyTest/Sub" for /MyTest/Sub). The
+        // root case needs a special branch — otherwise we'd emit
+        // "//Name" instead of "/Name".
+        String p = dt.getCategoryPath().getPath();
+        if (p == null || p.isEmpty() || "/".equals(p)) return "/" + dt.getName();
+        return p + "/" + dt.getName();
     }
 
     /** One of: struct, union, enum, typedef, pointer, array, functiondef, primitive. */
