@@ -21,8 +21,46 @@ interface DeleteDataTypeResponse {
   success: true;
   path: string;             // echoes the input
   deleted: true;
+  referrers: string[];      // paths of program-DTM types whose fields now
+                             // reference this type by `-BAD-`. Empty array
+                             // when nothing depended on the deleted type.
 }
 ```
+
+## Referrers (`-BAD-` warning)
+
+When a struct / union / enum / typedef is used as a field type by
+another composite, Ghidra stores the reference as a `DataType` instance
+handle on the field. After delete, that handle becomes a `-BAD-`
+placeholder (size -1, name `-BAD-`) until the referrer is re-resolved —
+typically by running `datatype replace` on the referrer (which rebuilds
+it and resolves field types by name) or `datatype delete + create` on
+the referrer.
+
+The response carries a `referrers` array listing every program-DTM type
+whose structure referenced the deleted type. The CLI prints them on
+stderr as:
+
+```
+deleted /OpHeaderBytes
+note: 2 type(s) referenced this and now show '-BAD-'; run `datatype replace` on each to heal:
+  /OpCodes/OpRecord
+  /OpCodes/OpPacket
+```
+
+Use those paths with `datatype replace --path <X> --definition '...';`
+the referrer's structure is rebuilt and field types resolve to the new
+`OpHeaderBytes` (or to whatever you re-created under that name).
+
+Detection is structural: every program-DTM type is walked; for each
+composite its `getComponents()` are inspected, for each typedef the
+base, for each array/pointer the element — recursive and cycle-safe
+(via an IdentityHashMap-based `seen` set, so self-referential types
+don't loop). Built-ins are skipped (they never reference a local
+type by full path). The walk compares by `categoryPath/name`, not by
+`DataType` instance identity, so it correctly catches referrers that
+hold a stale handle to an old instance of the same name (e.g. after a
+prior replace).
 
 ## Path resolution (merged view)
 

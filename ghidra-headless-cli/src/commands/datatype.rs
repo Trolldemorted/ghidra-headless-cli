@@ -281,6 +281,31 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                 if deleted { "deleted" } else { "NOT deleted" },
                 response.get("path").and_then(Json::as_str).unwrap_or("?")
             );
+            // If the deleted type was referenced by other composites, those
+            // composites now hold `-BAD-` placeholders in their field lists
+            // until each referrer is re-resolved (via `datatype replace` of
+            // the referrer, or delete + create of the referrer). The server
+            // returns the list under `referrers`; surface it on stderr so
+            // the user knows what to heal.
+            if let Some(arr) = response.get("referrers").and_then(Json::as_array) {
+                if !arr.is_empty() {
+                    log::info!(
+                        "note: {} type(s) referenced this and now show '-BAD-'; \
+                         run `datatype replace` on each to heal:",
+                        arr.len()
+                    );
+                    for r in arr {
+                        // `arr` is `&[Json]`; each element is `&Json`. as_str
+                        // borrows from the Json so we keep the lifetime
+                        // straight by matching rather than unwrapping.
+                        let p = match r {
+                            Json::Str(s) => s.as_str(),
+                            _ => "?",
+                        };
+                        log::info!("  {}", p);
+                    }
+                }
+            }
             Ok(())
         }
     }

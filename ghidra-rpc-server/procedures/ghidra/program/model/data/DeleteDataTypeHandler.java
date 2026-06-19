@@ -41,6 +41,16 @@ public final class DeleteDataTypeHandler implements RpcProcedure {
         // the new entry in the archive's local copy) and should still be
         // deletable; only true upstream stubs are immutable.
         final String errorRef = errorRefFor(ctx, dt, path);
+
+        // Find program-DTM types that depend on `dt` BEFORE the delete —
+        // once `dt` is gone its dependents will show `-BAD-` placeholders
+        // until each referrer is re-resolved (via `datatype replace` of
+        // the referrer, or delete+create of the referrer). The walk is
+        // read-only and we run it outside runWrite so the transaction
+        // stays small.
+        java.util.List<String> referrers = DataTypeOps.findReferrers(
+            ctx.program().getDataTypeManager(), dt);
+
         ctx.runWrite("DeleteDataType", () -> {
             try {
                 ctx.program().getDataTypeManager()
@@ -65,7 +75,14 @@ public final class DeleteDataTypeHandler implements RpcProcedure {
         o.addProperty("success", true);
         o.addProperty("path", path);
         o.addProperty("deleted", true);
-        return new DeleteResponse(o);
+        // Surface the list of referrers so the caller knows which composites
+        // now have `-BAD-` placeholders. Empty array when nothing depends on
+        // the deleted type — common for leaf types that no struct/union
+        // references.
+        com.google.gson.JsonArray arr = new com.google.gson.JsonArray();
+        for (String r : referrers) arr.add(r);
+        o.add("referrers", arr);
+        return new DeleteResponse(o, referrers);
     }
 
     /**
@@ -83,10 +100,16 @@ public final class DeleteDataTypeHandler implements RpcProcedure {
     static final class DeleteResponse extends RpcResponse {
         final String path;
         final boolean deleted;
-        DeleteResponse(JsonObject o) {
+        // List of program-DTM types that referenced the deleted type and now
+        // hold `-BAD-` placeholders in their field lists. Empty when nothing
+        // depended on the deleted type (leaf types). Serialized by gson as
+        // a JSON array on the response; CLI prints the list on stderr.
+        final java.util.List<String> referrers;
+        DeleteResponse(JsonObject o, java.util.List<String> referrers) {
             this.success = true;
             this.path = o.get("path").getAsString();
             this.deleted = o.get("deleted").getAsBoolean();
+            this.referrers = referrers == null ? java.util.Collections.emptyList() : referrers;
         }
     }
 }

@@ -479,3 +479,35 @@ $BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --addre
   - `--file /NoSuch --function main` → `No program found for '/NoSuch'.`
     (exit 1).
   - Server log: `Procedures (91)` — was 90; +1 for `Callgraph`.
+
+* Datatype delete `-BAD-` referrer detection (added 2026-06-19): the
+  response to `datatype delete` now carries a `referrers` array listing
+  every program-DTM type whose structure depended on the deleted type.
+  The CLI prints them on stderr so the user knows which composites now
+  hold `-BAD-` placeholders and need to be re-resolved
+  (`datatype replace --path <referrer> --definition '...'`).
+  - Scenario: created `/TestInner` (struct) and `/TestOuter` (union with
+    a `TestInner` field) on `/noanno-1781782566`. `datatype delete
+    --file /noanno-1781782566 --path /TestInner` → exit 0; CLI output:
+    `deleted /TestInner` then `note: 1 type(s) referenced this and now
+    show '-BAD-'; run 'datatype replace' on each to heal:` then `  /TestOuter`.
+    The outer union's field listing went from `"type":"TestInner"`
+    to `"size":-1,"type":"-BAD-"` exactly as expected (matches the
+    user-reported symptom from P3).
+  - Negative case: deleted `/Orphan` (a struct nothing references) →
+    just `deleted /Orphan`, no `note:` line. The referrers array is
+    present but empty in the raw JSON
+    (`{"path":"/Orphan","deleted":true,"referrers":[],"success":true}`).
+  - Built-in still rejected: `datatype delete --path /int` →
+    `Cannot delete built-in type 'int'.` (no referrers line).
+  - Detection is structural (recursive walk of `getComponents()` for
+    composites, `getBaseDataType()` for typedefs, element-type for
+    arrays/pointers, return+parameter types for `FunctionDefinition`),
+    comparing by `categoryPath/name` rather than `DataType` instance
+    identity. Empirically `DataType.dependsOn()` returns false for
+    referrers that hold a stale instance of the same name (the field
+    type was resolved from the DTM by name when the referrer was built,
+    so it points at a different object than the one the caller asked to
+    delete). Path-based comparison catches both stale and current
+    handles. Cycle-safe via an IdentityHashMap-based `seen` set so a
+    struct with a pointer-to-self doesn't loop forever.

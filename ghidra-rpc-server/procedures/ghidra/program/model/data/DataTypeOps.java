@@ -1,6 +1,7 @@
 package procedures.ghidra.program.model.data;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import com.google.gson.JsonArray;
@@ -166,6 +167,146 @@ final class DataTypeOps {
         }
         String n = arc.getName();
         return n == null || n.isEmpty() ? arc.getSourceArchiveID().toString() : n;
+    }
+
+    /**
+     * Find every program-DTM type that depends on {@code target} — i.e.
+     * the type references {@code target} through a field, base typedef,
+     * pointer, array element, etc. Returns the referring types' absolute
+     * paths (e.g. {@code "/OpCodes/OpRecord"}).
+     *
+     * <p>Used by {@link DeleteDataTypeHandler} to warn the caller that
+     * deleting {@code target} will leave those referring composites with
+     * {@code -BAD-} placeholders until each referrer is re-resolved (via
+     * {@code datatype replace} of the referrer, or delete+create of the
+     * referrer).
+     *
+     * <p>Implementation notes:
+     * <ul>
+     *   <li>Walks the program DTM only (not open source archives) — the
+     *       archive stubs can't depend on a local type being deleted, and
+     *       the response would be noisy otherwise.</li>
+     *   <li>Why not {@link DataType#dependsOn(DataType)}? Empirically the
+     *       Ghidra Composite/Structure implementation does NOT report a
+     *       dependency on a field type that's been resolved into a
+     *       different {@code DataType} instance via DTM name resolution
+     *       (the field holds a pointer to one resolved instance; the
+     *       caller passes a different instance of the same name). The
+     *       result is empty referrer lists when there clearly are
+     *       referrers. So we walk {@code getAllComponents()} ourselves
+     *       and compare by full path, which is what the user actually
+     *       cares about ("does any field reference MY type by name?").</li>
+     *   <li>Skips {@code target} itself and built-in types — built-ins
+     *       never reference a local type, and a type trivially "depends"
+     *       on itself.</li>
+     * </ul>
+     */
+    static List<String> findReferrers(DataTypeManager dtm, DataType target) {
+        if (dtm == null || target == null) return Collections.emptyList();
+        String targetPath = pathOf(target);
+        if (targetPath == null) return Collections.emptyList();
+        List<String> refs = new ArrayList<>();
+        java.util.Iterator<DataType> it = dtm.getAllDataTypes();
+        while (it.hasNext()) {
+            DataType t = it.next();
+            if (t == null || t.equals(target)) continue;
+            if (isBuiltInDirect(dtm, t)) continue;
+            if (referencesByPath(t, targetPath)) {
+                CategoryPath cp = t.getCategoryPath();
+                String cat = (cp == null) ? "/" : cp.getName();
+                String path = (cat == null || cat.isEmpty() || cat.equals("/"))
+                    ? ("/" + t.getName())
+                    : (cat + "/" + t.getName());
+                refs.add(path);
+            }
+        }
+        Collections.sort(refs);
+        return refs;
+    }
+
+    /** Full path of a DataType (e.g. "/OpCodes/OpHeaderBytes"), or null if not resolvable. */
+    private static String pathOf(DataType dt) {
+        if (dt == null) return null;
+        CategoryPath cp = dt.getCategoryPath();
+        String cat = (cp == null) ? "" : cp.getName();
+        if (cat == null || cat.isEmpty() || cat.equals("/")) {
+            return "/" + dt.getName();
+        }
+        return cat + "/" + dt.getName();
+    }
+
+    /**
+     * Recursive structural walk: does {@code t} reference a type whose
+     * full path matches {@code targetPath}? Walks composites (components),
+     * typedefs (base), arrays (element), pointers (dataType), function
+     * definitions (parameter/return types), and parameter lists. Cycle-safe
+     * via the {@code seen} set so a recursive typedef can't loop forever.
+     */
+    private static boolean referencesByPath(DataType t, String targetPath) {
+        java.util.Set<DataType> seen = java.util.Collections.newSetFromMap(
+            new java.util.IdentityHashMap<>());
+        return referencesByPathRec(t, targetPath, seen);
+    }
+
+    private static boolean referencesByPathRec(DataType t, String targetPath,
+            java.util.Set<DataType> seen) {
+        if (t == null) return false;
+        if (!seen.add(t)) return false;
+        String p = pathOf(t);
+        if (targetPath.equals(p)) return true;
+        if (t instanceof ghidra.program.model.data.Composite) {
+            ghidra.program.model.data.Composite c = (ghidra.program.model.data.Composite) t;
+            for (int i = 0; i < c.getNumComponents(); i++) {
+                ghidra.program.model.data.DataTypeComponent comp = c.getComponent(i);
+                if (comp == null) continue;
+                if (referencesByPathRec(comp.getDataType(), targetPath, seen)) {
+                    return true;
+                }
+            }
+        } else if (t instanceof ghidra.program.model.data.TypeDef) {
+            return referencesByPathRec(
+                ((ghidra.program.model.data.TypeDef) t).getBaseDataType(),
+                targetPath, seen);
+        } else if (t instanceof ghidra.program.model.data.Array) {
+            return referencesByPathRec(
+                ((ghidra.program.model.data.Array) t).getDataType(),
+                targetPath, seen);
+        } else if (t instanceof ghidra.program.model.data.Pointer) {
+            return referencesByPathRec(
+                ((ghidra.program.model.data.Pointer) t).getDataType(),
+                targetPath, seen);
+        } else if (t instanceof ghidra.program.model.data.FunctionDefinition) {
+            ghidra.program.model.data.FunctionDefinition fd =
+                (ghidra.program.model.data.FunctionDefinition) t;
+            if (referencesByPathRec(fd.getReturnType(), targetPath, seen)) return true;
+            ghidra.program.model.data.ParameterDefinition[] params = fd.getArguments();
+            if (params != null) {
+                for (ghidra.program.model.data.ParameterDefinition pd : params) {
+                    if (referencesByPathRec(pd.getDataType(), targetPath, seen)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        // Built-in scalars (int, char, float, ...) have no dependencies to
+        // recurse into. EnumDataType is also scalar — its entries are
+        // (name, value) pairs, not type references.
+        return false;
+    }
+
+    /**
+     * Built-in check that doesn't require an {@link RpcContext} — split
+     * out from {@link #isBuiltIn} so {@link #findReferrers} can call it
+     * inside its read-only DTM walk.
+     */
+    private static boolean isBuiltInDirect(DataTypeManager dtm, DataType dt) {
+        if (dt == null) return false;
+        SourceArchive arc = dt.getSourceArchive();
+        if (arc == null) return false;
+        SourceArchive builtInArc = dtm.getSourceArchive(
+            ghidra.program.model.data.DataTypeManager.BUILT_IN_ARCHIVE_UNIVERSAL_ID);
+        if (builtInArc == null) return false;
+        return arc.getSourceArchiveID().equals(builtInArc.getSourceArchiveID());
     }
 
     /**
