@@ -74,6 +74,22 @@ no `-process`** (a pre-script runs once even when no program is processed; a pos
 would not run at all), so `currentProgram` is null and the cache begins empty — see the
 launcher section.
 
+**No default file.** When `"file"` is missing or empty, `dispatch` returns
+`Missing required field 'file'.` immediately — it NEVER falls back to the first
+program in the project, the program's `currentProgram` (always null at this
+layer), or any other heuristic. That fallback would silently mutate an
+unintended program when the user forgot `--file`. The CLI's clap layer enforces
+the same policy on the front side: every program-bearing subcommand declares
+`--file <FILE>` as `String` (required), so the request never reaches the server
+without one. Defense in depth: server-side validation here protects raw ndjson
+callers that bypass the CLI. Verified vectors:
+
+- `datatype create` without `--file` → clap: `error: the following required arguments were not provided: --file <FILE>`
+- `datatype create --file ""` → server: `Missing required field 'file'.`
+- raw ndjson `{"procedure":"CreateDataType","definition":"..."}` (no file) → server: `Missing required field 'file'.`
+
+Rationale pinned in the `dispatch` Javadoc so future procedures keep the policy.
+
 ## Synchronization (precise)
 
 * **Sockets:** one daemon thread per client — concurrent at the I/O layer.

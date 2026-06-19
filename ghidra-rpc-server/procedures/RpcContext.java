@@ -139,6 +139,17 @@ public class RpcContext {
      * {@code "file"} field selects the target; per policy the file is checked out
      * first and every successful mutating procedure is checked in immediately (the call
      * fails if the push fails).
+     *
+     * <p><b>No default file.</b> Program-targeting procedures MUST supply an
+     * explicit {@code "file"} field. The dispatcher NEVER picks a fallback
+     * program from the project (e.g. "the first one") when {@code "file"} is
+     * missing or empty — that would silently mutate an unintended program
+     * when the user forgot the flag. The error returned is
+     * {@code "Missing required field 'file'."} so the CLI can surface it
+     * verbatim; clap's required-arg handling on the CLI side produces the
+     * same message before the request even reaches the server. This is a
+     * deliberate defense-in-depth: server-side validation here protects raw
+     * ndjson callers that bypass the CLI.
      */
     public RpcResponse dispatch(RpcProcedure procedure, JsonObject request) throws Exception {
         lock.lock();
