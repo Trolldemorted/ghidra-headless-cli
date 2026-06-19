@@ -571,3 +571,37 @@ $BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --addre
       caller nothing was there).
     - `memory undefine --file /NoSuchFile --address 0x1000` → exit 1
       with `No program found for '/NoSuchFile'.`.
+
+* `datatype create` stdint typedef gap (documented 2026-06-19; Ghidra
+  parser limitation, not a bug on our side). Verified live on
+  `/noanno-1781782566`:
+  - **Unsigned `uintN_t` works in `--definition` out of the box.**
+    `datatype create --file /noanno-1781782566 --definition "typedef
+    unsigned long long uint64_t;"` → creates `/uint64_t` (base
+    `ulonglong`, 8 bytes). `datatype create --file /noanno-1781782566
+    --definition "struct With64 { uint64_t x; };"` → creates `/With64`
+    with field `x` typed as `uint64_t`. CParser auto-drops a
+    `uint64_t` typedef into the DTM as a side effect, so subsequent
+    `--fields --type uint64_t` calls also work.
+  - **Signed `intN_t` fails in BOTH paths without a pre-defined
+    typedef.** `datatype create --definition "struct Bar { int64_t x;
+    };"` → exit 1 with `C parse error: Undefined data type "int64_t"`.
+    `datatype create --kind struct --name Repro --fields
+    '[{"name":"x","type":"int64_t"}]'` → exit 1 with `Unrecognized
+    data type of "int64_t"`.
+  - **Workaround (one-time per program):** define each missing
+    typedef once via `--definition`. After the four lines below, both
+    paths resolve `int64_t` / `int32_t` / `int16_t` / `int8_t`
+    everywhere:
+    ```bash
+    datatype create --file /prog --definition "typedef long long  int64_t;"
+    datatype create --file /prog --definition "typedef int         int32_t;"
+    datatype create --file /prog --definition "typedef short       int16_t;"
+    datatype create --file /prog --definition "typedef signed char  int8_t;"
+    ```
+    Smoke-verified: after running the `int64_t` line above, the same
+    `--fields --type int64_t` call that previously errored now
+    succeeds and lays the field correctly.
+  - Standard C primitives (`short`, `float`, `wchar_t`, `bool`,
+    `long long`, etc.) work in both paths regardless of any pre-defined
+    typedef.

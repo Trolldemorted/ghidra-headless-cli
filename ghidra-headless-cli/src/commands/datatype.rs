@@ -14,6 +14,12 @@
 //! NOTE: `datatype apply` was removed; it now lives under `memory apply-type`
 //! because it operates on program memory (laying a type at an address),
 //! not on the DTM.
+//!
+//! NOTE: Ghidra's parsers don't ship signed `stdint.h` typedefs
+//! (`int8_t`/`int16_t`/`int32_t`/`int64_t`) — they fail in BOTH
+//! `--definition` and `--fields` paths until you define each once via
+//! `--definition "typedef long long int64_t;"` (and similar). Unsigned
+//! `uintN_t` works out of the box. See `notes/procedures/CreateDataType.md`.
 
 use clap::Subcommand;
 
@@ -76,6 +82,11 @@ pub enum Cmd {
         /// are valid C; CParser auto-names them `_struct_N` (suffixing
         /// `.conflict` on collision). Name nested types explicitly if you
         /// want predictable field types.
+        /// NOTE: signed `stdint.h` typedefs (`int8_t`/`int16_t`/`int32_t`/
+        /// `int64_t`) are not in CParser's built-in map; define them once
+        /// via `--definition "typedef long long int64_t;"` (and similar)
+        /// before using them in either `--definition` or `--fields`.
+        /// Unsigned `uintN_t` works out of the box.
         #[arg(long)]
         definition: Option<String>,
         /// Fields as a JSON array (struct/union): [{"name":"x","type":"int"}]
@@ -123,6 +134,11 @@ pub enum Cmd {
         /// are valid C; CParser auto-names them `_struct_N` (suffixing
         /// `.conflict` on collision). Name nested types explicitly if you
         /// want predictable field types.
+        /// NOTE: signed `stdint.h` typedefs (`int8_t`/`int16_t`/`int32_t`/
+        /// `int64_t`) are not in CParser's built-in map; define them once
+        /// via `--definition "typedef long long int64_t;"` (and similar)
+        /// before using them in either `--definition` or `--fields`.
+        /// Unsigned `uintN_t` works out of the box.
         #[arg(long)]
         definition: Option<String>,
         /// Fields as a JSON array (struct/union): [{"name":"x","type":"int"}]

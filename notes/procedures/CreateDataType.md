@@ -136,3 +136,53 @@ Rules:
 - Parse failures return `IllegalArgumentException`'s message verbatim
   (`C parse error: …` or `C parse failed: …`), so CParser diagnostics
   surface as-is to the caller.
+
+## Common gotcha: `stdint.h` types (`uintN_t` / `intN_t`)
+
+Ghidra's two parsers each ship with their own built-in alias map for
+common C type names, and those maps are **incomplete and asymmetric**:
+
+- **Unsigned `uint8_t` / `uint16_t` / `uint32_t` / `uint64_t`** are
+  built into `CParser`'s typedef table (the `--definition` path). They
+  auto-resolve to `ulonglong` etc. without any pre-definition:
+  `typedef unsigned long long uint64_t;` and
+  `struct With64 { uint64_t x; };` both succeed. The act of parsing
+  also drops a `uint64_t` typedef into the DTM, so subsequent
+  `--fields --type uint64_t` resolves it through `DataTypeParser`.
+- **Signed `int8_t` / `int16_t` / `int32_t` / `int64_t`** are
+  **not** in either parser's built-in map. They fail in both paths:
+  - `--definition "struct Bar { int64_t x; };"` →
+    `C parse error: Undefined data type "int64_t"`.
+  - `--fields --type int64_t` →
+    `Unrecognized data type of "int64_t"`.
+- The standard C primitives `short`, `float`, `wchar_t`, `bool`,
+  `double`, `long long`, etc. are in both maps and work everywhere.
+
+This is a Ghidra limitation, not a bug in our parser layer —
+`CDefinitionParser` and `RpcContext.requireDataType` both delegate to
+Ghidra's parsers, and the parsers' built-in tables are what they are.
+We do not paper over it silently because the silent-coercion surprise
+("my struct used `int32_t` and now half the fields are 4 bytes shorter
+than expected") is worse than the loud error.
+
+**Workaround.** Define the missing signed-stdint typedefs once via
+`--definition`. The act of defining `int64_t` puts it in the program
+DTM, which makes `DataTypeParser` resolve it on every subsequent
+`--fields --type int64_t`:
+
+```bash
+ghidra-headless-cli datatype create --file /your-program --definition "typedef long long  int64_t;"
+ghidra-headless-cli datatype create --file /your-program --definition "typedef int         int32_t;"
+ghidra-headless-cli datatype create --file /your-program --definition "typedef short       int16_t;"
+ghidra-headless-cli datatype create --file /your-program --definition "typedef signed char  int8_t;"
+```
+
+After that, both `--definition "struct Foo { int64_t x; };"` and
+`--fields --type int64_t` resolve correctly. The four typedefs cost
+~20 bytes of DTM storage and persist for the lifetime of the program.
+
+If you only need them transiently for one snippet, you can pre-declare
+them at the top of the same `definition` string — but CParser still
+won't recognize `int64_t` until the `typedef` line above it has been
+parsed into the DTM, so for a single-call flow you still need the
+preamble to run first.
