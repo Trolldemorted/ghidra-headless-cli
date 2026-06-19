@@ -80,12 +80,32 @@ even when the path lives only in an upstream archive (e.g.
 - `Cannot delete built-in type 'X'.` — the type lives in the BUILT_IN
   archive (BuiltIns / ANSI_C / windows_vs). These types are immutable
   and shared across all programs in the repository.
-- `Cannot delete 'X' at '/X' (source archive: <name>). Archive-resolved
-  types are immutable; use 'datatype replace' to shadow the entry with a
-  user-defined version under the same name.` — the resolved type came
-  from an upstream archive (BuiltInTypes, Mapeditor.exe, ...) and
-  `remove()` no-op'd. This is the Ghidra GUI's "Delete" menu being
-  disabled for archive members.
+- `Cannot delete 'X' at '/X' (source archive: <name> [<id>])[<provenance>].
+  Archive-resolved types are immutable in Ghidra (the GUI's Delete menu
+  is disabled for the same reason). To remove this entry, shadow it
+  with a user-defined version at the same path:
+    datatype replace --file /<file> --path '/X' --definition '<your definition here>'
+  After the replace, your user-defined version becomes the resolver hit
+  at '/X', and a follow-up `datatype delete --path '/X'` removes it
+  like any other local type. Alternatively, create under a different
+  name (e.g. 'X_local') and leave the stub in place.`
+  — the resolved type came from an upstream archive (BuiltInTypes,
+  Mapeditor.exe, another older version of the same program in the same
+  repo, ...) and `dtm.remove()` silently no-op'd. The error includes:
+  - the source archive NAME and its UniversalID, so an archive whose
+    display name happens to match the current program's name (e.g.
+    `Battle_Realms_F.exe` pulled in from `Battle_Realms_F.exe_old` in
+    the same repo) is distinguishable from the local archive;
+  - a provenance note when the archive's name matches the current
+    program but its ID differs — that's the "different program with
+    the same display name" case and it's the most common source of
+    confusion in this error;
+  - a copy-pasteable `datatype replace` command template (with the
+    user's exact path filled in) and the alternative "use a different
+    name" workaround.
+  See `notes/memcorruption` for the audit that motivated surfacing the
+  archive ID (helps disambiguate when the GUI and the CLI see
+  differently-named archives with similar shapes).
 - `Failed to delete 'X' (in use or category conflict).` — the type is
   referenced by a code unit, function signature, or another type; remove
   those references first.

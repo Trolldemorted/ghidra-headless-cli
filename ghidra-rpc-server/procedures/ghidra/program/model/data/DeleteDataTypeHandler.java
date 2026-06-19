@@ -87,14 +87,52 @@ public final class DeleteDataTypeHandler implements RpcProcedure {
 
     /**
      * Build the "use replace instead" error message for a type Ghidra
-     * refused to delete. Tells the user exactly which archive the type
-     * came from, so they know what's blocking the delete.
+     * refused to delete. Surfaces:
+     *  - the type name and the path the user tried (so they can confirm the
+     *    target)
+     *  - the source archive NAME and its UniversalID (so an archive whose
+     *    display name happens to match the current program's name — e.g.
+     *    "Battle_Realms_F.exe" pulled in from "Battle_Realms_F.exe_old" in
+     *    the same repo — is distinguishable from the local archive)
+     *  - the exact `datatype replace` command line, with the path filled in,
+     *    so the user has a copy-pasteable fix
+     *  - the GUI-equivalent caveat so the user knows this isn't a CLI bug
      */
     private static String errorRefFor(RpcContext ctx, DataType dt, String path) {
+        ghidra.program.model.data.SourceArchive arc = dt.getSourceArchive();
+        String arcName = DataTypeOps.archiveName(dt);
+        String arcId = arc == null ? "(no archive)" : arc.getSourceArchiveID().toString();
+        String program = ctx.program() == null ? "<program>" : ctx.program().getName();
+        // Heuristic: when the archive name matches the current program's
+        // name but the ID is NOT the local archive, the type was pulled in
+        // from a DIFFERENT program in the same repository that happens to
+        // have the same display name (a real Battle_Realms scenario:
+        // Battle_Realms_F.exe_old exports the same archive name). Call this
+        // out explicitly so the user knows why the local archive is not
+        // authoritative.
+        boolean sameNameDifferentArchive = arc != null
+            && arcName.equals(program)
+            && !arc.getSourceArchiveID().equals(
+                ghidra.program.model.data.DataTypeManager.LOCAL_ARCHIVE_UNIVERSAL_ID);
+        String provenance = sameNameDifferentArchive
+            ? " (note: this archive's name matches the current program but its "
+              + "ID differs — the type was pulled in from a different program "
+              + "in the repository, e.g. an older version of " + program + ")"
+            : "";
         return "Cannot delete '" + dt.getName() + "' at '" + path
-            + "' (source archive: " + DataTypeOps.archiveName(dt) + "). "
-            + "Archive-resolved types are immutable; use `datatype replace` to "
-            + "shadow the entry with a user-defined version under the same name.";
+            + "' (source archive: " + arcName + " [" + arcId + "])"
+            + provenance + ". Archive-resolved types are immutable in Ghidra "
+              + "(the GUI's Delete menu is disabled for the same reason). To "
+              + "remove this entry, shadow it with a user-defined version at "
+              + "the same path:\n"
+              + "  datatype replace --file /<file> --path '" + path + "' "
+                + "--definition '<your definition here>'\n"
+              + "After the replace, your user-defined version becomes the "
+              + "resolver hit at '" + path + "', and a follow-up "
+              + "`datatype delete --path '" + path + "'` removes it like "
+              + "any other local type. Alternatively, create under a "
+              + "different name (e.g. '" + dt.getName() + "_local') and "
+              + "leave the stub in place.";
     }
 
     static final class DeleteResponse extends RpcResponse {
