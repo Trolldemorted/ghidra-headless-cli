@@ -15,11 +15,26 @@
 //! because it operates on program memory (laying a type at an address),
 //! not on the DTM.
 //!
-//! NOTE: Ghidra's parsers don't ship signed `stdint.h` typedefs
-//! (`int8_t`/`int16_t`/`int32_t`/`int64_t`) — they fail in BOTH
-//! `--definition` and `--fields` paths until you define each once via
-//! `--definition "typedef long long int64_t;"` (and similar). Unsigned
-//! `uintN_t` works out of the box. See `notes/procedures/CreateDataType.md`.
+//! NOTES on C snippets:
+//!
+//!   stdint.h types: Ghidra's CParser does NOT ship `intN_t` or `uintN_t`
+//!   typedefs. Both signed AND unsigned variants fail when used in
+//!   `--definition` and `--fields` snippets (`Undefined data type
+//!   "uint8_t"`). Define each one once before use, e.g.:
+//!
+//!       --definition "typedef long long int64_t;"
+//!       --definition "typedef unsigned long long uint64_t;"
+//!       --definition "typedef unsigned char uint8_t;"
+//!
+//!   No preprocessor: Ghidra's CParser is not a C preprocessor. `#define`,
+//!   `#include`, `#ifdef`, and `#ifndef` directives are rejected. Use the
+//!   actual values they would expand to, or define the type once via
+//!   `--definition` first. `#pragma pack(N)` IS supported.
+//!
+//!   Built-in C tokens that DO work without preprocessing: `sizeof`,
+//!   `NULL`, integer limits like `INT_MAX`.
+//!
+//! See `notes/procedures/CreateDataType.md` for full details.
 
 use clap::Subcommand;
 
@@ -81,15 +96,25 @@ pub enum Cmd {
         /// snippets ("struct { int x; };") return an error — the snippet must
         /// declare a name. Existing types with the same name are REPLACED in
         /// place (references preserved).
-        /// NOTE: anonymous NESTED types ("union U { struct { int x; } s; };")
-        /// are valid C; CParser auto-names them `_struct_N` (suffixing
-        /// `.conflict` on collision). Name nested types explicitly if you
-        /// want predictable field types.
-        /// NOTE: signed `stdint.h` typedefs (`int8_t`/`int16_t`/`int32_t`/
-        /// `int64_t`) are not in CParser's built-in map; define them once
-        /// via `--definition "typedef long long int64_t;"` (and similar)
-        /// before using them in either `--definition` or `--fields`.
-        /// Unsigned `uintN_t` works out of the box.
+        ///
+        /// Notes:
+        ///
+        ///   Anonymous NESTED types ("union U { struct { int x; } s; };") are
+        ///   valid C; CParser auto-names them `_struct_N` (suffixing `.conflict`
+        ///   on collision). Name nested types explicitly if you want
+        ///   predictable field types.
+        ///
+        ///   stdint.h types (`intN_t`, `uintN_t`) are NOT in CParser's
+        ///   built-in map — both signed and unsigned variants fail with
+        ///   `Undefined data type "uint8_t"` when used in fields. Define each
+        ///   once before use, e.g. `--definition "typedef long long int64_t;"`
+        ///   or `--definition "typedef unsigned char uint8_t;"`.
+        ///
+        ///   No C preprocessor: `#define`, `#include`, `#ifdef`, `#ifndef`
+        ///   directives are REJECTED. Use the expanded values directly, or
+        ///   pre-define types via `--definition`. `#pragma pack(N)` IS
+        ///   supported. Built-in tokens `sizeof`, `NULL`, `INT_MAX` etc. work
+        ///   without preprocessing.
         #[arg(long)]
         definition: Option<String>,
         /// Fields as a JSON array (struct/union): [{"name":"x","type":"int"}]
@@ -133,15 +158,25 @@ pub enum Cmd {
         /// snippets ("struct { int x; };") return an error — the snippet must
         /// declare a name. Existing types with the same name are REPLACED in
         /// place (references preserved).
-        /// NOTE: anonymous NESTED types ("union U { struct { int x; } s; };")
-        /// are valid C; CParser auto-names them `_struct_N` (suffixing
-        /// `.conflict` on collision). Name nested types explicitly if you
-        /// want predictable field types.
-        /// NOTE: signed `stdint.h` typedefs (`int8_t`/`int16_t`/`int32_t`/
-        /// `int64_t`) are not in CParser's built-in map; define them once
-        /// via `--definition "typedef long long int64_t;"` (and similar)
-        /// before using them in either `--definition` or `--fields`.
-        /// Unsigned `uintN_t` works out of the box.
+        ///
+        /// Notes:
+        ///
+        ///   Anonymous NESTED types ("union U { struct { int x; } s; };") are
+        ///   valid C; CParser auto-names them `_struct_N` (suffixing `.conflict`
+        ///   on collision). Name nested types explicitly if you want
+        ///   predictable field types.
+        ///
+        ///   stdint.h types (`intN_t`, `uintN_t`) are NOT in CParser's
+        ///   built-in map — both signed and unsigned variants fail with
+        ///   `Undefined data type "uint8_t"` when used in fields. Define each
+        ///   once before use, e.g. `--definition "typedef long long int64_t;"`
+        ///   or `--definition "typedef unsigned char uint8_t;"`.
+        ///
+        ///   No C preprocessor: `#define`, `#include`, `#ifdef`, `#ifndef`
+        ///   directives are REJECTED. Use the expanded values directly, or
+        ///   pre-define types via `--definition`. `#pragma pack(N)` IS
+        ///   supported. Built-in tokens `sizeof`, `NULL`, `INT_MAX` etc. work
+        ///   without preprocessing.
         #[arg(long)]
         definition: Option<String>,
         /// Fields as a JSON array (struct/union): [{"name":"x","type":"int"}]
