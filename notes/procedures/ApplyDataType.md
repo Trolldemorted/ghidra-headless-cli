@@ -85,6 +85,38 @@ interface ApplyDataTypeResponse {
 - An out-of-range or unmapped address returns
   `Insufficent memory at address XXXXXXXX (length: N bytes)`. The
   transaction is rolled back on this error.
+- **Conflict with existing data — fix with `memory undefine`.** When the
+  range the type would consume (start .. start+len-1) already contains a
+  defined Data unit (whether it's another struct, a primitive, or a
+  previously-applied type), Ghidra's `CodeManager.checkValidAddressRange`
+  walks the data records forward AND backward and throws
+  `CodeUnitInsertionException("Conflicting data exists at address X to Y",
+  startData, endData)`. The handler catches that and re-throws with an
+  explicit fix appended:
+
+  ```
+  Conflicting data exists at address 00101058 to 0010105b. Fix: clear the
+  conflicting range first with
+  `memory undefine --file /<file> --address-set 00101050:0010105f` (the
+  struct's internal fields overlap with previously-typed bytes;
+  apply-type will not silently clobber them). Then re-run apply-type.
+  ```
+
+  The address-set in the hint covers the FULL range the new type would
+  consume (start .. start+len-1), not just the conflicting sub-range —
+  the user typically wants to start clean. The transaction is rolled
+  back on this error (no partial state).
+
+  Why we surface this: Ghidra's default `Listing.createData(addr, dt, len)`
+  (used by `CodeManager.createCodeUnit`) is destructive — it deletes the
+  conflicting cache entries and lays the new type on top. The conflict
+  exception fires only when the conflicting bytes are STRICTLY INSIDE
+  the new type's range (not just adjacent), because the forward walk
+  checks `existing.min <= end` and the backward walk checks
+  `existing.max >= start`. So a struct whose internal fields overlap a
+  previously-typed byte triggers the error; a struct placed AFTER an
+  existing definition does not. Users reported the former case as
+  confusing — the message now tells them to `memory undefine` first.
 - `created` is the number of `Listing.createData` calls that returned
   non-null. For `--address` it's 1. For `--address-set` it's 1 per
   range element (the type is laid once per range). `bytes` is the sum

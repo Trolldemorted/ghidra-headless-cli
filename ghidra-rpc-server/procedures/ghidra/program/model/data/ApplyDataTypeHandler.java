@@ -11,6 +11,7 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.data.DataType;
 import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.Listing;
+import ghidra.program.model.util.CodeUnitInsertionException;
 
 import procedures.RpcContext;
 import procedures.RpcProcedure;
@@ -110,17 +111,55 @@ public final class ApplyDataTypeHandler implements RpcProcedure {
 
         int[] created = {0};
         long[] bytes = {0};
+        String[] conflictErr = {null};
         ctx.runWrite("ApplyDataType", () -> {
             Listing listing = ctx.program().getListing();
             for (AddressRange r : ranges) {
                 listing.clearCodeUnits(r.start, r.start, false);
-                Data d = listing.createData(r.start, dt, len);
+                Data d;
+                try {
+                    d = listing.createData(r.start, dt, len);
+                } catch (CodeUnitInsertionException e) {
+                    // Ghidra's Listing.createData throws this when there is
+                    // already a defined code unit inside the byte range the
+                    // new type would consume — message starts with
+                    // "Conflicting data exists at address ..." (verified
+                    // across multiple Ghidra 12.x builds; this is also the
+                    // wording reported by users in the wild). Surface it
+                    // verbatim AND append an explicit fix: clear the bytes
+                    // first with `memory undefine`. Without that hint the
+                    // user doesn't know why apply-type rejected a struct
+                    // whose internal fields overlap with previously-typed
+                    // bytes (e.g. AIM_Stream at 0x1001C200 with a
+                    // 0x10-byte sub-field that collides with an existing
+                    // 0x10-byte reader_blob).
+                    String msg = e.getMessage() == null ? "" : e.getMessage();
+                    // Reconstruct the consumed range's last address from
+                    // r.start + (len-1). Address.addNoWrap returns an
+                    // Address we can toString() into the same display
+                    // format Ghidra uses everywhere (e.g. "001001c200"),
+                    // so the user can copy-paste the example command
+                    // without hand-converting hex.
+                    Address consumedEnd = r.start.addNoWrap(Math.max(0, len - 1));
+                    String hint =
+                        ". Fix: clear the conflicting range first with "
+                        + "`memory undefine --file /<file> --address-set "
+                        + r.start + ":" + consumedEnd
+                        + "` (the struct's internal fields overlap with "
+                        + "previously-typed bytes; apply-type will not "
+                        + "silently clobber them). Then re-run apply-type.";
+                    conflictErr[0] = msg + hint;
+                    return;
+                }
                 if (d != null) {
                     created[0]++;
                     bytes[0] += d.getLength();
                 }
             }
         });
+        if (conflictErr[0] != null) {
+            return RpcResponse.error(conflictErr[0]);
+        }
 
         JsonObject o = new JsonObject();
         o.addProperty("success", true);
