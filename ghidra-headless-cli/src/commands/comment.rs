@@ -163,6 +163,13 @@ fn invoke_clear(client: &Client, procedure: &str, program: &str, address: &str) 
 
 /// Print a one-line summary of the response: type / address / function (if
 /// any) on stderr (status), comment text on stdout (data — the deliverable).
+///
+/// For Set / Append / Clear (`show_previous = true`), also log the OLD
+/// comment text to stderr so the user sees the full state transition
+/// ("was: X / now: Y"). The OLD text is logged BEFORE the NEW text is
+/// written to stdout, so the visual order in a terminal — which can
+/// interleave the two streams — is always header → previous → new,
+/// matching the user's mental model of the diff.
 fn print_response(procedure: &str, response: &Json, show_previous: bool) {
     let type_name = response.get("type").and_then(Json::as_str).unwrap_or("?");
     let address = response.get("address").and_then(Json::as_str).unwrap_or("?");
@@ -172,7 +179,11 @@ fn print_response(procedure: &str, response: &Json, show_previous: bool) {
     } else {
         log::info!("{} {} {}", procedure, type_name, address);
     }
-    println!("{}", comment);
+    // Log the previous text FIRST (when present and non-empty) so that
+    // even if stdout and stderr interleave out of order in the user's
+    // terminal, the header and the previous-state line are always
+    // adjacent in the log stream. The new comment then lands on
+    // stdout, which is what scripts and pipelines consume.
     if show_previous {
         if let Some(prev) = response.get("previous").and_then(Json::as_str) {
             if !prev.is_empty() {
@@ -180,4 +191,5 @@ fn print_response(procedure: &str, response: &Json, show_previous: bool) {
             }
         }
     }
+    println!("{}", comment);
 }
