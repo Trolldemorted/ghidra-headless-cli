@@ -189,7 +189,7 @@ the truth. Unmapped start addresses fail with a clear error.
 
 ```bash
 ghidra-headless-cli memory create-label --file /Mapeditor.exe --address 0x401000 --name g_tick
-ghidra-headless-cli memory rename-label --file /Mapeditor.exe --query g_tick --new-name g_frame
+ghidra-headless-cli memory rename-label --file /Mapeditor.exe --query g_tick --name g_frame
 ghidra-headless-cli memory delete-label --file /Mapeditor.exe --query g_frame
 ghidra-headless-cli memory set-primary  --file /Mapeditor.exe --query g_secondary --address 0x401000
 ghidra-headless-cli memory list-labels  --file /Mapeditor.exe [--query g_] [--regex true] [--ignore-case true] [--limit 50]

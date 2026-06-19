@@ -56,9 +56,9 @@ pub struct RenameLabelArgs {
     /// Disambiguate when multiple symbols share the name
     #[arg(long)]
     pub address: Option<String>,
-    /// New label name
-    #[arg(long)]
-    pub new_name: String,
+    /// New label name (named `--name` to match `create-label --name`)
+    #[arg(long, value_name = "NEW_NAME")]
+    pub name: String,
     /// Source type for the rename [default: USER_DEFINED]
     #[arg(long, value_name = "KIND", default_value = "USER_DEFINED")]
     pub source: String,
@@ -184,7 +184,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             .str("file", a.program.clone())
             .str("query", a.query.clone())
             .opt_str("address", a.address.clone())
-            .str("newName", a.new_name.clone())
+            .str("newName", a.name.clone())
             .str("source", a.source.clone())
             .build(),
         Cmd::DeleteLabel(a) => Req::new("DeleteLabel")

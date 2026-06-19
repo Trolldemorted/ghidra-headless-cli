@@ -346,9 +346,11 @@ $BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --addre
     `all=[{data_start, primary:true}, {__data_start, primary:false}]`.
   - `memory set-primary --query __data_start --address 0x401000` promotes the
     secondary; second call → `'<name>' is already the primary label at <addr>.`
-  - `memory rename-label --query g_tick --new-name g_frame` → exit 0;
-    `--query no_such_label` → `No label matched 'no_such_label'.`; collision
-    with existing name → `Duplicate name: 'g_frame' already exists.`.
+  - `memory rename-label --query g_tick --name g_frame` → exit 0; the
+    target name is `--name` (matching `create-label --name`; the server
+    request field is still `newName`); `--query no_such_label` → `No label
+    matched 'no_such_label'.`; collision with existing name → `Duplicate
+    name: 'g_frame' already exists.`.
   - `memory delete-label --query g_frame` → exit 0; deleting a function
     entry-point label → `'<name>' is a function entry-point label; use
     'function delete' to remove the function itself.`.
