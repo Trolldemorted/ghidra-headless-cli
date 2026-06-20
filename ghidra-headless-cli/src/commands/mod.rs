@@ -12,6 +12,7 @@ pub mod find;
 pub mod function;
 pub mod import;
 pub mod memory;
+pub mod namespace;
 pub mod stack;
 pub mod string;
 pub mod tag;

@@ -130,6 +130,10 @@ pub enum Cmd {
         #[arg(long)]
         address: String,
         /// C signature, e.g. "int foo(char *s, int n)"
+        ///
+        /// `__thiscall` carries an IMPLICIT `this` in ECX (RCX on x64)
+        /// that this API cannot retype. To type `this`, use
+        /// `function set-class-association` (see its `--help`).
         #[arg(long)]
         signature: String,
         /// Symbol source type [default: user-defined]
@@ -176,6 +180,10 @@ pub enum Cmd {
         #[arg(long, value_enum)]
         update_type: Option<UpdateType>,
         /// Calling convention, e.g. "__stdcall" [default: unchanged]
+        ///
+        /// `__thiscall` carries an IMPLICIT `this` in ECX (RCX on x64)
+        /// that this API cannot retype. To type `this`, use
+        /// `function set-class-association` (see its `--help`).
         #[arg(long)]
         calling_convention: Option<String>,
         /// Return data type name [default: unchanged]
@@ -237,6 +245,42 @@ pub enum Cmd {
     Variable {
         #[command(subcommand)]
         cmd: variable::Cmd,
+    },
+    /// Associate a function with a class (the CLI equivalent of the GUI's
+    /// "Edit → Set Class Association…")
+    ///
+    /// Associates the function with a class namespace. The decompiler then
+    /// types the function's implicit `this` parameter (for `__thiscall` /
+    /// MSVC member functions on x86) as a pointer to the DTM type whose
+    /// name matches the class. The lookup is name-based: class and struct
+    /// are coupled by NAME ONLY.
+    ///
+    /// IMPORTANT — auto-stub: This edit may auto-create a stub struct in
+    /// the program's DTM named after the class (size 0/1, no fields).
+    /// This is Ghidra's default behavior when no struct with the class's
+    /// name exists — see FunctionDB.createClassStructIfNeeded(). The
+    /// auto-stub is triggered by ANY edit to a function with a class
+    /// association, not just this command (e.g. changing the calling
+    /// convention to `__thiscall` on an already-associated function will
+    /// also fire it).
+    ///
+    /// To prevent the auto-stub, create a struct with the class's name
+    /// in the DTM before associating the function:
+    ///   datatype create --kind struct --name <ClassName> ...
+    ///
+    /// To remove an auto-stub later:
+    ///   datatype delete --name <ClassName>
+    /// The class association itself is unaffected.
+    SetClassAssociation {
+        /// Target file project path (e.g. /Patrician3.exe)
+        #[arg(long = "file", value_name = "FILE")]
+        program: String,
+        /// Function entry-point address (hex)
+        #[arg(long)]
+        address: String,
+        /// Full path of the class namespace (e.g. "/Game/OpMarketTrade")
+        #[arg(long)]
+        class: String,
     },
 }
 
@@ -450,5 +494,16 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
         Cmd::FindByTag(args) => find::run_by_tag(args, client),
         Cmd::Tag { cmd } => tag::run(cmd, client),
         Cmd::Variable { cmd } => variable::run(cmd, client),
+        Cmd::SetClassAssociation {
+            program,
+            address,
+            class,
+        } => client.run_simple(
+            Req::new("FunctionSetClassAssociation")
+                .str("file", program)
+                .str("address", address)
+                .str("class", class)
+                .build(),
+        ),
     }
 }

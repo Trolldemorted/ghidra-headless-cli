@@ -2,7 +2,8 @@
 
 A small, synchronous, dependency-light Rust CLI that talks to the Ghidra TCP
 ndjson RPC server (see [rpc-server.md](rpc-server.md)). One invocation = one
-request = one response. Subcommands mirror the server's 44+24+6 procedures, grouped by
+request = one response. Subcommands mirror the server's 96 procedures (92
+pre-registered + 4 reflection-loaded class-management verbs), grouped by
 the area they act on. Function-scoped operations are nested under `function`:
 tags under `function tag`, variable operations under `function variable`,
 data-type apply/capture under `function apply-types`/`function capture-types`.
@@ -98,6 +99,7 @@ These two are the only short flags (the task's stated exceptions to the
 | `function set-varargs` | SetFunctionVarArgsCommand |
 | `function set-purge` | SetFunctionPurgeCommand |
 | `function set-repeatable-comment` | SetFunctionRepeatableCommentCmd |
+| `function set-class-association` | FunctionSetClassAssociation |
 | `function tag create` | CreateFunctionTagCmd |
 | `function tag delete` | DeleteFunctionTagCmd |
 | `function tag change` | ChangeFunctionTagCmd |
@@ -177,6 +179,9 @@ These two are the only short flags (the task's stated exceptions to the
 | `string get` | GetString |
 | `string define` | DefineString |
 | `string delete` | DeleteString |
+| `namespace create-class` | NamespaceCreateClass |
+| `namespace rename-class` | NamespaceRenameClass |
+| `namespace delete-class` | NamespaceDeleteClass |
 
 Per-procedure request/response field specs live in
 `/workdir/notes/procedures/<Cmd>.md`.
@@ -605,3 +610,37 @@ $BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --addre
   - Standard C primitives (`short`, `float`, `wchar_t`, `bool`,
     `long long`, etc.) work in both paths regardless of any pre-defined
     typedef.
+
+* `namespace` (added 2026-06-20; 4 new procedures:
+  `NamespaceCreateClass`, `NamespaceRenameClass`,
+  `NamespaceDeleteClass`, `FunctionSetClassAssociation`) is the
+  CLI equivalent of the GUI's "Set Class Association" flow. Class
+  and struct are coupled by name only — the decompiler does the
+  lookup at decompile time. Class lifecycle (create/rename/delete)
+  does NOT touch the DTM; the struct must be managed separately
+  via `datatype create`/`edit`/`delete`. The auto-stub behavior
+  on first association is documented in `function set-class-association --help`.
+  - End-to-end smoke test on `/Mapeditor.exe` (all four
+    procedures verified on the live RPC server):
+    1. `datatype create --file /Mapeditor.exe --kind struct --name
+       BennitestClass` → `struct /BennitestClass 1` (1-byte default).
+    2. `namespace create-class --file /Mapeditor.exe --parent /
+       --name BennitestClass` → `success`.
+    3. `function set-class-association --file /Mapeditor.exe
+       --address 0x0040100a --class /BennitestClass` → `success`.
+    4. `function decompile --file /Mapeditor.exe --function
+       0x0040100a` → header reads `void __thiscall
+       BennitestClass::thunk_FUN_00419580(BennitestClass *this,
+       int param_1)` — `this` is typed `BennitestClass *` (the
+       struct from step 1 resolved by name). Roundtrip confirmed:
+       delete the class, decompile again, and the function
+       reverts to its pre-association shape.
+  - `namespace create-class` is mutually exclusive between
+    `--parent` (fresh class) and `--from-namespace` (convert an
+    existing plain namespace to a class); clap `conflicts_with`
+    rejects both set.
+  - `namespace rename-class` does NOT rename the struct
+    (deliberate — class and struct are independent objects).
+  - `namespace delete-class` does NOT delete the struct
+    (deliberate — same reason). Children of the deleted class
+    become orphans under the parent namespace.

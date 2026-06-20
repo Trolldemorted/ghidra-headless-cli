@@ -154,7 +154,14 @@ Each handler: parse JSON -> resolve args via `RpcContext` helpers
 monitor) and maps the boolean result + `getStatusMsg()` to the response. Bad input
 throws `IllegalArgumentException`, surfaced as the error message.
 
-## Procedures (68 total)
+## Procedures (92 pre-registered + 4 reflection-loaded = 96 total)
+
+The startup log line "Procedures (N)" reports only the pre-registered set; the
+reflection-loaded class-management verbs (`NamespaceCreateClass`,
+`NamespaceRenameClass`, `NamespaceDeleteClass`, `FunctionSetClassAssociation`)
+appear on first call rather than at startup, so the on-startup count is 92
+even though the server actually serves 96 procedures. The server's
+`"Procedures (N)"` log line reports the LIVE pre-registered count.
 
 All non-deprecated, concrete `Command`s in `ghidra.app.cmd.function` (36). The four
 **deprecated** ones are intentionally excluded: `AddParameterCommand`,
@@ -198,6 +205,20 @@ All non-deprecated, concrete `Command`s in `ghidra.app.cmd.function` (36). The f
   Set/Append use `ghidra.app.cmd.comments.SetCommentCmd` / `AppendCommentCmd` for undo/redo;
   `Decompiler` (no dedicated Command) runs inside `RpcContext.runWrite`. Handlers in
   `procedures.ghidra.app.cmd.comments`; Get handlers are `mutates()` false.
+
+* `NamespaceCreateClass`, `NamespaceRenameClass`, `NamespaceDeleteClass`,
+  `FunctionSetClassAssociation` — class lifecycle + function-to-class
+  association. Reflection-loaded (NOT pre-registered; not counted in the
+  startup log line). Handlers in
+  `procedures/ghidra/app/cmd/function/Namespace*Handler.java`,
+  `FunctionSetClassAssociationHandler.java`, and the shared resolver
+  `NamespaceResolve.java`. A class in Ghidra is a `Namespace` whose type is
+  `CLASS` (a `GhidraClass`); class and struct are coupled by name only —
+  the decompiler does the lookup at decompile time. `createClassStructIfNeeded`
+  fires inside `Function.setParentNamespace` and may auto-stub a struct if
+  none exists with the class's name; see
+  `/workdir/notes/procedures/FunctionSetClassAssociation.md` for the full
+  auto-stub warning and the recommended "struct-first" workflow.
 
 Per-procedure request specs (TypeScript interfaces) live in
 `/workdir/notes/procedures/<Cmd>.md`.

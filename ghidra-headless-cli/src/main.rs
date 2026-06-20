@@ -98,6 +98,12 @@ enum Command {
         #[command(subcommand)]
         cmd: commands::memory::Cmd,
     },
+    /// Class / namespace lifecycle operations (create-class,
+    /// rename-class, delete-class)
+    Namespace {
+        #[command(subcommand)]
+        cmd: commands::namespace::Cmd,
+    },
     /// Defined strings: substring/regex search + get-at-address + define + delete
     String {
         #[command(subcommand)]
@@ -133,6 +139,7 @@ fn main() {
         Command::Export(cmd) => commands::export::run(cmd, &client),
         Command::Memory { cmd } => commands::memory::run(cmd, &client),
         Command::String { cmd } => commands::string::run(cmd, &client),
+        Command::Namespace { cmd } => commands::namespace::run(cmd, &client),
     };
 
     if result.is_err() {
