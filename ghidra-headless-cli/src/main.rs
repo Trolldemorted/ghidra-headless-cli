@@ -51,7 +51,8 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Function create/delete/signature/tag/variable operations
+    /// Function create/delete/signature/tag/variable operations,
+    /// plus `decompile` and `disassemble` for individual functions
     Function {
         #[command(subcommand)]
         cmd: commands::function::Cmd,
