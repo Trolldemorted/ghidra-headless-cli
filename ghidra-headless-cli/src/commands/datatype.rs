@@ -87,20 +87,23 @@ pub enum Cmd {
         /// One of: struct, union, enum, typedef [default: required unless --definition is given]
         #[arg(long)]
         kind: Option<String>,
-        /// New type name [default: required unless --definition is given;
-        /// when --definition is given the snippet's embedded name is the
-        /// type's name and --name is ignored]
+        /// New type name [default: required unless --definition OR --path is given;
+        /// when --definition is given, --name IS forwarded to the server
+        /// (the snippet's embedded name must match --name)]
         #[arg(long)]
         name: Option<String>,
         /// Target category path [default: /]
         #[arg(long)]
         category: Option<String>,
         /// Full definition as a C snippet: "struct Foo { int x; char *name; };".
-        /// When given, --kind and --name become optional (the parsed type's
-        /// name is used) and --fields/--entries/--base are ignored. Anonymous
-        /// snippets ("struct { int x; };") return an error — the snippet must
-        /// declare a name. Existing types with the same name are REPLACED in
-        /// place (references preserved).
+        /// When given, --kind becomes optional (the parsed type's kind is
+        /// used) and --fields/--entries/--base are ignored. --name is
+        /// still required unless --path is given: it's forwarded to the
+        /// server to determine where the new type lands, and the snippet's
+        /// embedded name must match --name. Anonymous snippets
+        /// ("struct { int x; };") return an error — the snippet must
+        /// declare a name. The conflict policy differs: `create` errors
+        /// on a name clash; `replace` overwrites in place.
         ///
         /// Notes:
         ///
@@ -149,20 +152,23 @@ pub enum Cmd {
         /// One of: struct, union, enum, typedef [default: required unless --definition is given]
         #[arg(long)]
         kind: Option<String>,
-        /// New type name [default: required unless --definition is given;
-        /// when --definition is given the snippet's embedded name is the
-        /// type's name and --name is ignored]
+        /// New type name [default: required unless --definition OR --path is given;
+        /// when --definition is given, --name IS forwarded to the server
+        /// (the snippet's embedded name must match --name)]
         #[arg(long)]
         name: Option<String>,
         /// Target category path [default: /]
         #[arg(long)]
         category: Option<String>,
         /// Full definition as a C snippet: "struct Foo { int x; char *name; };".
-        /// When given, --kind and --name become optional (the parsed type's
-        /// name is used) and --fields/--entries/--base are ignored. Anonymous
-        /// snippets ("struct { int x; };") return an error — the snippet must
-        /// declare a name. Existing types with the same name are REPLACED in
-        /// place (references preserved).
+        /// When given, --kind becomes optional (the parsed type's kind is
+        /// used) and --fields/--entries/--base are ignored. --name is
+        /// still required unless --path is given: it's forwarded to the
+        /// server to determine where the new type lands, and the snippet's
+        /// embedded name must match --name. Anonymous snippets
+        /// ("struct { int x; };") return an error — the snippet must
+        /// declare a name. The conflict policy differs: `create` errors
+        /// on a name clash; `replace` overwrites in place.
         ///
         /// Notes:
         ///
@@ -405,8 +411,18 @@ fn run_create_or_replace(
     // definition once and not have to mirror it as JSON). --kind and
     // --name are optional on this path; the snippet's embedded kind
     // and name are used.
+    // --definition wins over the explicit JSON arrays: when both are
+    // supplied the C snippet is authoritative and --fields/--entries/--base
+    // are ignored. --kind is also optional on this path (the snippet's
+    // embedded kind is used). --name IS forwarded to the server, however:
+    // the server uses `name` to compute the target path (the snippet's
+    // embedded name must match `name`, and the new type lands at
+    // category+name). If the user only passes --definition and no
+    // --name and no --path, the server returns "Missing 'name'", which
+    // is the right behavior — it forces the user to be explicit about
+    // where the new type lands.
     let (kind, name, fields_json, entries_json, base) = if definition.is_some() {
-        (kind, None, None, None, None)
+        (kind, name, None, None, None)
     } else {
         let k = kind
             .ok_or_else(|| common::log_arg_err("--kind is required (or pass --definition)".to_string()))?;
@@ -452,12 +468,24 @@ fn run_replace(
     client: &Client,
 ) -> Result<(), ()> {
     // --definition wins over the explicit JSON arrays: when given, the
-    // C snippet is authoritative and we don't need --kind/--name/--fields/...
-    // On the --path form, --name and --category are derived from the path
-    // (and clap's conflicts_with blocks them). --kind is still required
-    // unless --definition is given.
+    // C snippet is authoritative and --fields/--entries/--base are
+    // ignored. --kind is also optional on this path (the snippet's
+    // embedded kind is used).
+    //
+    // --name forwarding: --name IS forwarded to the server when
+    // --definition is given AND --path is NOT (because the server uses
+    // `name` to compute the target path, and verifies the snippet's
+    // embedded name matches). If --path is given, the server derives
+    // name+category from it (clap's conflicts_with blocks --name then
+    // anyway, but we keep the code defensive).
+    //
+    // On the non-definition path, --name is required unless --path is
+    // given.
     let (kind, name, fields_json, entries_json, base) = if definition.is_some() {
-        (None, None, None, None, None)
+        // --definition form: snippet is authoritative; --kind optional
+        // (from snippet); --name forwarded (required by server unless
+        // --path is also given); --fields/--entries/--base ignored.
+        (kind, name, None, None, None)
     } else if path.is_some() {
         // --path provides name+category; --kind, --fields/--entries, --base
         // still come from the user.
