@@ -1,0 +1,23 @@
+name: Docker Nightly
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Log into GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login https://ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Push image to GitHub Container Registry
+        run: |
+          cd ghidra-rpc-server
+          ./build-containers.sh
+          docker image push ghcr.io/trolldemorted/ghidra-server
+          docker image push ghcr.io/trolldemorted/ghidra-rpc
