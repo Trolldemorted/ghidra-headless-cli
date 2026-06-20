@@ -856,28 +856,31 @@ fn print_row(prefix: &str, r: &TypeRow, name_w: usize, kind_w: usize) {
 }
 
 fn print_show(response: &Json, want_json: bool) -> Result<(), ()> {
-    // Default: print the C declaration (newest, most readable output).
-    // The headline TSV line (`kind<TAB>path<TAB>size`) stays at the top so
-    // scripts that pipe to `head -1` or awk on the path still work — that's
-    // the one piece of output that is identical whether you want C or JSON.
-    //
-    // --json: dump the raw `detail` object as the existing `key: value`
-    // listing, for callers that need offset/size per field, enum values,
-    // packed/alignment, etc.
     let kind = response.get("kind").and_then(Json::as_str).unwrap_or("?");
     let name = response.get("name").and_then(Json::as_str).unwrap_or("?");
     let path = response.get("path").and_then(Json::as_str).unwrap_or("?");
     let size = response.get("size").and_then(Json::as_f64).unwrap_or(0.0) as i64;
-    println!("{}\t{}\t{}", kind, path, size);
 
+    // --json path: stdout must be VALID JSON ONLY — nothing else. No TSV
+    // headline, no `key: value` listing. Dump the whole server response as
+    // a single compact JSON object so callers can `jq '.detail'` /
+    // `jq '.size'` / `jq '.c'` etc. without any preamble. The previous
+    // implementation printed a TSV line first AND then a `key: value`
+    // listing — neither was valid JSON, and the leading TSV line was
+    // breaking `jq` consumers ("extra content at end of value").
     if want_json {
-        if let Some(detail) = response.get("detail").and_then(Json::as_object) {
-            for (key, value) in detail {
-                println!("{}: {}", key, scalar_or_inline(value));
-            }
-        }
+        // Log status to stderr (not stdout) so the data stream stays
+        // pure JSON; agents that only read stdout see only `{...}`.
+        log::info!("{} {}\t{}\t{}", name, kind, path, size);
+        println!("{}", response);
         return Ok(());
     }
+
+    // Default (human) output: headline TSV line + C declaration below.
+    // The TSV line is preserved here because it is the one stable
+    // piece that scripts pipe to `head -1` or awk on the path. It does
+    // NOT appear in --json mode — see above.
+    println!("{}\t{}\t{}", kind, path, size);
 
     // C output: require the server-generated `c` field (Ghidra's
     // DataTypeWriter). If it is missing or empty, fail loudly with a
@@ -900,23 +903,5 @@ fn print_show(response: &Json, want_json: bool) -> Result<(), ()> {
              Retry with --json to see the structured view.",
             name, path, kind
         ))),
-    }
-}
-
-/// Render a JSON value as a one-line summary suitable for `key: value` listing.
-/// Arrays/objects are kept on one line (compact JSON) so the listing stays scannable.
-fn scalar_or_inline(value: &Json) -> String {
-    match value {
-        Json::Str(s) => s.clone(),
-        Json::Num(n) => {
-            if n.is_finite() && n.fract() == 0.0 {
-                (*n as i64).to_string()
-            } else {
-                n.to_string()
-            }
-        }
-        Json::Bool(b) => b.to_string(),
-        Json::Null => "null".to_string(),
-        other => other.to_string(),
     }
 }
