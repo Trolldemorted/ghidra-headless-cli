@@ -19,5 +19,5 @@ jobs:
         run: |
           cd ghidra-rpc-server
           ./build-containers.sh
-          docker image push ghcr.io/trolldemorted/ghidra-server
-          docker image push ghcr.io/trolldemorted/ghidra-rpc
+          docker image push ghcr.io/trolldemorted/ghidra-headless-cli/ghidra-server
+          docker image push ghcr.io/trolldemorted/ghidra-headless-cli/ghidra-rpc
