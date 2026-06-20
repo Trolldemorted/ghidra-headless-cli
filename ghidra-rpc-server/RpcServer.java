@@ -48,8 +48,10 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 import ghidra.app.script.GhidraScript;
+import ghidra.framework.client.RepositoryServerAdapter;
 import ghidra.framework.model.TransactionInfo;
 import ghidra.util.Msg;
+import generic.hash.HashUtilities;
 
 import procedures.RpcProcedure;
 import procedures.RpcContext;
@@ -90,6 +92,21 @@ public class RpcServer extends GhidraScript {
         // and otherwise ignore it, so the initial state is genuinely empty.
         context = new RpcContext(state.getProject(), monitor);
         registerHandlers();
+
+        // Push out the server-side password expiry by re-setting the password to
+        // its current value. Fresh user accounts on a -a0 Ghidra Server default to
+        // a 24h expiry (see svrREADME "Allows the reset password expiration to be
+        // set to a specified number of days"); the account goes stale if not used
+        // for that long. Re-setting the same value resets the clock without
+        // changing the credential. The launcher passes GHIDRA_PASSWORD into the
+        // JVM as -Dghidra.rpc.password via GHIDRA_JAVA_OPTIONS; we read it here
+        // and call RepositoryServerAdapter.setPassword(...) on the live server
+        // connection. Opt out with GHIDRA_REFRESH_PW=0 (the launcher then doesn't
+        // set the property and this block is a no-op). Best-effort: a failure
+        // here logs a warning but never blocks the RPC server from starting —
+        // the existing password may still be valid, and surfacing the error at
+        // startup would mask the real reason auth will fail later.
+        refreshPasswordIfRequested();
 
         // Handle SIGTERM (e.g. `kill` / `docker stop`) gracefully: the JVM halts shutdown
         // hooks without unwinding this blocked thread, so the accept loop's finally and
@@ -150,6 +167,84 @@ public class RpcServer extends GhidraScript {
                     + "\" (id " + enclosingId + "); check-ins land live.");
         } catch (Exception e) {
             Msg.warn(this, "Could not end enclosing transaction (" + e.getMessage() + ").");
+        }
+    }
+
+    /**
+     * Push out the server-side password expiry by re-setting the password to its
+     * current value, if the launcher requested it. Reads {@code -Dghidra.rpc.password}
+     * (populated from {@code GHIDRA_PASSWORD} via {@code GHIDRA_JAVA_OPTIONS} in
+     * {@code ghidra-headless.sh}), grabs the live {@link RepositoryServerAdapter} for
+     * the open project, and calls {@link RepositoryServerAdapter#setPassword}.
+     *
+     * <p>Best-effort: any failure (auth mode doesn't support self-password change
+     * like PKI, transient network error, project not yet connected) logs a warning
+     * but does NOT throw. The RPC server has to start either way — if the
+     * existing password is still valid the user can keep working, and if it's
+     * expired the auth failure will surface clearly on the first RPC call.
+     *
+     * <p>Cleared-from-memory hygiene: the password is read from the system property
+     * into a local char[] and zeroed after the setPassword call returns, so it
+     * doesn't linger on the heap. Ghidra's adapter API only takes char[], so we
+     * can't use the property's String form directly.
+     *
+     * <p>Hash format: the server-side {@code UserManager.setPassword} validates
+     * the incoming char[] as a SALTED-SHA-256 hash (4-char alphanumeric salt
+     * followed by 64 lowercase hex digits, total length
+     * {@link HashUtilities#SHA256_SALTED_HASH_LENGTH} = 68). Anything else —
+     * including the raw password — throws "Invalid password hash". We must
+     * pre-hash with {@link HashUtilities#getSaltedHash} (this is what
+     * {@code ClientUtil.changePassword} does internally too). The
+     * {@link RepositoryServerAdapter#setPassword} convenience is a thin
+     * pass-through to the RMI call and does not hash for us.
+     */
+    private void refreshPasswordIfRequested() {
+        String pw = System.getProperty("ghidra.rpc.password");
+        if (pw == null || pw.isEmpty()) {
+            return; // launcher didn't pass it (e.g. GHIDRA_REFRESH_PW=0)
+        }
+        char[] pwChars = pw.toCharArray();
+        char[] pwHash = null;
+        try {
+            RepositoryServerAdapter server = null;
+            try {
+                server = state.getProject().getRepository().getServer();
+            } catch (Exception e) {
+                Msg.warn(this, "Password refresh skipped: cannot reach RepositoryServerAdapter ("
+                    + e.getClass().getSimpleName() + ": " + e.getMessage() + ").");
+                return;
+            }
+            if (server == null) {
+                Msg.info(this, "Password refresh skipped: no repository server "
+                    + "(not connected to a remote Ghidra Server?).");
+                return;
+            }
+            if (!server.canSetPassword()) {
+                Msg.info(this, "Password refresh skipped: server does not allow self-password "
+                    + "change for this auth mode (e.g. PKI/-a2; -a0 local and -a1 Kerberos do).");
+                return;
+            }
+            // Hash to the format the server expects (4-char salt + 64 hex SHA-256).
+            // HashUtilities picks a fresh random salt on each call, so the stored
+            // hash rotates even though the password value is unchanged — which
+            // is exactly what resets the expiry clock on the server.
+            pwHash = HashUtilities.getSaltedHash(HashUtilities.SHA256_ALGORITHM, pwChars);
+            boolean ok = server.setPassword(pwHash);
+            if (ok) {
+                Msg.info(this, "Password refreshed on server (expiry clock reset).");
+            } else {
+                Msg.warn(this, "Password refresh returned false; server may have rejected the "
+                    + "current value as too weak or otherwise invalid.");
+            }
+        } catch (Exception e) {
+            Msg.warn(this, "Password refresh failed: " + e.getClass().getSimpleName()
+                + ": " + e.getMessage() + " (RPC server continues; first auth call will "
+                + "surface the real reason if the password is actually invalid).");
+        } finally {
+            java.util.Arrays.fill(pwChars, '\0'); // don't leave the raw pw on the heap
+            if (pwHash != null) {
+                java.util.Arrays.fill(pwHash, '\0'); // and the hash either
+            }
         }
     }
 

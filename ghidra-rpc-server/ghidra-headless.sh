@@ -41,6 +41,12 @@
 #   GHIDRA_SCRIPTPATH script search dir      (default: dir of this script)
 #   GHIDRA_READONLY  1 => open read-only     (default: 0 => writeable project)
 #   GHIDRA_COMMIT_MSG -commit comment        (default: empty; only relevant with GHIDRA_PROGRAM)
+#   GHIDRA_REFRESH_PW 1 => reset the user's password on connect (pushes out the
+#                        server-side expiry, default 24h on fresh accounts).
+#                        RpcServer.java calls RepositoryServerAdapter.setPassword
+#                        on connect with the same value. Set 0 to disable
+#                        (e.g. on auth modes that don't support self-password
+#                        changes like PKI).
 #
 # Examples:
 #   # launch the RPC server (zero programs, writeable, opens targets on demand)
@@ -119,6 +125,21 @@ args+=( -preScript "$GHIDRA_SCRIPT" )
 
 echo ">> headless: $HEADLESS ${args[*]}" >&2
 echo ">> login user: $GHIDRA_USER  (mode: $mode, programs: ${GHIDRA_PROGRAM:-none})" >&2
+
+# Forward GHIDRA_PASSWORD into the JVM as -Dghidra.rpc.password so RpcServer.java
+# can call RepositoryServerAdapter.setPassword(...) on connect and push out the
+# server-side password expiry (default 24h on fresh accounts; setting the password
+# to itself resets the clock). opt out with GHIDRA_REFRESH_PW=0. The password lives
+# in a JVM system property (not _JAVA_OPTIONS) so it stays scoped to this
+# analyzeHeadless invocation and doesn't leak to other Java processes in the
+# container. GHIDRA_JAVA_OPTIONS is honored by analyzeHeadless (appended to its
+# VMARG_LIST) and passed through to the JVM; clear it after analyzeHeadless returns
+# so it doesn't persist into the next subprocess (e.g. on -commit). The JVM
+# re-parses the property on each access; the launcher shells out only once.
+if [ "${GHIDRA_REFRESH_PW:-1}" = "1" ]; then
+  GHIDRA_JAVA_OPTIONS="${GHIDRA_JAVA_OPTIONS:-} -Dghidra.rpc.password=${GHIDRA_PASSWORD}"
+  export GHIDRA_JAVA_OPTIONS
+fi
 
 # user.name override is the critical piece; password goes to -p via stdin.
 printf '%s\n' "$GHIDRA_PASSWORD" | _JAVA_OPTIONS="-Duser.name=${GHIDRA_USER}" "$HEADLESS" "${args[@]}"
