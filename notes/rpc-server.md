@@ -154,13 +154,14 @@ Each handler: parse JSON -> resolve args via `RpcContext` helpers
 monitor) and maps the boolean result + `getStatusMsg()` to the response. Bad input
 throws `IllegalArgumentException`, surfaced as the error message.
 
-## Procedures (92 pre-registered + 4 reflection-loaded = 96 total)
+## Procedures (92 pre-registered + 6 reflection-loaded = 98 total)
 
 The startup log line "Procedures (N)" reports only the pre-registered set; the
 reflection-loaded class-management verbs (`NamespaceCreateClass`,
-`NamespaceRenameClass`, `NamespaceDeleteClass`, `FunctionSetClassAssociation`)
+`NamespaceRenameClass`, `NamespaceDeleteClass`, `FunctionSetClassAssociation`,
+`NamespaceGetClass`, `NamespaceListClasses`)
 appear on first call rather than at startup, so the on-startup count is 92
-even though the server actually serves 96 procedures. The server's
+even though the server actually serves 98 procedures. The server's
 `"Procedures (N)"` log line reports the LIVE pre-registered count.
 
 All non-deprecated, concrete `Command`s in `ghidra.app.cmd.function` (36). The four
@@ -207,8 +208,9 @@ All non-deprecated, concrete `Command`s in `ghidra.app.cmd.function` (36). The f
   `procedures.ghidra.app.cmd.comments`; Get handlers are `mutates()` false.
 
 * `NamespaceCreateClass`, `NamespaceRenameClass`, `NamespaceDeleteClass`,
-  `FunctionSetClassAssociation` — class lifecycle + function-to-class
-  association. Reflection-loaded (NOT pre-registered; not counted in the
+  `FunctionSetClassAssociation`, `NamespaceGetClass`, `NamespaceListClasses` —
+  class lifecycle + function-to-class association + class inspection.
+  Reflection-loaded (NOT pre-registered; not counted in the
   startup log line). Handlers in
   `procedures/ghidra/app/cmd/function/Namespace*Handler.java`,
   `FunctionSetClassAssociationHandler.java`, and the shared resolver
@@ -218,7 +220,10 @@ All non-deprecated, concrete `Command`s in `ghidra.app.cmd.function` (36). The f
   fires inside `Function.setParentNamespace` and may auto-stub a struct if
   none exists with the class's name; see
   `/workdir/notes/procedures/FunctionSetClassAssociation.md` for the full
-  auto-stub warning and the recommended "struct-first" workflow.
+  auto-stub warning and the recommended "struct-first" workflow. The two
+  read-only verbs (`NamespaceGetClass`, `NamespaceListClasses`) emit
+  slash-delimited paths so the output of one can be piped directly into
+  `--class PATH` of any of the mutating verbs.
 
 Per-procedure request specs (TypeScript interfaces) live in
 `/workdir/notes/procedures/<Cmd>.md`.

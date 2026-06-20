@@ -182,6 +182,8 @@ These two are the only short flags (the task's stated exceptions to the
 | `namespace create-class` | NamespaceCreateClass |
 | `namespace rename-class` | NamespaceRenameClass |
 | `namespace delete-class` | NamespaceDeleteClass |
+| `namespace get-class` | NamespaceGetClass |
+| `namespace list-classes` | NamespaceListClasses |
 
 Per-procedure request/response field specs live in
 `/workdir/notes/procedures/<Cmd>.md`.
@@ -611,16 +613,23 @@ $BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --addre
     `long long`, etc.) work in both paths regardless of any pre-defined
     typedef.
 
-* `namespace` (added 2026-06-20; 4 new procedures:
+* `namespace` (added 2026-06-20; 6 procedures: 4 mutating
   `NamespaceCreateClass`, `NamespaceRenameClass`,
-  `NamespaceDeleteClass`, `FunctionSetClassAssociation`) is the
-  CLI equivalent of the GUI's "Set Class Association" flow. Class
-  and struct are coupled by name only — the decompiler does the
-  lookup at decompile time. Class lifecycle (create/rename/delete)
-  does NOT touch the DTM; the struct must be managed separately
-  via `datatype create`/`edit`/`delete`. The auto-stub behavior
+  `NamespaceDeleteClass`, `FunctionSetClassAssociation`, plus
+  2 read-only inspection verbs `NamespaceGetClass`,
+  `NamespaceListClasses`) is the CLI equivalent of the GUI's
+  "Set Class Association" flow. Class and struct are coupled by
+  name only — the decompiler does the lookup at decompile time.
+  Class lifecycle (create/rename/delete) does NOT touch the DTM;
+  the struct must be managed separately via
+  `datatype create`/`edit`/`delete`. The auto-stub behavior
   on first association is documented in `function set-class-association --help`.
-  - End-to-end smoke test on `/Mapeditor.exe` (all four
+  - `namespace get-class` returns metadata for one class
+    (rejects plain namespaces). `namespace list-classes` returns
+    one path per line, recursive by default, slash-delimited so
+    the output can be piped straight into `--class PATH` for the
+    mutating verbs. Both are read-only.
+  - End-to-end smoke test on `/Mapeditor.exe` (all six
     procedures verified on the live RPC server):
     1. `datatype create --file /Mapeditor.exe --kind struct --name
        BennitestClass` → `struct /BennitestClass 1` (1-byte default).
@@ -635,6 +644,14 @@ $BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --addre
        struct from step 1 resolved by name). Roundtrip confirmed:
        delete the class, decompile again, and the function
        reverts to its pre-association shape.
+    5. `namespace list-classes --file /Mapeditor.exe` → lists
+       `/BennitestClass` (and any other classes). Pipe through
+       `| namespace get-class --class …` to roundtrip a discovered
+       path back into the verb it came from.
+    6. `namespace get-class --file /Mapeditor.exe --class
+       /BennitestClass` → 9-field metadata table; the `path`
+       field is the same slash-delimited value list-classes
+       emits, ready to feed `delete-class` or `rename-class`.
   - `namespace create-class` is mutually exclusive between
     `--parent` (fresh class) and `--from-namespace` (convert an
     existing plain namespace to a class); clap `conflicts_with`
