@@ -8,6 +8,8 @@ on:
 jobs:
   push:
     runs-on: ubuntu-latest
+    permissions:
+      packages: write
     if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v2
