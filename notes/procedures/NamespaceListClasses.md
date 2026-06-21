@@ -75,7 +75,12 @@ interface NamespaceListClassesResponse {
 ```
 
 Or `{ "success": false, "error": "<message>" }`. Common errors:
-- `"No namespace found for '<path>'."`
+- `"No namespace found for '<path>'."` — strict-mode miss; if a
+  similar path exists in the program the error is suffixed with
+  `Did you mean '<cand1>' or '<cand2>'?` (up to 5 leaf-name
+  candidates across the whole namespace tree). Same shape and
+  semantics as `NamespaceGetClass`'s error path — see
+  [`NamespaceGetClass`](./NamespaceGetClass.md) for details.
 
 ## Examples
 

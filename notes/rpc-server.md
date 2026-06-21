@@ -59,7 +59,8 @@ missing field each return an error and keep the connection open.
 **The server starts with ZERO programs open** and is not bound to any one program: it
 opens each request's target on demand. For a procedure with `needsProgram()` true (every
 current one), `dispatch` reads the mandatory `"file"` path, resolves it against the
-project (`ProjectData.getFile(path)`, else a recursive name search), checks the versioned
+project (`ProjectData.getFile(path)` — STRICT, exact match only; on miss the error
+surfaces up to 5 leaf-name candidates as a "did you mean ...?" hint), checks the versioned
 file out (exclusive) **before** opening it, then opens it —
 `DomainFile.getDomainObject(consumer, upgrade, recover, monitor)` — caching the instance
 in `RpcContext` keyed by canonical path. The resolved program becomes the request's

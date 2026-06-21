@@ -10,9 +10,11 @@ verbs' symmetry). The response shape is the same regardless of how the
 class was created (fresh via `createClass`, or via
 `convertNamespaceToClass`).
 
-Resolves the path with `NamespaceUtils.getNamespaceByPath` (with a
-recursive simple-name fallback) via the shared `NamespaceResolve`
-helper, then collects:
+Resolves the path via the shared `NamespaceResolve` helper — STRICT
+exact match via `NamespaceUtils.getNamespaceByPath` (slashes in the
+input are translated to `::`, the only separator `SymbolPathParser`
+accepts); on miss the error surfaces up to 5 leaf-name candidates as a
+"did you mean ...?" hint. Then collects:
 
 - **`name`** — bare name (`Namespace.getName()`).
 - **`path`** — slash-delimited full path. The default

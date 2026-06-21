@@ -120,9 +120,10 @@ public class RpcContext {
             throw new IllegalArgumentException(
                 "No project is available; cannot select file '" + path + "'.");
         }
-        DomainFile df = resolveFile(path);
+        java.util.List<String> candidates = new java.util.ArrayList<>();
+        DomainFile df = resolveFile(path, candidates);
         if (df == null) {
-            throw new IllegalArgumentException("No file found for '" + path + "'.");
+            throw new IllegalArgumentException(noFileMessage(path, candidates));
         }
         return df;
     }
@@ -207,9 +208,10 @@ public class RpcContext {
             throw new IllegalArgumentException(
                 "No project is available; cannot select program '" + path + "'.");
         }
-        DomainFile df = resolveFile(path);
+        java.util.List<String> candidates = new java.util.ArrayList<>();
+        DomainFile df = resolveFile(path, candidates);
         if (df == null) {
-            throw new IllegalArgumentException("No program found for '" + path + "'.");
+            throw new IllegalArgumentException(noFileMessage(path, candidates));
         }
         String key = normalize(df.getPathname());
         Program cached = open.get(key);
@@ -235,35 +237,93 @@ public class RpcContext {
         return p;
     }
 
-    /** Resolve a project path or bare program name to a DomainFile, or null. */
+    /**
+     * Resolve a project path to a {@link DomainFile}, or null. Resolution is
+     * STRICT: the request's path must match a real project entry exactly.
+     * On miss, walks the project tree once to collect up to 5 leaf-name
+     * candidates and includes them in the returned null's "did you mean
+     * ..." hint via the surrounding caller's error path.
+     *
+     * <p>Why strict: a previous lenient fallback matched a file by its
+     * basename across the whole project (e.g. request
+     * {@code "/input/Patrician3/ddraw_Dll.dll"} silently resolved to
+     * {@code "/ddraw_Dll.dll"}). The success log line echoed the
+     * REQUESTED path, hiding the rewrite, so callers had no way to know
+     * the server was operating on a different file. Strict lookup makes
+     * the rewrite visible (or impossible): the call either matches
+     * exactly or it errors with the candidates.
+     *
+     * <p>Leaf-name matching is preserved as a hint (candidates shown in
+     * the error message) but no longer a fallback. Users who want a
+     * shortcut can call {@code ListFiles} to find the canonical path.
+     */
     private DomainFile resolveFile(String path) {
+        return resolveFile(path, null);
+    }
+
+    /**
+     * Internal resolver: {@code outCandidates}, if non-null, is filled
+     * with up to 5 leaf-name matches when the exact lookup misses. Used
+     * to enrich the surrounding caller's error message. Pass null in
+     * normal use.
+     */
+    private DomainFile resolveFile(String path, java.util.List<String> outCandidates) {
         DomainFile df = project.getProjectData().getFile(normalize(path));
         if (df != null) {
             return df;
         }
-        // Fall back to a recursive search by simple name (no folder qualifier given).
-        String name = path.contains("/") ? path.substring(path.lastIndexOf('/') + 1) : path;
-        return findByName(project.getProjectData().getRootFolder(), name);
+        // Collect leaf-name candidates across the whole project for the
+        // hint; do NOT return one of them as a fallback.
+        if (outCandidates != null) {
+            String name = path.contains("/") ? path.substring(path.lastIndexOf('/') + 1) : path;
+            collectNameCandidates(project.getProjectData().getRootFolder(), name, outCandidates, 5);
+        }
+        return null;
     }
 
-    private DomainFile findByName(DomainFolder folder, String name) {
+    /** Walk the project tree; append up to {@code limit} files whose name matches {@code name}. */
+    private static void collectNameCandidates(DomainFolder folder, String name,
+            java.util.List<String> out, int limit) {
         for (DomainFile f : folder.getFiles()) {
+            if (out.size() >= limit) {
+                return;
+            }
             if (f.getName().equals(name)) {
-                return f;
+                out.add(f.getPathname());
             }
         }
         for (DomainFolder sub : folder.getFolders()) {
-            DomainFile f = findByName(sub, name);
-            if (f != null) {
-                return f;
+            if (out.size() >= limit) {
+                return;
             }
+            collectNameCandidates(sub, name, out, limit);
         }
-        return null;
     }
 
     private static String normalize(String path) {
         String t = path.trim();
         return t.startsWith("/") ? t : "/" + t;
+    }
+
+    /**
+     * Build a "no file at PATH" error message. If {@code candidates} has
+     * entries, the message includes a "did you mean ..." hint listing
+     * them so the caller can correct the path on the next attempt.
+     */
+    private static String noFileMessage(String path, java.util.List<String> candidates) {
+        if (candidates.isEmpty()) {
+            return "No file at '" + path + "'.";
+        }
+        StringBuilder sb = new StringBuilder("No file at '");
+        sb.append(path).append("'. Did you mean ");
+        for (int i = 0; i < candidates.size(); i++) {
+            if (i > 0) {
+                sb.append(i == candidates.size() - 1 ? " or " : ", ");
+            }
+            sb.append('\'').append(candidates.get(i)).append('\'');
+        }
+        sb.append("?");
+        return sb.toString();
     }
 
     /** Release every program we opened. Call on shutdown; leaves the context empty. */
