@@ -203,7 +203,7 @@ pub enum Cmd {
         #[arg(long)]
         enum_size: Option<i64>,
     },
-    /// Edit an existing data type (batched: rename/move/addFields/replaceFields/addEntries)
+    /// Edit an existing data type (batched: rename/move/description/addFields/replaceFields/addEntries)
     Edit {
         /// Target file project path
         #[arg(long = "file", value_name = "FILE")]
@@ -217,6 +217,17 @@ pub enum Cmd {
         /// Move to a new category [default: unchanged]
         #[arg(long)]
         move_to: Option<String>,
+        /// Type-level description (the free-text doc comment shown in the
+        /// Data Type Manager). Pass "" to clear. [default: unchanged]
+        ///
+        /// Not supported on typedefs: Ghidra's TypedefDataType does not
+        /// override DataType.setDescription, so the call throws
+        /// UnsupportedOperationException. The server surfaces a clear
+        /// "edit the underlying type instead" error. Field and variant
+        /// comments have their own subcommands (see `set-field-comment` /
+        /// `set-variant-comment` below).
+        #[arg(long)]
+        description: Option<String>,
         /// Drop all existing fields before adding (struct/union) [default: false]
         #[arg(long)]
         replace_fields: Option<bool>,
@@ -232,6 +243,40 @@ pub enum Cmd {
         /// Entries to append (JSON array, enum)
         #[arg(long)]
         add_entries: Option<String>,
+    },
+    /// Set the comment on a single struct/union field (by name or index).
+    /// Pass --comment "" to clear. Not supported on enums, typedefs, or built-ins.
+    SetFieldComment {
+        /// Target file project path
+        #[arg(long = "file", value_name = "FILE")]
+        program: String,
+        /// Full data-type path
+        #[arg(long)]
+        path: String,
+        /// Field name OR zero-based index. Names match the first field; if
+        /// multiple fields share a name the call errors and asks for an
+        /// index.
+        #[arg(long)]
+        field: String,
+        /// New field comment. Pass "" to clear. Required (use "" to clear).
+        #[arg(long)]
+        comment: String,
+    },
+    /// Set the comment on a single enum variant. Pass --comment "" to clear.
+    /// Not supported on structs, typedefs, or built-ins.
+    SetVariantComment {
+        /// Target file project path
+        #[arg(long = "file", value_name = "FILE")]
+        program: String,
+        /// Full data-type path
+        #[arg(long)]
+        path: String,
+        /// Variant name (must already exist on the enum).
+        #[arg(long)]
+        variant: String,
+        /// New variant comment. Pass "" to clear. Required (use "" to clear).
+        #[arg(long)]
+        comment: String,
     },
     /// Delete a user-defined data type by full path (built-ins are rejected)
     Delete {
@@ -320,6 +365,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             path,
             rename,
             move_to,
+            description,
             replace_fields,
             definition,
             add_fields,
@@ -339,6 +385,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                     .str("path", path)
                     .opt_str("rename", rename)
                     .opt_str("move", move_to)
+                    .opt_str("description", description)
                     .opt_bool("replaceFields", replace_fields)
                     .opt_str("definition", definition)
                     .opt_json("addFields", add_fields_json)
@@ -346,6 +393,40 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                     .build(),
             )?;
             print_show(&response, false)?;
+            Ok(())
+        }
+        Cmd::SetFieldComment {
+            program,
+            path,
+            field,
+            comment,
+        } => {
+            let response = client.invoke(
+                Req::new("SetDataTypeFieldComment")
+                    .str("file", program)
+                    .str("path", path)
+                    .str("field", field)
+                    .str("comment", comment)
+                    .build(),
+            )?;
+            print_field_comment(&response)?;
+            Ok(())
+        }
+        Cmd::SetVariantComment {
+            program,
+            path,
+            variant,
+            comment,
+        } => {
+            let response = client.invoke(
+                Req::new("SetDataTypeVariantComment")
+                    .str("file", program)
+                    .str("path", path)
+                    .str("variant", variant)
+                    .str("comment", comment)
+                    .build(),
+            )?;
+            print_variant_comment(&response)?;
             Ok(())
         }
         Cmd::Delete { program, path } => {
@@ -904,4 +985,60 @@ fn print_show(response: &Json, want_json: bool) -> Result<(), ()> {
             name, path, kind
         ))),
     }
+}
+
+/// Print a SetDataTypeFieldComment response as a small four-line block:
+/// `path`, `field`, the new comment (with the previous value in parens
+/// for easy diff), and a quiet "cleared" line when the new value is empty.
+/// The path/field are also logged to stderr for grep parity with the rest
+/// of the datatype subcommands.
+fn print_field_comment(response: &Json) -> Result<(), ()> {
+    let path = response.get("path").and_then(Json::as_str).unwrap_or("?");
+    let field = response.get("field").and_then(Json::as_str).unwrap_or("?");
+    let comment = response.get("comment").and_then(Json::as_str);
+    let previous = response.get("previous").and_then(Json::as_str);
+    log::info!("{} field '{}' comment set", path, field);
+    match comment {
+        Some(c) if !c.is_empty() => {
+            match previous {
+                Some(p) if !p.is_empty() && p != c => println!("was:    {}", p),
+                _ => {}
+            }
+            println!("now:    {}", c);
+        }
+        _ => {
+            // Empty / null new comment = cleared.
+            match previous {
+                Some(p) if !p.is_empty() => println!("cleared (was: {})", p),
+                _ => println!("cleared"),
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Print a SetDataTypeVariantComment response. Same shape as the field
+/// helper: path + variant on stderr, then the new/previous value on stdout.
+fn print_variant_comment(response: &Json) -> Result<(), ()> {
+    let path = response.get("path").and_then(Json::as_str).unwrap_or("?");
+    let variant = response.get("variant").and_then(Json::as_str).unwrap_or("?");
+    let comment = response.get("comment").and_then(Json::as_str);
+    let previous = response.get("previous").and_then(Json::as_str);
+    log::info!("{} variant '{}' comment set", path, variant);
+    match comment {
+        Some(c) if !c.is_empty() => {
+            match previous {
+                Some(p) if !p.is_empty() && p != c => println!("was:    {}", p),
+                _ => {}
+            }
+            println!("now:    {}", c);
+        }
+        _ => {
+            match previous {
+                Some(p) if !p.is_empty() => println!("cleared (was: {})", p),
+                _ => println!("cleared"),
+            }
+        }
+    }
+    Ok(())
 }

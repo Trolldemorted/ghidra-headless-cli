@@ -107,6 +107,34 @@ public final class EditDataTypeHandler implements RpcProcedure {
             DataTypeOps.requireCategory(ctx, newCat);
             dt.setCategoryPath(DataTypeOps.normalizePath(newCat));
         }
+        if (req.has("description") && !req.get("description").isJsonNull()) {
+            String desc = req.get("description").getAsString();
+            // TypedefDataType in Ghidra 12.x does NOT override
+            // setDescription; the inherited default is a silent no-op
+            // (verified via javap + end-to-end test on Ghidra 12.1.2).
+            // That would make the call "succeed" without persisting the
+            // description, which is worse than a thrown exception — the
+            // user would not know their annotation was lost. Detect
+            // typedefs up front and surface a clear error pointing at the
+            // underlying type.
+            if (dt instanceof TypeDef) {
+                throw new IllegalArgumentException(
+                    "Cannot set description on typedef '/" + dt.getName()
+                    + "' — Ghidra's TypedefDataType does not persist per-typedef descriptions. "
+                    + "Set the description on the underlying type instead "
+                    + "(use `datatype show --path /X` to discover the path).");
+            }
+            try {
+                dt.setDescription(desc);
+            } catch (UnsupportedOperationException e) {
+                // Defensive: any future Ghidra version that DOES throw
+                // here will still get a clear error rather than a 500.
+                throw new IllegalArgumentException(
+                    "Cannot set description on '/" + dt.getName()
+                    + "': " + e.getMessage()
+                    + ". Set the description on the underlying type instead.");
+            }
+        }
         if (dt instanceof Composite) {
             Composite c = (Composite) dt;
             if (req.has("replaceFields") && req.get("replaceFields").getAsBoolean()) {

@@ -115,6 +115,13 @@ final class DataTypeSerializer {
             f.addProperty("offset", comp.getOffset());
             f.addProperty("size", fdt.getLength());
             f.addProperty("type", fdt.getDisplayName());
+            // Per-field comment is a separate storage slot in Ghidra
+            // (DataTypeComponent.setComment). Emit when present so the
+            // response round-trips with whatever the SetDataTypeFieldComment
+            // procedure just wrote; gson drops null/absent fields.
+            if (comp.getComment() != null && !comp.getComment().isEmpty()) {
+                f.addProperty("comment", comp.getComment());
+            }
             arr.add(f);
         }
         return arr;
@@ -127,6 +134,13 @@ final class DataTypeSerializer {
             JsonObject entry = new JsonObject();
             entry.addProperty("name", name);
             entry.addProperty("value", v);
+            // Per-variant comment lives on Enum.getComment(name). Emit when
+            // present so the response round-trips with whatever the
+            // SetDataTypeVariantComment procedure just wrote.
+            String cm = e.getComment(name);
+            if (cm != null && !cm.isEmpty()) {
+                entry.addProperty("comment", cm);
+            }
             arr.add(entry);
         }
         return arr;

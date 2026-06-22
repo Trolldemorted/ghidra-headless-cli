@@ -485,6 +485,13 @@ public class RpcServer extends GhidraScript {
         register("EditDataType", new procedures.ghidra.program.model.data.EditDataTypeHandler());
         register("DeleteDataType", new procedures.ghidra.program.model.data.DeleteDataTypeHandler());
         register("ApplyDataType", new procedures.ghidra.program.model.data.ApplyDataTypeHandler());
+        // Per-element comment setters: one for a struct/union field, one for an
+        // enum variant. The type-level description is set via the `description`
+        // field on EditDataType (above) — typedefs reject setDescription with
+        // UnsupportedOperationException, which the handler turns into a clear
+        // "edit the underlying type instead" error.
+        register("SetDataTypeFieldComment", new procedures.ghidra.program.model.data.SetDataTypeFieldCommentHandler());
+        register("SetDataTypeVariantComment", new procedures.ghidra.program.model.data.SetDataTypeVariantCommentHandler());
 
         // Comment operations: 6 types x 4 ops = 24 procedures. Five CodeUnit-level
         // types (EOL/PRE/POST/REPEATABLE/PLATE) operate on the CodeUnit at the given

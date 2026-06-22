@@ -13,11 +13,15 @@ interface EditDataTypeRequest {
   // All fields are optional. Any combination can be supplied in one call.
   rename?: string;          // new name; must be unique in target category
   move?: string;            // move to a different category path
+  description?: string;     // type-level doc comment; "" clears. Not supported on typedefs.
   // struct / union:
   replaceFields?: boolean;  // drop all existing fields before adding [default: false]
   addFields?: Array<{ name: string; type: string }>;
   // enum:
   addEntries?: Array<{ name: string; value: number }>;
+  // per-element comments have their own procedures:
+  //   - SetDataTypeFieldComment  (struct/union field)
+  //   - SetDataTypeVariantComment (enum variant)
   // typedef:
   base?: string;            // not yet supported — returns an error if supplied
   // OR a C snippet to merge into addFields/addEntries (see below):
@@ -50,6 +54,39 @@ Same shape as `ShowDataType` — the edited type, fully described (post-edit).
 - All edits are batched into one transaction: if step 3 of 3 fails, steps
   1-2 are rolled back. The program is checked in by the dispatcher on
   commit; on rollback, no check-in occurs.
+
+## `description` — type-level doc comment
+
+`description` sets the free-text doc comment shown in the Data Type
+Manager for the type itself. It maps to Ghidra's `DataType.setDescription`
+and is preserved on round-trip via `ShowDataType` (the `description` key
+in the `detail` block). Pass `""` to clear.
+
+```jsonc
+{"path":"/ClaudeHeadlessStruct","description":"Header struct written by ghidra-headless-cli."}
+```
+
+Constraints:
+
+- **Not supported on typedefs — and the underlying reason is subtle.**
+  Ghidra's `TypedefDataType` does NOT override `DataType.setDescription`
+  (verified by `javap` on `SoftwareModeling.jar` for Ghidra 12.1.2:
+  only `getDescription` is declared, not `setDescription`). The
+  inherited default is a **silent no-op** — the call returns
+  successfully, exits with code 0, and the description is *not*
+  persisted. The handler detects the typedef up front and surfaces
+  a clear error before any commit:
+  `Cannot set description on typedef '/X' — Ghidra's TypedefDataType
+  does not persist per-typedef descriptions. Set the description on
+  the underlying type instead (use datatype show --path /X to discover
+  the path).` Set the description on the underlying struct / enum
+  directly.
+- **Built-ins are rejected** with `Cannot edit built-in type 'X'`
+  (same guard as `rename` and `move`).
+- Per-field and per-variant comments have their own procedures:
+  `SetDataTypeFieldComment` and `SetDataTypeVariantComment`. Use those
+  to annotate a struct field or an enum variant; `description` is
+  strictly the type-level field.
 
 ## `definition` — C-snippet replace
 
