@@ -48,7 +48,52 @@ interface DisassembleResponse {
   instructions: DisassembleInstruction[];
 }
 ```
-or `{ "success": false, "error": "<message>" }` (e.g. `"No function at <addr>."`).
+or `{ "success": false, "error": "<message>" }`.
+
+## Error: no function at `address`
+
+When `address` does not point to a function, the error message is enriched
+by `RpcContext.diagnoseMissingFunction` (lifted from
+`FlatDecompilerAPIHandler`, 2026-06-22). The error includes:
+
+- The original `"No function matched '<addr>' (by address or name)."` line
+  (verbatim — log scrapers may parse it), followed by `"Nothing
+  decompilable exists at <addr>."` (preserved from the original
+  decompile-only diagnostic for log-scraper compatibility),
+- What IS at the address: a primary symbol name (e.g. `LAB_00438360`),
+  an Instruction (code disassembled but no function wraps it), a Data
+  unit, or "no code unit covers the address" (unmapped bytes).
+- A copy-pasteable fix: `function create --file /<file> --address <addr>`,
+  plus a `function rename` recipe if the primary symbol is a `LAB_xxx`.
+
+Example (unmapped bytes):
+```
+No function matched '0x00438360' (by address or name).
+No code unit covers the address either — the bytes are unmapped.
+Fix: create a function at 00438360 so the analyzer wraps the body:
+  function create --file /<file> --address 00438360
+If the bytes are unmapped, add a memory block first (memory create),
+then disassemble, then create the function.
+```
+
+Example (label only):
+```
+No function matched '0x00401045' (by address or name). There IS a label
+there: 'LAB_00401045' (primary symbol at 00401045). A Data unit (not
+code) is defined at that address. Fix: create a function at 00401045 so
+the analyzer wraps the body:
+  function create --file /<file> --address 00401045
+Optionally rename the entry point after creation:
+  function rename --file /<file> --address 00401045 --name <descriptive_name>
+If the bytes are not yet instructions, disassemble first:
+  function disassemble --file /<file> --address 00401045
+```
+
+For non-parseable `address` values (a name with no function match),
+the bare `"No function matched '...'"` message is returned — there's
+nothing to diagnose. This mirrors `FlatDecompilerAPI`'s behavior; the
+diagnostic is shared via `RpcContext.requireFunction` so the two
+procedures produce consistent errors.
 
 ## Example
 Request:

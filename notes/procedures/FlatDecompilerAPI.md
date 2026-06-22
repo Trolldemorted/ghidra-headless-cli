@@ -41,7 +41,10 @@ or `{ "success": false, "error": "<message>" }`.
 ## Errors
 
 - `No function matched '<spec>' (by address or name). Nothing decompilable exists at <addr>. [<diagnosis>] Fix: ...`
-  — the address resolves to no function (and no exact-name match).
+  — the address resolves to no function (and no exact-name match). The
+  diagnostic is shared with `Disassemble` via
+  `RpcContext.diagnoseMissingFunction` (lifted out of the handler 2026-06-22),
+  so both procedures produce the same helpful error on miss.
   The handler diagnoses what IS at the address and appends a copy-pasteable
   `function create` invocation. Three sub-cases:
 

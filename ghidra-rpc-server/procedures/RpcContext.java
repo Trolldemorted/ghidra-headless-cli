@@ -28,9 +28,12 @@ import ghidra.program.model.lang.Register;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionManager;
 import ghidra.program.model.listing.FunctionSignature;
+import ghidra.program.model.listing.CodeUnit;
+import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.listing.Variable;
 import ghidra.program.model.symbol.SourceType;
+import ghidra.program.model.symbol.Symbol;
 import ghidra.util.data.DataTypeParser;
 import ghidra.util.data.DataTypeParser.AllowedDataTypes;
 import ghidra.util.task.TaskMonitor;
@@ -543,8 +546,88 @@ public class RpcContext {
         if (match != null) {
             return match;
         }
-        throw new IllegalArgumentException(
-            "No function matched '" + spec + "' (by address or name).");
+        throw new IllegalArgumentException(diagnoseMissingFunction(spec,
+            "No function matched '" + spec + "' (by address or name)."));
+    }
+
+    /**
+     * Build a rich error explaining why there is no function at {@code spec}.
+     * The original "no function matched" wording is preserved verbatim
+     * (callers / log scrapers may parse it), then we add:
+     * <ul>
+     *   <li>what IS at the address — a primary symbol like {@code LAB_00438360}
+     *       (label exists but no function body), an Instruction (code is
+     *       disassembled but no function wraps it), a Data unit, or just
+     *       undefined bytes (raw code, never disassembled),</li>
+     *   <li>a copy-pasteable fix: {@code function create --address <addr>},
+     *       which runs {@code CreateFunctionCmd} and lets the analyzer
+     *       discover the body. For undefined bytes we suggest a disassemble
+     *       first so the analyzer has instructions to work with.</li>
+     * </ul>
+     *
+     * <p>This is invoked from {@link #requireFunction} on miss so every
+     * caller (currently {@code FlatDecompilerAPI} and {@code Disassemble})
+     * produces the same helpful error instead of a bare "no function
+     * matched". Disassemble in particular benefits: previously a user
+     * asking to disassemble a label-only address would see only the
+     * one-line bare error and conclude "nothing to disassemble"; now they
+     * see the label name and the {@code function create} fix.
+     */
+    public String diagnoseMissingFunction(String spec, String originalMsg) {
+        Address addr;
+        try {
+            addr = requireAddress(spec);
+        } catch (IllegalArgumentException badAddr) {
+            // Not even a parseable address — return the original message;
+            // there's nothing more to add.
+            return originalMsg;
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append(originalMsg);
+        sb.append(" Nothing decompilable exists at ").append(addr).append(".");
+        // 1) Primary symbol (the LAB_xxx label that brought the user here).
+        Symbol primary = active().getSymbolTable().getPrimarySymbol(addr);
+        String primaryName = primary == null ? null : primary.getName();
+        if (primaryName != null) {
+            sb.append(" There IS a label there: '").append(primaryName)
+              .append("' (primary symbol at ").append(addr).append(").");
+        }
+        // 2) Listing code unit — disassembled Instruction, Data, or undefined.
+        CodeUnit cu = active().getListing().getCodeUnitContaining(addr);
+        if (cu == null) {
+            sb.append(" No code unit covers the address either — the bytes are unmapped.");
+        }
+        else if (cu instanceof Instruction) {
+            sb.append(" An Instruction is disassembled at that address but no Function wraps it "
+                + "(Ghidra's decompiler requires a Function with an entry point to produce C).");
+        }
+        else if (cu instanceof ghidra.program.model.listing.Data) {
+            sb.append(" A Data unit (not code) is defined at that address.");
+        }
+        else {
+            // Undefined bytes — bytes exist but never disassembled. Tell the
+            // user how to get instructions here first.
+            sb.append(" The bytes at that address are undefined (not yet disassembled).");
+        }
+        // 3) Fix.
+        sb.append(" Fix: create a function at ").append(addr)
+          .append(" so the analyzer wraps the body:");
+        sb.append("\n  function create --file /<file> --address ").append(addr);
+        if (primaryName != null && primaryName.startsWith("LAB_")) {
+            sb.append("\nOptionally rename the entry point after creation:");
+            sb.append("\n  function rename --file /<file> --address ").append(addr)
+              .append(" --name <descriptive_name>");
+        }
+        if (cu == null) {
+            sb.append("\nIf the bytes are unmapped, add a memory block first (memory create), then disassemble, then create the function.");
+        }
+        else if (!(cu instanceof Instruction)) {
+            // Undefined or Data — needs disassembly first so CreateFunctionCmd
+            // can compute a body.
+            sb.append("\nIf the bytes are not yet instructions, disassemble first:");
+            sb.append("\n  function disassemble --file /<file> --address ").append(addr);
+        }
+        return sb.toString();
     }
 
     /**
