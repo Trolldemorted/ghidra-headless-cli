@@ -174,8 +174,10 @@ pub enum Cmd {
         program: String,
         /// Full data-type path (e.g. /Demangler/L_String). Disambiguates when
         /// the same name appears in multiple categories (as with archive
-        /// stubs). Mutually exclusive with --name+--category.
-        #[arg(long, value_name = "PATH", conflicts_with = "name")]
+        /// stubs). When given with --name+--category, --path WINS and the
+        /// category is taken from the path. When --definition is given,
+        /// the snippet's embedded name must match the path's last segment.
+        #[arg(long, value_name = "PATH")]
         path: Option<String>,
         /// One of: struct, union, enum, typedef [default: required unless --definition is given]
         #[arg(long)]

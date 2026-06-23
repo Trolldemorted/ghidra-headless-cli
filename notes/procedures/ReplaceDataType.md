@@ -31,8 +31,21 @@ The target can be specified two ways:
 - `name` + optional `category` (default `"/"`) — shorter, but ambiguous
   when name collisions exist across categories.
 
-The two forms are mutually exclusive on the JSON request; the server
-errors out if both are set.
+The two forms can be given together on the JSON request: when both are
+set, `path` wins. The server derives `category` from the path
+(`/Demangler/L_String` → category `/Demangler`, name `L_String`) and
+ignores the explicit `category` field. This lets the CLI user write
+`--name L_String --path /Demangler/L_String` as a defensive
+disambiguation — if the path resolves, the name is taken from the
+path's last segment and any name-clash ambiguity is resolved.
+
+On the explicit-JSON path, `--name` is REQUIRED when `--path` is not
+given (you can supply just `--path` and the name is derived from it;
+you can supply just `--name` + optional `--category`; you can supply
+both). On the `--definition` C-snippet path, `--name` and `--path`
+must agree on the leaf name (the snippet's embedded name must match
+the path's last segment) — a mismatch is rejected by the server with
+`C snippet name 'X' does not match path's last segment 'Y'`.
 
 ## Input shapes
 
