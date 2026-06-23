@@ -170,7 +170,7 @@ These two are the only short flags (the task's stated exceptions to the
 | `memory rename-label` | RenameLabel |
 | `memory delete-label` | DeleteLabel |
 | `memory set-primary` | SetPrimary |
-| `memory list-labels` | ListLabels |
+| `memory list-label` | ListLabels |
 | `memory lookup-label` | LookupLabel |
 | `memory get-label` | GetLabel |
 | `memory read-bytes` | ReadBytes |
@@ -184,7 +184,7 @@ These two are the only short flags (the task's stated exceptions to the
 | `namespace rename-class` | NamespaceRenameClass |
 | `namespace delete-class` | NamespaceDeleteClass |
 | `namespace get-class` | NamespaceGetClass |
-| `namespace list-classes` | NamespaceListClasses |
+| `namespace list-class` | NamespaceListClasses |
 
 Per-procedure request/response field specs live in
 `/workdir/notes/procedures/<Cmd>.md`.
@@ -363,8 +363,8 @@ $BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --addre
   parameter encoding, client-side address validation, and base64 of `file load`.
 * Memory subcommand: all 8 verbs tested live against `/Mapeditor.exe`.
   - `memory create-label --file /Mapeditor.exe --address 0x401000 --name g_tick`
-    → label visible in subsequent `list-labels`; idempotent on re-run.
-  - `memory list-labels --query dat` → 3 hits; `--limit 8` → 8 with `truncated=true`;
+    → label visible in subsequent `list-label`; idempotent on re-run.
+  - `memory list-label --query dat` → 3 hits; `--limit 8` → 8 with `truncated=true`;
     `--query` optional (empty/missing matches all `SymbolType.LABEL`, excludes
     function entry-points / namespace labels / externals / dynamic).
   - `memory lookup-label --query data_start` → 2 symbols (`data_start`,
@@ -373,7 +373,7 @@ $BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --addre
     Auto-generated `DAT_<addr>` placeholders are reachable via the
     dynamic-name probe (see `Memory.md` → `LookupLabel`), so a substring
     search for `DAT_` that matches one such label will surface it even
-    though `list-labels` skips it.
+    though `list-label` skips it.
   - `memory get-label --address 0x401000` → `primary=data_start`,
     `all=[{data_start, primary:true}, {__data_start, primary:false}]`.
   - `memory set-primary --query __data_start --address 0x401000` promotes the
@@ -649,7 +649,7 @@ $BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --addre
   `datatype create`/`edit`/`delete`. The auto-stub behavior
   on first association is documented in `function set-class-association --help`.
   - `namespace get-class` returns metadata for one class
-    (rejects plain namespaces). `namespace list-classes` returns
+    (rejects plain namespaces). `namespace list-class` returns
     one path per line, recursive by default, slash-delimited so
     the output can be piped straight into `--class PATH` for the
     mutating verbs. Both are read-only.
@@ -668,13 +668,13 @@ $BIN --host 127.0.0.1:18000 comment decompiler set --file /Mapeditor.exe --addre
        struct from step 1 resolved by name). Roundtrip confirmed:
        delete the class, decompile again, and the function
        reverts to its pre-association shape.
-    5. `namespace list-classes --file /Mapeditor.exe` → lists
+    5. `namespace list-class --file /Mapeditor.exe` → lists
        `/BennitestClass` (and any other classes). Pipe through
        `| namespace get-class --class …` to roundtrip a discovered
        path back into the verb it came from.
     6. `namespace get-class --file /Mapeditor.exe --class
        /BennitestClass` → 9-field metadata table; the `path`
-       field is the same slash-delimited value list-classes
+       field is the same slash-delimited value list-class
        emits, ready to feed `delete-class` or `rename-class`.
   - `namespace create-class` is mutually exclusive between
     `--parent` (fresh class) and `--from-namespace` (convert an

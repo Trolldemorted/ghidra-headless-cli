@@ -4,10 +4,10 @@
 //! `function set-class-association` under the `function` group).
 //!
 //! Read-only inspection verbs: `get-class` returns metadata for a single
-//! class (rejects plain namespaces); `list-classes` returns the class
+//! class (rejects plain namespaces); `list-class` returns the class
 //! tree under an optional parent (recursive by default; emits paths only,
 //! one per line). Both default to slash-delimited paths so the output of
-//! `get-class` and `list-classes` can be fed directly into
+//! `get-class` and `list-class` can be fed directly into
 //! `--class PATH` for the mutating verbs.
 //!
 //! A class in Ghidra is a `Namespace` whose type is `CLASS` (a
@@ -122,7 +122,7 @@ pub enum Cmd {
     /// stops descending into classes themselves (matching the GUI's
     /// Symbol Tree). Only CLASS namespaces are listed; plain namespaces
     /// are not.
-    ListClasses {
+    ListClass {
         /// Target file project path (e.g. /Patrician3.exe)
         #[arg(long = "file", value_name = "FILE")]
         program: String,
@@ -182,13 +182,13 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             class,
             json,
         } => run_get_class(&program, &class, json, client),
-        Cmd::ListClasses {
+        Cmd::ListClass {
             program,
             parent,
             recursive,
             limit,
             json,
-        } => run_list_classes(
+        } => run_list_class(
             &program,
             parent.as_deref().map(str::to_string),
             recursive,
@@ -236,10 +236,10 @@ fn run_get_class(program: &str, class: &str, want_json: bool, client: &Client) -
     Ok(())
 }
 
-/// List-classes: header on stderr, one path per line on stdout. With
+/// List-class: header on stderr, one path per line on stdout. With
 /// `--json`, prints the raw server `classes` array on stdout. With
 /// `--limit N`, caps the result and the server returns `truncated: true`.
-fn run_list_classes(
+fn run_list_class(
     program: &str,
     parent: Option<String>,
     recursive: Option<bool>,

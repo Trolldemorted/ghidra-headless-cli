@@ -1,4 +1,4 @@
-//! Listings subcommand: dump the GUI Listings-window view for an address range.
+//! Listing subcommand: dump the GUI Listings-window view for an address range.
 //!
 //! Wires to the `Listings` RPC procedure. Mirrors `analysis.rs`'s use of
 //! `--address` + `--address-set START[:END]` via the shared `common` helpers.

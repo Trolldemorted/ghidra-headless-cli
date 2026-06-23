@@ -20,7 +20,7 @@ pub enum Cmd {
     /// Promote a label to the primary slot at its address
     SetPrimary(SetPrimaryArgs),
     /// List all data labels (substring match)
-    ListLabels(ListLabelsArgs),
+    ListLabel(ListLabelArgs),
     /// Look up symbols by name (substring/regex/case; --address narrows).
     /// Auto-generated DAT_<addr> labels match on the exact name only —
     /// substring queries like `DAT_006c` may miss `DAT_006cbb30`. Use
@@ -99,7 +99,7 @@ pub struct SetPrimaryArgs {
 }
 
 #[derive(Args, Debug)]
-pub struct ListLabelsArgs {
+pub struct ListLabelArgs {
     #[arg(long = "file", value_name = "FILE")]
     pub program: String,
     /// Substring to match (case-sensitive unless --ignore-case) [default: empty = all]
@@ -248,7 +248,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             .str("query", a.query.clone())
             .str("address", a.address.clone())
             .build(),
-        Cmd::ListLabels(a) => Req::new("ListLabels")
+        Cmd::ListLabel(a) => Req::new("ListLabels")
             .str("file", a.program.clone())
             .opt_str("query", a.query.clone())
             .opt_bool("regex", a.regex)
@@ -355,7 +355,7 @@ fn print_response(cmd: &Cmd, response: &Json) {
                 .unwrap_or("?");
             log::info!("deleted={} {} @ {}", d, n, a);
         }
-        Cmd::ListLabels(_) => {
+        Cmd::ListLabel(_) => {
             let count = response.get("count").and_then(Json::as_f64).unwrap_or(0.0) as i64;
             let truncated = response
                 .get("truncated")

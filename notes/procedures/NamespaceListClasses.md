@@ -113,5 +113,5 @@ Or `{ "success": false, "error": "<message>" }`. Common errors:
 
 The `classes[].path` field can be passed straight to
 `NamespaceGetClass`, `NamespaceRenameClass`, `NamespaceDeleteClass`,
-or `FunctionSetClassAssociation --class PATH` — `list-classes` is the
+or `FunctionSetClassAssociation --class PATH` — `list-class` is the
 intended discovery verb for all four.

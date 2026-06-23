@@ -85,12 +85,12 @@ Use `memory get-label --address 00404000` to see the exact stored names.
 five "did you mean?" symbols whose names contain `--query` as a
 substring (case-insensitive). This catches typos and shortened forms.
 The user can then re-issue with the full name, or run
-`memory list-labels --query "..."` for a full substring search:
+`memory list-label --query "..."` for a full substring search:
 ```
 No label matched 'real_nam'. Name match is literal (String.equals on the stored symbol name)
 Did you mean one of these?
   00404000  real_name_at_404000
-Use `memory list-labels --query "real_nam"` to search.
+Use `memory list-label --query "real_nam"` to search.
 ```
 
 Both paths are wired through [`LabelLookup`](../../ghidra-rpc-server/procedures/ghidra/program/model/listing/LabelLookup.java)

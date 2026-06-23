@@ -1179,13 +1179,7 @@ fn print_show_full(
 /// server returns a `verb` field that the caller set. If absent, we
 /// default to "wrote" as a neutral term (matches the printed form
 /// on the CLI help text — "I just wrote your type").
-fn print_confirm(
-    response: &Json,
-    name: &str,
-    kind: &str,
-    path: &str,
-    size: i64,
-) -> Result<(), ()> {
+fn print_confirm(response: &Json, name: &str, kind: &str, path: &str, size: i64) -> Result<(), ()> {
     // Verb: server sets this to the operation that produced the
     // confirmation ("created", "replaced", "edited"). If the server
     // didn't set it, fall back to a generic verb that doesn't

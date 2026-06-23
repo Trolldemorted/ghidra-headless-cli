@@ -5,7 +5,7 @@ Subcommands mirror the server's procedures, grouped by area
 (`function` — with `function decompile`, `function disassemble`,
 `function find-by-name`/`find-by-tag`, function tags under `function tag`, and
 variable ops under `function variable` — `stack`, `analysis`, `datatype`,
-`file`, plus `listings` for range-scoped Listings-window dumps). The target
+`file`, plus `listing` for range-scoped Listings-window dumps). The target
 file is selected with `--file <project-path>` (wire key `"file"`); `file
 load`/`file analyze` cover import and auto-analysis.
 
