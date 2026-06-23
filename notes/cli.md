@@ -224,6 +224,24 @@ $BIN --host 127.0.0.1:18000 function update --file /Mapeditor.exe --address 0x40
   --calling-convention __stdcall --return-type int \
   --parameter "count=int" --parameter "void *" --update-type dynamic-storage-formal-params
 
+# Set calling convention to __thiscall on a member function. NOTE:
+# `__thiscall` carries an IMPLICIT `this` in ECX (RCX on x64) that
+# this API cannot retype. Do NOT pass `this` in --parameter — it is
+# not a real parameter; the ABI places it in a register. To TYPE
+# `this` (give it a class pointer type like `BennitestStub *`),
+# create a class with `namespace create-class` then use
+# `function set-class-association` (see its --help). After
+# `function update --calling-convention __thiscall`, the decompile
+# header reads `void __thiscall thunk_FUN_00419580(void *this,
+# int param_1)` — `this` is auto-added and the call site pushes
+# the actual `this` value into ECX/RCX. List your --parameter
+# entries excluding `this`:
+$BIN --host 127.0.0.1:18000 function update --file /Mapeditor.exe --address 0x0040100a \
+  --calling-convention __thiscall --return-type void --parameter "int" \
+  --update-type dynamic-storage-formal-params
+# Verify: $BIN function decompile --file /Mapeditor.exe --address 0x0040100a
+#   -> "void __thiscall thunk_FUN_00419580(void *this, int param_1) { ... }"
+
 # Stack analysis over a range, with raw ndjson tracing
 $BIN -vv --host 127.0.0.1:18000 analysis stack \
   --file /Mapeditor.exe --address-set 0x401000:0x401050 --force-processing true
