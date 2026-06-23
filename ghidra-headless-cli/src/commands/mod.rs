@@ -11,6 +11,7 @@ pub mod file;
 pub mod find;
 pub mod function;
 pub mod import;
+pub mod listings;
 pub mod memory;
 pub mod namespace;
 pub mod stack;

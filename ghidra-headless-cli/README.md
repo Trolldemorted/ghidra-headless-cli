@@ -1,12 +1,13 @@
 # ghidra-headless-cli
 
 Synchronous, dependency-light Rust CLI for the Ghidra TCP ndjson RPC server.
-Subcommands mirror the server's 42 procedures, grouped by area
+Subcommands mirror the server's procedures, grouped by area
 (`function` — with `function decompile`, `function disassemble`,
 `function find-by-name`/`find-by-tag`, function tags under `function tag`, and
 variable ops under `function variable` — `stack`, `analysis`, `datatype`,
-`file`). The target file is selected with `--file <project-path>` (wire key
-`"file"`); `file load`/`file analyze` cover import and auto-analysis.
+`file`, plus `listings` for range-scoped Listings-window dumps). The target
+file is selected with `--file <project-path>` (wire key `"file"`); `file
+load`/`file analyze` cover import and auto-analysis.
 
 Build:
 

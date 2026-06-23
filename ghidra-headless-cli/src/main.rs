@@ -92,6 +92,8 @@ enum Command {
     Import(commands::import::Cmd),
     /// External export: list entry points this program exposes to other modules
     Export(commands::export::Cmd),
+    /// Dump the GUI Listings-window view (Instructions + Data) for an address range
+    Listings(commands::listings::Cmd),
     /// Static-memory labels (create/rename/delete/set-primary/list/lookup/get),
     /// raw byte reads, and applying a data type at an address (apply-type)
     Memory {
@@ -137,6 +139,7 @@ fn main() {
         Command::Callgraph(cmd) => commands::callgraph::run(cmd, &client),
         Command::Import(cmd) => commands::import::run(cmd, &client),
         Command::Export(cmd) => commands::export::run(cmd, &client),
+        Command::Listings(cmd) => commands::listings::run(cmd, &client),
         Command::Memory { cmd } => commands::memory::run(cmd, &client),
         Command::String { cmd } => commands::string::run(cmd, &client),
         Command::Namespace { cmd } => commands::namespace::run(cmd, &client),
