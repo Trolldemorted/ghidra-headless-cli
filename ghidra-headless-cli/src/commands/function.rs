@@ -99,11 +99,19 @@ pub enum Cmd {
         address: String,
     },
     /// Rename the function at an address
+    ///
+    /// `--name` is a BARE LEAF only — it must not contain `::` or `/`.
+    /// Passing a value like `Foo::Bar` is rejected with an error, because
+    /// Ghidra's underlying rename silently mangles such inputs (doubles
+    /// the leaf onto itself when the namespace prefix can't be resolved
+    /// relative to the function's current namespace). To move a function
+    /// into a different namespace, use `function set-namespace` instead.
     SetName {
         #[arg(long = "file", value_name = "FILE")]
         program: String,
         #[arg(long)]
         address: String,
+        /// Bare leaf name (no `::` or `/`)
         #[arg(long)]
         name: String,
         /// Symbol source type [default: user-defined]
@@ -281,6 +289,35 @@ pub enum Cmd {
         /// Full path of the class namespace (e.g. "/Game/OpMarketTrade")
         #[arg(long)]
         class: String,
+    },
+    /// Move a function into a (possibly different) namespace and rename it
+    ///
+    /// Unlike `function set-name` (which only renames the leaf), this verb
+    /// both changes the parent namespace and renames the leaf in one
+    /// transaction. Use it when the desired fully-qualified name lives in a
+    /// different namespace than the function's current one (e.g. promoting
+    /// `GameScreen::Foo` to `Multiplayer::Foo`).
+    ///
+    /// Accepts plain namespaces AND classes. For the class-only variant
+    /// with auto-stub semantics (where the decompiler types `this` as the
+    /// class's struct), use `function set-class-association` instead.
+    SetNamespace {
+        /// Target file project path (e.g. /Patrician3.exe)
+        #[arg(long = "file", value_name = "FILE")]
+        program: String,
+        /// Function entry-point address (hex)
+        #[arg(long)]
+        address: String,
+        /// Slash-delimited namespace path (e.g. "/Game/MultiplayerScreen")
+        /// [default: / (global namespace)]
+        #[arg(long)]
+        namespace: Option<String>,
+        /// Bare leaf name (no `::` or `/`)
+        #[arg(long)]
+        name: String,
+        /// Symbol source type [default: user-defined]
+        #[arg(long, value_enum)]
+        source: Option<Source>,
     },
 }
 
@@ -503,6 +540,21 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                 .str("file", program)
                 .str("address", address)
                 .str("class", class)
+                .build(),
+        ),
+        Cmd::SetNamespace {
+            program,
+            address,
+            namespace,
+            name,
+            source,
+        } => client.run_simple(
+            Req::new("FunctionSetNamespace")
+                .str("file", program)
+                .str("address", address)
+                .opt_str("namespace", namespace)
+                .str("name", name)
+                .opt_str("source", Source::opt(source))
                 .build(),
         ),
     }

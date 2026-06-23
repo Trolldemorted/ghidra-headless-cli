@@ -100,6 +100,7 @@ These two are the only short flags (the task's stated exceptions to the
 | `function set-purge` | SetFunctionPurgeCommand |
 | `function set-repeatable-comment` | SetFunctionRepeatableCommentCmd |
 | `function set-class-association` | FunctionSetClassAssociation |
+| `function set-namespace` | FunctionSetNamespace |
 | `function tag create` | CreateFunctionTagCmd |
 | `function tag delete` | DeleteFunctionTagCmd |
 | `function tag change` | ChangeFunctionTagCmd |
