@@ -321,11 +321,21 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                     .opt_int("limit", limit)
                     .build(),
             )?;
-            print_list(&response, program_ref, category_ref,
-                recursive_flag, kind_ref, json)?;
+            print_list(
+                &response,
+                program_ref,
+                category_ref,
+                recursive_flag,
+                kind_ref,
+                json,
+            )?;
             Ok(())
         }
-        Cmd::Show { program, path, json } => {
+        Cmd::Show {
+            program,
+            path,
+            json,
+        } => {
             let response = client.invoke(
                 Req::new("ShowDataType")
                     .str("file", program)
@@ -345,8 +355,19 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             entries,
             base,
             enum_size,
-        } => run_create_or_replace("CreateDataType", program, kind, name, category,
-            definition, fields, entries, base, enum_size, client),
+        } => run_create_or_replace(
+            "CreateDataType",
+            program,
+            kind,
+            name,
+            category,
+            definition,
+            fields,
+            entries,
+            base,
+            enum_size,
+            client,
+        ),
         Cmd::Replace {
             program,
             path,
@@ -358,8 +379,10 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             entries,
             base,
             enum_size,
-        } => run_replace(program, path, kind, name, category, definition, fields,
-            entries, base, enum_size, client),
+        } => run_replace(
+            program, path, kind, name, category, definition, fields, entries, base, enum_size,
+            client,
+        ),
         Cmd::Edit {
             program,
             path,
@@ -436,7 +459,10 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                     .str("path", path)
                     .build(),
             )?;
-            let deleted = response.get("deleted").and_then(Json::as_bool).unwrap_or(false);
+            let deleted = response
+                .get("deleted")
+                .and_then(Json::as_bool)
+                .unwrap_or(false);
             log::info!(
                 "{} {}",
                 if deleted { "deleted" } else { "NOT deleted" },
@@ -505,10 +531,12 @@ fn run_create_or_replace(
     let (kind, name, fields_json, entries_json, base) = if definition.is_some() {
         (kind, name, None, None, None)
     } else {
-        let k = kind
-            .ok_or_else(|| common::log_arg_err("--kind is required (or pass --definition)".to_string()))?;
-        let n = name
-            .ok_or_else(|| common::log_arg_err("--name is required (or pass --definition)".to_string()))?;
+        let k = kind.ok_or_else(|| {
+            common::log_arg_err("--kind is required (or pass --definition)".to_string())
+        })?;
+        let n = name.ok_or_else(|| {
+            common::log_arg_err("--name is required (or pass --definition)".to_string())
+        })?;
         let f = parse_opt_json("fields", fields)?;
         let e = parse_opt_json("entries", entries)?;
         (Some(k), Some(n), f, e, base)
@@ -570,16 +598,19 @@ fn run_replace(
     } else if path.is_some() {
         // --path provides name+category; --kind, --fields/--entries, --base
         // still come from the user.
-        let k = kind
-            .ok_or_else(|| common::log_arg_err("--kind is required (or pass --definition)".to_string()))?;
+        let k = kind.ok_or_else(|| {
+            common::log_arg_err("--kind is required (or pass --definition)".to_string())
+        })?;
         let f = parse_opt_json("fields", fields)?;
         let e = parse_opt_json("entries", entries)?;
         (Some(k), None, f, e, base)
     } else {
-        let k = kind
-            .ok_or_else(|| common::log_arg_err("--kind is required (or pass --definition/--path)".to_string()))?;
-        let n = name
-            .ok_or_else(|| common::log_arg_err("--name is required (or pass --definition/--path)".to_string()))?;
+        let k = kind.ok_or_else(|| {
+            common::log_arg_err("--kind is required (or pass --definition/--path)".to_string())
+        })?;
+        let n = name.ok_or_else(|| {
+            common::log_arg_err("--name is required (or pass --definition/--path)".to_string())
+        })?;
         let f = parse_opt_json("fields", fields)?;
         let e = parse_opt_json("entries", entries)?;
         (Some(k), Some(n), f, e, base)
@@ -620,7 +651,10 @@ fn print_list(
     want_json: bool,
 ) -> Result<(), ()> {
     let count = response.get("count").and_then(Json::as_f64).unwrap_or(0.0) as i64;
-    let truncated = response.get("truncated").and_then(Json::as_bool).unwrap_or(false);
+    let truncated = response
+        .get("truncated")
+        .and_then(Json::as_bool)
+        .unwrap_or(false);
 
     // ---- --json path: dump the raw server `types[]` array verbatim.
     //
@@ -653,7 +687,11 @@ fn print_list(
         None | Some("") | Some("all") => "all kinds".to_string(),
         Some(k) => format!("kind={}", k),
     };
-    let recurse_str = if recursive { "recursive" } else { "non-recursive" };
+    let recurse_str = if recursive {
+        "recursive"
+    } else {
+        "non-recursive"
+    };
     log::info!(
         "{}: {} type{}{} ({}, {}, {})",
         file,
@@ -698,21 +736,38 @@ struct TypeRow {
 
 impl TypeRow {
     fn from_json(j: &Json) -> TypeRow {
-        let path = j.get("path").and_then(Json::as_str).unwrap_or("/?").to_string();
-        let name = j.get("name").and_then(Json::as_str)
+        let path = j
+            .get("path")
+            .and_then(Json::as_str)
+            .unwrap_or("/?")
+            .to_string();
+        let name = j
+            .get("name")
+            .and_then(Json::as_str)
             .map(String::from)
             .unwrap_or_else(|| {
                 // Fall back to the last path segment if `name` is missing.
-                path.rsplit_once('/').map(|(_, n)| n.to_string())
+                path.rsplit_once('/')
+                    .map(|(_, n)| n.to_string())
                     .unwrap_or_else(|| path.clone())
             });
         TypeRow {
             name,
-            kind: j.get("kind").and_then(Json::as_str).unwrap_or("?").to_string(),
+            kind: j
+                .get("kind")
+                .and_then(Json::as_str)
+                .unwrap_or("?")
+                .to_string(),
             size: j.get("size").and_then(Json::as_f64).unwrap_or(0.0) as i64,
             path,
-            source: j.get("source").and_then(Json::as_str).unwrap_or("").to_string(),
-            source_archive: j.get("sourceArchive").and_then(Json::as_str)
+            source: j
+                .get("source")
+                .and_then(Json::as_str)
+                .unwrap_or("")
+                .to_string(),
+            source_archive: j
+                .get("sourceArchive")
+                .and_then(Json::as_str)
                 .map(String::from),
         }
     }
@@ -738,7 +793,11 @@ impl TypeRow {
     fn category_path(&self) -> String {
         match self.path.rsplit_once('/') {
             Some((cat, _)) => {
-                if cat.is_empty() { "/".to_string() } else { cat.to_string() }
+                if cat.is_empty() {
+                    "/".to_string()
+                } else {
+                    cat.to_string()
+                }
             }
             None => "/".to_string(),
         }
@@ -804,8 +863,15 @@ fn print_tree(rows: &[TypeRow], scope_root: &str) {
         // nested categories the caller computes the indent by
         // prepending "    " (4 spaces) per level of nesting.
         let child_indent = String::new();
-        print_category(child_path, &child_indent, &mut by_cat, &known_paths,
-            true /* parent_is_root_level */, i, root_children.len());
+        print_category(
+            child_path,
+            &child_indent,
+            &mut by_cat,
+            &known_paths,
+            true, /* parent_is_root_level */
+            i,
+            root_children.len(),
+        );
     }
 }
 
@@ -840,7 +906,11 @@ fn print_category(
     let conn = if parent_is_root_level {
         ""
     } else {
-        if sibling_idx + 1 == sibling_count { "└── " } else { "├── " }
+        if sibling_idx + 1 == sibling_count {
+            "└── "
+        } else {
+            "├── "
+        }
     };
     println!("{}{}{}", indent, conn, cat_header);
 
@@ -867,14 +937,23 @@ fn print_category(
         .collect();
     let child_indent = format!("{}    ", indent);
     for (i, child_path) in children.iter().enumerate() {
-        print_category(child_path, &child_indent, by_cat, known_paths,
-            false, i, children.len());
+        print_category(
+            child_path,
+            &child_indent,
+            by_cat,
+            known_paths,
+            false,
+            i,
+            children.len(),
+        );
     }
 }
 
 /// Print a slice of root-level rows flush-left with no connector.
 fn print_rows_flat(rows: &[&TypeRow]) {
-    if rows.is_empty() { return; }
+    if rows.is_empty() {
+        return;
+    }
     let (name_w, kind_w) = widths_for(rows);
     for r in rows {
         print_row("", r, name_w, kind_w);
@@ -886,11 +965,19 @@ fn widths_for(rows: &[&TypeRow]) -> (usize, usize) {
     let mut name_w = 0usize;
     let mut kind_w = 0usize;
     for r in rows {
-        if r.name.chars().count() > name_w { name_w = r.name.chars().count(); }
-        if r.kind.chars().count() > kind_w { kind_w = r.kind.chars().count(); }
+        if r.name.chars().count() > name_w {
+            name_w = r.name.chars().count();
+        }
+        if r.kind.chars().count() > kind_w {
+            kind_w = r.kind.chars().count();
+        }
     }
-    if name_w < 4 { name_w = 4; }
-    if kind_w < 6 { kind_w = 6; }
+    if name_w < 4 {
+        name_w = 4;
+    }
+    if kind_w < 6 {
+        kind_w = 6;
+    }
     (name_w, kind_w)
 }
 
@@ -910,13 +997,17 @@ fn widths_for(rows: &[&TypeRow]) -> (usize, usize) {
 /// which never matches a real path — handled by the explicit check).
 fn is_immediate_child(child_path: &str, parent: &str) -> bool {
     if parent.is_empty() || parent == "/" {
-        if !child_path.starts_with('/') { return false; }
+        if !child_path.starts_with('/') {
+            return false;
+        }
         // Count slashes: "/PE" has 1 (immediate); "/Demangler/std"
         // has 2 (two levels deep — not immediate).
         child_path.matches('/').count() == 1
     } else {
         let prefix = format!("{}/", parent);
-        if !child_path.starts_with(&prefix) { return false; }
+        if !child_path.starts_with(&prefix) {
+            return false;
+        }
         child_path[prefix.len()..].matches('/').count() == 0
     }
 }
@@ -930,9 +1021,16 @@ fn last_segment(path: &str) -> &str {
 /// Print one type row at the given prefix (which already includes
 /// any connector characters). No newline appended implicitly.
 fn print_row(prefix: &str, r: &TypeRow, name_w: usize, kind_w: usize) {
-    print!("{}{:<name_w$}  {:<kind_w$}  {:>4}  {}",
-        prefix, r.name, r.kind, r.size, r.source_label(),
-        name_w = name_w, kind_w = kind_w);
+    print!(
+        "{}{:<name_w$}  {:<kind_w$}  {:>4}  {}",
+        prefix,
+        r.name,
+        r.kind,
+        r.size,
+        r.source_label(),
+        name_w = name_w,
+        kind_w = kind_w
+    );
     println!();
 }
 
@@ -1021,7 +1119,10 @@ fn print_field_comment(response: &Json) -> Result<(), ()> {
 /// helper: path + variant on stderr, then the new/previous value on stdout.
 fn print_variant_comment(response: &Json) -> Result<(), ()> {
     let path = response.get("path").and_then(Json::as_str).unwrap_or("?");
-    let variant = response.get("variant").and_then(Json::as_str).unwrap_or("?");
+    let variant = response
+        .get("variant")
+        .and_then(Json::as_str)
+        .unwrap_or("?");
     let comment = response.get("comment").and_then(Json::as_str);
     let previous = response.get("previous").and_then(Json::as_str);
     log::info!("{} variant '{}' comment set", path, variant);
@@ -1033,12 +1134,10 @@ fn print_variant_comment(response: &Json) -> Result<(), ()> {
             }
             println!("now:    {}", c);
         }
-        _ => {
-            match previous {
-                Some(p) if !p.is_empty() => println!("cleared (was: {})", p),
-                _ => println!("cleared"),
-            }
-        }
+        _ => match previous {
+            Some(p) if !p.is_empty() => println!("cleared (was: {})", p),
+            _ => println!("cleared"),
+        },
     }
     Ok(())
 }

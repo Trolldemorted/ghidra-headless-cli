@@ -86,9 +86,9 @@ pub struct DeleteArgs {
 pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
     let req = match &cmd {
         Cmd::Search(a) => {
-            let mut b = Req::new("SearchStrings")
-                .str("file", a.program.clone());
-            b = b.opt_str("query", a.query.clone())
+            let mut b = Req::new("SearchStrings").str("file", a.program.clone());
+            b = b
+                .opt_str("query", a.query.clone())
                 .opt_bool("regex", a.regex)
                 .opt_bool("ignoreCase", a.ignore_case)
                 .opt_int("limit", a.limit)
@@ -134,7 +134,11 @@ fn print_response(cmd: &Cmd, response: &Json) {
             log::info!(
                 "found {} string(s){}",
                 count,
-                if truncated { " (truncated by limit)" } else { "" }
+                if truncated {
+                    " (truncated by limit)"
+                } else {
+                    ""
+                }
             );
             if let Some(arr) = response.get("strings").and_then(Json::as_array) {
                 for s in arr {
@@ -143,7 +147,10 @@ fn print_response(cmd: &Cmd, response: &Json) {
             }
         }
         Cmd::Get(_) => {
-            let addr = response.get("address").and_then(Json::as_str).unwrap_or("?");
+            let addr = response
+                .get("address")
+                .and_then(Json::as_str)
+                .unwrap_or("?");
             match response.get("string") {
                 Some(s) if !matches!(s, Json::Null) => {
                     print_string_match(s);
@@ -154,10 +161,16 @@ fn print_response(cmd: &Cmd, response: &Json) {
             }
         }
         Cmd::Define(_) => {
-            let addr = response.get("address").and_then(Json::as_str).unwrap_or("?");
+            let addr = response
+                .get("address")
+                .and_then(Json::as_str)
+                .unwrap_or("?");
             let kind = response.get("kind").and_then(Json::as_str).unwrap_or("?");
             let len = response.get("length").and_then(Json::as_f64).unwrap_or(0.0) as i64;
-            let charset = response.get("charset").and_then(Json::as_str).unwrap_or("?");
+            let charset = response
+                .get("charset")
+                .and_then(Json::as_str)
+                .unwrap_or("?");
             log::info!(
                 "defined {} string at {} (length={}, charset={})",
                 kind,
@@ -167,8 +180,14 @@ fn print_response(cmd: &Cmd, response: &Json) {
             );
         }
         Cmd::Delete(_) => {
-            let addr = response.get("address").and_then(Json::as_str).unwrap_or("?");
-            let dt = response.get("dataType").and_then(Json::as_str).unwrap_or("?");
+            let addr = response
+                .get("address")
+                .and_then(Json::as_str)
+                .unwrap_or("?");
+            let dt = response
+                .get("dataType")
+                .and_then(Json::as_str)
+                .unwrap_or("?");
             let len = response.get("length").and_then(Json::as_f64).unwrap_or(0.0) as i64;
             log::info!("deleted string at {} ({} bytes, {})", addr, len, dt);
         }
@@ -177,7 +196,10 @@ fn print_response(cmd: &Cmd, response: &Json) {
 
 fn print_string_match(s: &Json) {
     let addr = s.get("address").and_then(Json::as_str).unwrap_or("?");
-    let repr = s.get("representation").and_then(Json::as_str).unwrap_or("?");
+    let repr = s
+        .get("representation")
+        .and_then(Json::as_str)
+        .unwrap_or("?");
     let len = s.get("length").and_then(Json::as_f64).unwrap_or(0.0) as i64;
     let charset = s.get("charset").and_then(Json::as_str).unwrap_or("?");
     let dt = s.get("dataType").and_then(Json::as_str).unwrap_or("");

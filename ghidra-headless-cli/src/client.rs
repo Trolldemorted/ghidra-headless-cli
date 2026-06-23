@@ -35,7 +35,10 @@ impl Client {
             .read_line(&mut response)
             .map_err(|e| format!("read from {}: {}", self.host, e))?;
         if read == 0 {
-            return Err(format!("connection closed by {} before a response", self.host));
+            return Err(format!(
+                "connection closed by {} before a response",
+                self.host
+            ));
         }
         let trimmed = response.trim_end_matches(['\r', '\n']);
         log::trace!("<- {}", trimmed);

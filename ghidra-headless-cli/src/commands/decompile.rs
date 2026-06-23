@@ -32,7 +32,10 @@ pub fn run(args: DecompileArgs, client: &Client) -> Result<(), ()> {
         .get("function")
         .and_then(Json::as_str)
         .unwrap_or("?");
-    let address = response.get("address").and_then(Json::as_str).unwrap_or("?");
+    let address = response
+        .get("address")
+        .and_then(Json::as_str)
+        .unwrap_or("?");
     log::info!("decompiled {} at {}", name, address);
 
     // The C source is the primary output: print it to stdout for piping.

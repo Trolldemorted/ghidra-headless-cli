@@ -47,11 +47,18 @@ fn print_xrefs(response: &Json) {
         log::info!("target: {} '{}' -> {}", ty, q, a);
     }
     let count = response.get("count").and_then(Json::as_f64).unwrap_or(0.0) as i64;
-    let truncated = response.get("truncated").and_then(Json::as_bool).unwrap_or(false);
+    let truncated = response
+        .get("truncated")
+        .and_then(Json::as_bool)
+        .unwrap_or(false);
     log::info!(
         "found {} xref(s){}",
         count,
-        if truncated { " (truncated by limit)" } else { "" }
+        if truncated {
+            " (truncated by limit)"
+        } else {
+            ""
+        }
     );
     if let Some(refs) = response.get("refs").and_then(Json::as_array) {
         for r in refs {
@@ -63,9 +70,9 @@ fn print_xrefs(response: &Json) {
             let is_off = r.get("isOffcut").and_then(Json::as_bool).unwrap_or(false);
             let in_fn = from_fn.map(|n| format!(" <{}>", n)).unwrap_or_default();
             let flags = match (is_ext, is_off) {
-                (true, true)   => "  [external,offcut]",
-                (true, false)  => "  [external]",
-                (false, true)  => "  [offcut]",
+                (true, true) => "  [external,offcut]",
+                (true, false) => "  [external]",
+                (false, true) => "  [offcut]",
                 (false, false) => "",
             };
             println!("{}{}  {}  op={}{}", from, in_fn, ref_type, op, flags);

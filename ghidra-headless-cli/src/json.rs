@@ -285,7 +285,8 @@ impl<'a> Parser<'a> {
         let high = self.parse_hex4()?;
         if (0xD800..=0xDBFF).contains(&high) {
             // Expect a following "\uXXXX" low surrogate.
-            if self.bytes.get(self.pos) == Some(&b'\\') && self.bytes.get(self.pos + 1) == Some(&b'u')
+            if self.bytes.get(self.pos) == Some(&b'\\')
+                && self.bytes.get(self.pos + 1) == Some(&b'u')
             {
                 self.pos += 2;
                 let low = self.parse_hex4()?;
@@ -360,7 +361,10 @@ pub struct Req(Vec<(String, Json)>);
 impl Req {
     /// Start a request for the named procedure.
     pub fn new(procedure: &str) -> Req {
-        Req(vec![("procedure".to_string(), Json::Str(procedure.to_string()))])
+        Req(vec![(
+            "procedure".to_string(),
+            Json::Str(procedure.to_string()),
+        )])
     }
 
     /// Required string field.

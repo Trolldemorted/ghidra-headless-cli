@@ -32,10 +32,7 @@ pub fn run(args: DisassembleArgs, client: &Client) -> Result<(), ()> {
         .get("function")
         .and_then(Json::as_str)
         .unwrap_or("?");
-    let count = response
-        .get("count")
-        .and_then(Json::as_f64)
-        .unwrap_or(0.0) as i64;
+    let count = response.get("count").and_then(Json::as_f64).unwrap_or(0.0) as i64;
     log::info!("disassembled {} ({} instructions)", name, count);
 
     // One instruction per line on stdout: "<address>  <bytes>  <representation>".

@@ -269,8 +269,10 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
         Cmd::ReadBytes(a) => Req::new("ReadBytes")
             .str("file", a.program.clone())
             .str("address", a.address.clone())
-            .int("length", common::parse_int_dec_or_hex("length", &a.length)
-                .map_err(common::log_arg_err)?)
+            .int(
+                "length",
+                common::parse_int_dec_or_hex("length", &a.length).map_err(common::log_arg_err)?,
+            )
             .str("format", a.format.clone())
             .build(),
         Cmd::ApplyType(a) => {
@@ -333,24 +335,40 @@ fn print_response(cmd: &Cmd, response: &Json) {
     match cmd {
         Cmd::CreateLabel(_) | Cmd::RenameLabel(_) | Cmd::SetPrimary(_) => {
             if let Some(o) = response.get("name").and_then(Json::as_str) {
-                let addr = response.get("address").and_then(Json::as_str).unwrap_or("?");
+                let addr = response
+                    .get("address")
+                    .and_then(Json::as_str)
+                    .unwrap_or("?");
                 let src = response.get("source").and_then(Json::as_str).unwrap_or("?");
                 log::info!("label: {} @ {}  ({})", o, addr, src);
             }
         }
         Cmd::DeleteLabel(_) => {
-            let d = response.get("deleted").and_then(Json::as_bool).unwrap_or(false);
+            let d = response
+                .get("deleted")
+                .and_then(Json::as_bool)
+                .unwrap_or(false);
             let n = response.get("name").and_then(Json::as_str).unwrap_or("?");
-            let a = response.get("address").and_then(Json::as_str).unwrap_or("?");
+            let a = response
+                .get("address")
+                .and_then(Json::as_str)
+                .unwrap_or("?");
             log::info!("deleted={} {} @ {}", d, n, a);
         }
         Cmd::ListLabels(_) => {
             let count = response.get("count").and_then(Json::as_f64).unwrap_or(0.0) as i64;
-            let truncated = response.get("truncated").and_then(Json::as_bool).unwrap_or(false);
+            let truncated = response
+                .get("truncated")
+                .and_then(Json::as_bool)
+                .unwrap_or(false);
             log::info!(
                 "found {} label(s){}",
                 count,
-                if truncated { " (truncated by limit)" } else { "" }
+                if truncated {
+                    " (truncated by limit)"
+                } else {
+                    ""
+                }
             );
             print_refs(response.get("refs"));
         }
@@ -375,13 +393,19 @@ fn print_response(cmd: &Cmd, response: &Json) {
                     if total > 1 {
                         log::info!(
                             "primary label at {} ({} label(s) total; secondary on stderr below)",
-                            response.get("address").and_then(Json::as_str).unwrap_or("?"),
+                            response
+                                .get("address")
+                                .and_then(Json::as_str)
+                                .unwrap_or("?"),
                             total
                         );
                         if let Some(arr) = response.get("all").and_then(Json::as_array) {
                             for entry in arr {
                                 let n = entry.get("name").and_then(Json::as_str).unwrap_or("?");
-                                let p = entry.get("isPrimary").and_then(Json::as_bool).unwrap_or(false);
+                                let p = entry
+                                    .get("isPrimary")
+                                    .and_then(Json::as_bool)
+                                    .unwrap_or(false);
                                 let tag = if p { " (primary)" } else { "" };
                                 log::info!("  {}{}", n, tag);
                             }
@@ -391,14 +415,23 @@ fn print_response(cmd: &Cmd, response: &Json) {
                 None => {
                     log::info!(
                         "no primary label at {}",
-                        response.get("address").and_then(Json::as_str).unwrap_or("?")
+                        response
+                            .get("address")
+                            .and_then(Json::as_str)
+                            .unwrap_or("?")
                     );
                 }
             }
         }
         Cmd::ReadBytes(_) => {
-            let addr = response.get("address").and_then(Json::as_str).unwrap_or("?");
-            let n = response.get("bytesRead").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+            let addr = response
+                .get("address")
+                .and_then(Json::as_str)
+                .unwrap_or("?");
+            let n = response
+                .get("bytesRead")
+                .and_then(Json::as_f64)
+                .unwrap_or(0.0) as i64;
             let req = response.get("length").and_then(Json::as_f64).unwrap_or(0.0) as i64;
             log::info!("read {} of {} byte(s) from {}", n, req, addr);
             if let Some(d) = response.get("data").and_then(Json::as_str) {
@@ -408,7 +441,10 @@ fn print_response(cmd: &Cmd, response: &Json) {
             }
         }
         Cmd::ApplyType(_) => {
-            let created = response.get("created").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+            let created = response
+                .get("created")
+                .and_then(Json::as_f64)
+                .unwrap_or(0.0) as i64;
             let bytes = response.get("bytes").and_then(Json::as_f64).unwrap_or(0.0) as i64;
             log::info!(
                 "applied {} ({} entries, {} bytes)",
@@ -441,7 +477,10 @@ fn print_response(cmd: &Cmd, response: &Json) {
         }
         Cmd::Undefine(_) => {
             let ranges = response.get("ranges").and_then(Json::as_f64).unwrap_or(0.0) as i64;
-            let cleared = response.get("cleared").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+            let cleared = response
+                .get("cleared")
+                .and_then(Json::as_f64)
+                .unwrap_or(0.0) as i64;
             log::info!(
                 "cleared {} code unit(s) across {} range(s)",
                 cleared,

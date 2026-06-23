@@ -83,7 +83,10 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                     log::info!("imported {}", path);
                 }
             }
-            let primary = response.get("primary").and_then(Json::as_str).unwrap_or("?");
+            let primary = response
+                .get("primary")
+                .and_then(Json::as_str)
+                .unwrap_or("?");
             let format = response.get("format").and_then(Json::as_str).unwrap_or("?");
             log::info!("primary {} ({})", primary, format);
             Ok(())
@@ -149,7 +152,11 @@ fn print_listing(response: &Json) {
         "found {} entr{}{}",
         count,
         if count == 1 { "y" } else { "ies" },
-        if truncated { " (truncated by limit)" } else { "" }
+        if truncated {
+            " (truncated by limit)"
+        } else {
+            ""
+        }
     );
 
     if let Some(files) = response.get("files").and_then(Json::as_array) {
@@ -181,8 +188,14 @@ fn print_metadata(response: &Json) {
     // First line is a TSV header (`name<TAB>path<TAB>contentType<TAB>version`)
     // so `file metadata --path /X | head -1` is the one-liner summary.
     let path = response.get("path").and_then(Json::as_str).unwrap_or("");
-    let content_type = response.get("contentType").and_then(Json::as_str).unwrap_or("");
-    let version = response.get("version").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+    let content_type = response
+        .get("contentType")
+        .and_then(Json::as_str)
+        .unwrap_or("");
+    let version = response
+        .get("version")
+        .and_then(Json::as_f64)
+        .unwrap_or(0.0) as i64;
     println!("{}\t{}\t{}\t{}", name, path, content_type, version);
     // Detail lines on stdout, in a stable order, so the rest of the output is
     // grep-friendly and predictable.

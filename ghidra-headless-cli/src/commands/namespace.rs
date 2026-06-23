@@ -177,10 +177,25 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                 .str("class", class)
                 .build(),
         ),
-        Cmd::GetClass { program, class, json } => run_get_class(&program, &class, json, client),
-        Cmd::ListClasses { program, parent, recursive, limit, json } => {
-            run_list_classes(&program, parent.as_deref().map(str::to_string), recursive, limit, json, client)
-        }
+        Cmd::GetClass {
+            program,
+            class,
+            json,
+        } => run_get_class(&program, &class, json, client),
+        Cmd::ListClasses {
+            program,
+            parent,
+            recursive,
+            limit,
+            json,
+        } => run_list_classes(
+            &program,
+            parent.as_deref().map(str::to_string),
+            recursive,
+            limit,
+            json,
+            client,
+        ),
     }
 }
 
@@ -209,7 +224,10 @@ fn run_get_class(program: &str, class: &str, want_json: bool, client: &Client) -
         ("source", get_string(&response, "source")),
         ("id", get_string(&response, "id")),
         ("memberCount", get_string(&response, "memberCount")),
-        ("childNamespaceCount", get_string(&response, "childNamespaceCount")),
+        (
+            "childNamespaceCount",
+            get_string(&response, "childNamespaceCount"),
+        ),
         ("bodyAddress", get_string(&response, "bodyAddress")),
     ];
     for (k, v) in pairs {
@@ -238,10 +256,7 @@ fn run_list_classes(
             .build(),
     )?;
 
-    let count = response
-        .get("count")
-        .and_then(Json::as_f64)
-        .unwrap_or(0.0) as i64;
+    let count = response.get("count").and_then(Json::as_f64).unwrap_or(0.0) as i64;
     let truncated = response
         .get("truncated")
         .and_then(Json::as_bool)
@@ -264,7 +279,11 @@ fn run_list_classes(
         program,
         count,
         if count == 1 { "" } else { "es" },
-        if truncated { " (truncated by limit)" } else { "" },
+        if truncated {
+            " (truncated by limit)"
+        } else {
+            ""
+        },
         scope,
     );
 

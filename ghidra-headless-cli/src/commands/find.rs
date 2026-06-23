@@ -82,7 +82,11 @@ fn print_matches(response: &Json, show_tags: bool) {
     log::info!(
         "found {} function(s){}",
         count,
-        if truncated { " (truncated by limit)" } else { "" }
+        if truncated {
+            " (truncated by limit)"
+        } else {
+            ""
+        }
     );
 
     if let Some(functions) = response.get("functions").and_then(Json::as_array) {

@@ -52,7 +52,10 @@ fn print_callgraph(response: &Json) {
         .and_then(Json::as_str)
         .unwrap_or("?");
     let depth = response.get("depth").and_then(Json::as_f64).unwrap_or(0.0) as i64;
-    let truncated = response.get("truncated").and_then(Json::as_bool).unwrap_or(false);
+    let truncated = response
+        .get("truncated")
+        .and_then(Json::as_bool)
+        .unwrap_or(false);
 
     // The response deliberately doesn't carry node/edge counts (they were
     // redundant with the data: Mermaid line count, JSON array length).
@@ -88,10 +91,18 @@ fn print_callgraph(response: &Json) {
     if let Some(nodes) = nodes_arr {
         println!("# nodes ({}):", nodes.len());
         for n in nodes {
-            let name = obj_get_pairs(n, "name").and_then(Json::as_str).unwrap_or("?");
-            let addr = obj_get_pairs(n, "address").and_then(Json::as_str).unwrap_or("?");
-            let d = obj_get_pairs(n, "depth").and_then(Json::as_f64).unwrap_or(0.0) as i64;
-            let ext = obj_get_pairs(n, "isExternal").and_then(Json::as_bool).unwrap_or(false);
+            let name = obj_get_pairs(n, "name")
+                .and_then(Json::as_str)
+                .unwrap_or("?");
+            let addr = obj_get_pairs(n, "address")
+                .and_then(Json::as_str)
+                .unwrap_or("?");
+            let d = obj_get_pairs(n, "depth")
+                .and_then(Json::as_f64)
+                .unwrap_or(0.0) as i64;
+            let ext = obj_get_pairs(n, "isExternal")
+                .and_then(Json::as_bool)
+                .unwrap_or(false);
             let suffix = if ext { " [external]" } else { "" };
             println!("  {} @ {} (depth={}){}", name, addr, d, suffix);
         }
@@ -99,10 +110,16 @@ fn print_callgraph(response: &Json) {
     if let Some(edges) = edges_arr {
         println!("# edges ({}):", edges.len());
         for e in edges {
-            let from = obj_get_pairs(e, "from").and_then(Json::as_str).unwrap_or("?");
+            let from = obj_get_pairs(e, "from")
+                .and_then(Json::as_str)
+                .unwrap_or("?");
             let to = obj_get_pairs(e, "to").and_then(Json::as_str).unwrap_or("?");
-            let d = obj_get_pairs(e, "depth").and_then(Json::as_f64).unwrap_or(0.0) as i64;
-            let rt = obj_get_pairs(e, "refType").and_then(Json::as_str).unwrap_or("?");
+            let d = obj_get_pairs(e, "depth")
+                .and_then(Json::as_f64)
+                .unwrap_or(0.0) as i64;
+            let rt = obj_get_pairs(e, "refType")
+                .and_then(Json::as_str)
+                .unwrap_or("?");
             println!("  {} -> {} (depth={}, {})", from, to, d, rt);
         }
     }

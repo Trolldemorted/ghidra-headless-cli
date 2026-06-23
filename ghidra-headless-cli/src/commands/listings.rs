@@ -48,12 +48,12 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
     // array because RpcContext.addressSet does, but the CLI deliberately limits
     // to a single entry — multi-range reads would be confusing in a Listings
     // dump (one range at a time, like the GUI's Listings window).
-    common::require_address_or_set(&cmd.address, &cmd.address_set)
-        .map_err(common::log_arg_err)?;
+    common::require_address_or_set(&cmd.address, &cmd.address_set).map_err(common::log_arg_err)?;
 
     if cmd.address.is_some() && !cmd.address_set.is_empty() {
         return Err(common::log_arg_err(
-            "--address and --address-set are mutually exclusive; pick one".to_string()));
+            "--address and --address-set are mutually exclusive; pick one".to_string(),
+        ));
     }
     if cmd.address_set.len() > 1 {
         return Err(common::log_arg_err(

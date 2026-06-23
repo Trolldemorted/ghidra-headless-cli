@@ -95,10 +95,17 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
     let proc_name = |suffix: &str| format!("{}{}", procedure, suffix);
     match op {
         Op::Get { program, address } => invoke_get(client, &proc_name("Get"), program, address),
-        Op::Set { program, address, text } => {
-            invoke_set(client, &proc_name("Set"), program, address, text.as_deref())
-        }
-        Op::Append { program, address, text, separator } => invoke_append(
+        Op::Set {
+            program,
+            address,
+            text,
+        } => invoke_set(client, &proc_name("Set"), program, address, text.as_deref()),
+        Op::Append {
+            program,
+            address,
+            text,
+            separator,
+        } => invoke_append(
             client,
             &proc_name("Append"),
             program,
@@ -123,8 +130,13 @@ fn invoke_get(client: &Client, procedure: &str, program: &str, address: &str) ->
     Ok(())
 }
 
-fn invoke_set(client: &Client, procedure: &str, program: &str, address: &str,
-        text: Option<&str>) -> Result<(), ()> {
+fn invoke_set(
+    client: &Client,
+    procedure: &str,
+    program: &str,
+    address: &str,
+    text: Option<&str>,
+) -> Result<(), ()> {
     let response = client.invoke(
         Req::new(procedure)
             .str("file", program)
@@ -136,8 +148,14 @@ fn invoke_set(client: &Client, procedure: &str, program: &str, address: &str,
     Ok(())
 }
 
-fn invoke_append(client: &Client, procedure: &str, program: &str, address: &str,
-        text: &str, separator: Option<&str>) -> Result<(), ()> {
+fn invoke_append(
+    client: &Client,
+    procedure: &str,
+    program: &str,
+    address: &str,
+    text: &str,
+    separator: Option<&str>,
+) -> Result<(), ()> {
     let response = client.invoke(
         Req::new(procedure)
             .str("file", program)
@@ -172,7 +190,10 @@ fn invoke_clear(client: &Client, procedure: &str, program: &str, address: &str) 
 /// matching the user's mental model of the diff.
 fn print_response(procedure: &str, response: &Json, show_previous: bool) {
     let type_name = response.get("type").and_then(Json::as_str).unwrap_or("?");
-    let address = response.get("address").and_then(Json::as_str).unwrap_or("?");
+    let address = response
+        .get("address")
+        .and_then(Json::as_str)
+        .unwrap_or("?");
     let comment = response.get("comment").and_then(Json::as_str).unwrap_or("");
     if let Some(function) = response.get("function").and_then(Json::as_str) {
         log::info!("{} {} {}@{}", procedure, type_name, function, address);

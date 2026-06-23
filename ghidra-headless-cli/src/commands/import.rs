@@ -33,9 +33,19 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
 
 fn print_imports(response: &Json) {
     let count = response.get("count").and_then(Json::as_f64).unwrap_or(0.0) as i64;
-    let lib_count = response.get("libraryCount").and_then(Json::as_f64).unwrap_or(0.0) as i64;
-    let truncated = response.get("truncated").and_then(Json::as_bool).unwrap_or(false);
-    let tail = if truncated { " (truncated by limit)" } else { "" };
+    let lib_count = response
+        .get("libraryCount")
+        .and_then(Json::as_f64)
+        .unwrap_or(0.0) as i64;
+    let truncated = response
+        .get("truncated")
+        .and_then(Json::as_bool)
+        .unwrap_or(false);
+    let tail = if truncated {
+        " (truncated by limit)"
+    } else {
+        ""
+    };
     log::info!(
         "found {} import(s) across {} librar{y}{tail}",
         count,
