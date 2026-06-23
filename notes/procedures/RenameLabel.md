@@ -54,8 +54,8 @@ memory rename-label --file /Mapeditor.exe \
 
 ## Errors
 
-- `"No label matched '<query>'. Name match is literal (no regex, no
-  substring); dots are dots."` — the exact name lookup returned nothing.
+- `"No label matched '<query>'. Name match is literal (String.equals
+  on the stored symbol name)"` — the exact name lookup returned nothing.
   See [Diagnostics](#diagnostics) for the recovery path.
 - `"Multiple labels match '<query>'; pass --address to disambiguate:
   ..."` — the same name exists at more than one address. Pass `--address`
@@ -75,7 +75,7 @@ stored name has an invisible char (NBSP, trailing whitespace, …) or a
 typo. The user can immediately see what's there and re-issue the
 rename with the exact stored name:
 ```
-No label matched 'wrong_typo_name'. Name match is literal (no regex, no substring); dots are dots.
+No label matched 'wrong_typo_name'. Name match is literal (String.equals on the stored symbol name)
 Labels at address 00404000:
   00404000  real_name_at_404000
 Use `memory get-label --address 00404000` to see the exact stored names.
@@ -87,7 +87,7 @@ substring (case-insensitive). This catches typos and shortened forms.
 The user can then re-issue with the full name, or run
 `memory list-labels --query "..."` for a full substring search:
 ```
-No label matched 'real_nam'. Name match is literal (no regex, no substring); dots are dots.
+No label matched 'real_nam'. Name match is literal (String.equals on the stored symbol name)
 Did you mean one of these?
   00404000  real_name_at_404000
 Use `memory list-labels --query "real_nam"` to search.
@@ -96,34 +96,50 @@ Use `memory list-labels --query "real_nam"` to search.
 Both paths are wired through [`LabelLookup`](../../ghidra-rpc-server/procedures/ghidra/program/model/listing/LabelLookup.java)
 and surface in the same way for `delete-label`.
 
-## Auto-generated DEFAULT labels
+## Auto-generated DEFAULT labels (fix 2026-06-23)
 
 When `apply-type` lays a data type named `vftable` at an address, Ghidra's
 MS RTTI analyzer auto-generates a label of the form
 `<ClassName>_vftable_<hexaddr>` (e.g. `CMainWnd_vftable_0066e3c0`) with
-SourceType `DEFAULT`. These labels are visible in `get-label` (which uses
-`getPrimarySymbol`) but may not be findable via `getSymbols(query)` — the
-name-index lookup that backs `RenameLabel` does not fall through to the
-dynamic-name synthesis path for non-`DAT_<addr>` names.
+SourceType `DEFAULT`. Likewise, `string define` and `string create`
+create DEFAULT-source labels like `s_V1.1_0069719c`.
 
-**Workaround (verified 2026-06-22):** `create-label --address 0x0066e3c0
---name CMainWnd_vftable` creates a fresh USER_DEFINED label at that
-address. USER_DEFINED outranks DEFAULT, so the new label auto-promotes to
-primary; the prior DEFAULT `CMainWnd_vftable_0066e3c0` is now a secondary
-shadow. The follow-up `set-primary` is redundant — already primary.
-No `rename-label` call is needed.
+Prior to 2026-06-23, neither `rename-label` nor `delete-label` could
+match these — both `SymbolTable.getSymbolsAsIterator(addr)` (used by the
+address-scoped path) and `SymbolTable.getSymbols(name)` (used by the
+program-wide path) explicitly exclude DEFAULT-source symbols and
+dynamic-memory symbols per the Ghidra 12.1.2 Javadoc. The error message
+even claimed "literal match" which was technically true — the symbol
+just wasn't in the result set to begin with.
 
-If the exact-name rename is still wanted, pass `--address` so the lookup
-is scoped to that address (`SymbolTable.getSymbolsAsIterator(addr)` plus
-exact-name filter), which does find DEFAULT-source records:
+**Fixed 2026-06-23 in `LabelLookup.byName` (both modes):**
+
+- **Address-scoped** now uses `SymbolTable.getSymbols(Address)` (the
+  array-returning overload), which — per the Ghidra 12.1.2 Javadoc —
+  "will include a dynamic memory symbol if one exists". DEFAULT-source
+  labels at the address are returned.
+- **Program-wide** now walks `SymbolTable.getSymbolIterator()` (no-arg)
+  and filters by `.getName().equals(name)` client-side. This returns
+  all label symbols including DEFAULT-source ones.
+
+Both `rename-label` and `delete-label` go through `LabelLookup.byName`,
+so the fix covers both. DEFAULT-source labels can now be renamed or
+deleted directly — no `--address` needed (though `--address` is still
+the right disambiguator when multiple labels share the name):
+
 ```sh
-memory rename-label --file <file> --query CMainWnd_vftable_0066e3c0 \
+memory rename-label --file <file> --query "CMainWnd_vftable_0066e3c0" \
   --name CMainWnd_vftable --address 0x0066e3c0
+memory rename-label --file <file> --query "s_V1.1_0069719c" \
+  --name s_Version --address 0x0069719c
 ```
 
-This is the same pattern documented for `DAT_<addr>` labels — use
-`get-label --address X` to discover the exact name, then pass that name
-+ address to `rename-label`.
+If the lookup still misses, the diagnostic now correctly lists what IS
+at the address (or "did you mean?" for program-wide). The "dots are
+dots" copy was also wrong about the failure mode and has been replaced
+with "Name match is literal (String.equals on the stored symbol name)"
+in both handlers — the literal match IS still happening; the bug was
+that the lookup was looking at the wrong symbol set.
 
 ## See also
 

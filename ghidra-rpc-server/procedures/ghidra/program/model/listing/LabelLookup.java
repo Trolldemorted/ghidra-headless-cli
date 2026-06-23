@@ -71,18 +71,24 @@ final class LabelLookup {
         SymbolTable st = ctx.program().getSymbolTable();
         if (addr != null) {
             // Address-scoped: walk all symbols at the address; pick exact-name.
-            // Snapshot EVERY symbol at the address — even if .equals(name)
-            // fails — so the caller can list the actual stored names on
-            // miss (the bug 2026-06-23: `get-label` showed "s_V1.1_..." but
-            // rename-label said "No label matched"; we don't know what the
-            // exact stored name is, so dump the address's label set so the
-            // user can spot the typo).
-            SymbolIterator it = st.getSymbolsAsIterator(addr);
+            // Use st.getSymbols(Address) (array-returning) — it includes
+            // dynamic memory symbols, which st.getSymbolsAsIterator(addr)
+            // explicitly excludes (per the Ghidra 12.1.2 Javadoc: "Any
+            // dynamic symbol at the address will be excluded"). DEFAULT-
+            // source auto-labels created by `string define` / auto-analysis
+            // are stored as dynamic symbols, so the iterator form silently
+            // drops them — the user's get-label would still show them via
+            // st.getPrimarySymbol(addr), but rename/delete wouldn't find
+            // them. The array form is the more inclusive lookup and
+            // matches getPrimarySymbol's coverage. Snapshot EVERY symbol
+            // at the address — even if .equals(name) fails — so the caller
+            // can list the actual stored names on miss.
             List<Symbol> all = new ArrayList<>();
-            Symbol exact = null;
-            while (it.hasNext()) {
-                Symbol s = it.next();
+            for (Symbol s : st.getSymbols(addr)) {
                 all.add(s);
+            }
+            Symbol exact = null;
+            for (Symbol s : all) {
                 if (s.getName().equals(name)) {
                     if (exact != null) {
                         // multiple symbols with the same name at the same
@@ -98,15 +104,20 @@ final class LabelLookup {
             // diagnostic so the caller can dump it.
             return LabelLookup.miss(all, null);
         }
-        // Program-wide exact-name lookup. st.getSymbols(name) is the
-        // name-indexed iterator that ALSO consults the dynamic-name table
-        // (Ghidra synthesizes `DAT_<addr>` placeholders on demand from
-        // getSymbolForDynamicName when no DB record exists). The plain
-        // st.getSymbolIterator() only returns symbols with real DB
-        // records, so it misses auto-generated DAT_… labels even though
-        // `get-label --address` finds them via getPrimarySymbol. Using
-        // getSymbols(name) keeps the lookup consistent with get-label.
-        SymbolIterator it = st.getSymbols(name);
+        // Program-wide exact-name lookup. Walk st.getSymbolIterator() (no-
+        // arg) and filter by .getName().equals(name). This returns
+        // symbols with real DB records, including DEFAULT-source labels
+        // (the kind `string define` and auto-analysis create). The
+        // name-indexed st.getSymbols(name) explicitly excludes "default
+        // thunks" per its Javadoc and is more aggressive about excluding
+        // DEFAULT-source symbols, so it is NOT the right lookup here.
+        // The dynamic-label fallback (st.getSymbols(name) for DAT_<addr>
+        // placeholders synthesized on demand) does not apply to a literal
+        // name search — dynamic placeholders are generated on demand when
+        // a user references DAT_<addr> by name, not pre-existing. If the
+        // user wants to find a DAT_<addr> placeholder, they can use
+        // `memory lookup-label` which has a dedicated fallback.
+        SymbolIterator it = st.getSymbolIterator();
         List<Symbol> matches = new ArrayList<>();
         while (it.hasNext()) {
             Symbol s = it.next();

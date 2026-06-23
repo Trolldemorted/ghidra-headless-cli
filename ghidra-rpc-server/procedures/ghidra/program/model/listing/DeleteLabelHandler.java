@@ -42,7 +42,7 @@ public final class DeleteLabelHandler implements RpcProcedure {
                 return RpcResponse.error(sb.toString());
             }
             StringBuilder sb = new StringBuilder("No label matched '" + name + "'.");
-            sb.append(" Name match is literal (no regex, no substring); dots are dots.");
+            sb.append(" Name match is literal (String.equals on the stored symbol name)");
             if (lookup.atAddress != null && !lookup.atAddress.isEmpty()) {
                 sb.append("\nLabels at address ").append(addr).append(':');
                 for (Symbol s : lookup.atAddress) {
