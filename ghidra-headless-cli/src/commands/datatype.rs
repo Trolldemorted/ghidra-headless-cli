@@ -67,17 +67,45 @@ pub enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// Show a single data type by full path (kind/fields/entries/etc.)
+    /// Show a single data type (kind/fields/entries/etc.). Use either --path
+    /// OR (--name + optional --archive / --category) — not both, not neither.
     Show {
         /// Target file project path
         #[arg(long = "file", value_name = "FILE")]
         program: String,
-        /// Full data-type path, e.g. /ELF/Elf64_Ehdr
-        #[arg(long)]
-        path: String,
+        /// Full data-type path, e.g. /ELF/Elf64_Ehdr. Archive-qualified
+        /// paths from `datatype list` output (e.g.
+        /// `/Patrician3.exe-aa1fd4 (archive)/MainMenuLoaderScreen`) are
+        /// accepted; the ` (archive)` suffix is stripped automatically.
+        /// Mutually exclusive with --name.
+        #[arg(long, conflicts_with = "name")]
+        path: Option<String>,
+        /// Leaf type name (e.g. `MainMenuLoaderScreen`). Searched first
+        /// in the program DTM, then in every open source archive. With
+        /// --archive, scoped to that archive; with --category, scoped to
+        /// that category. Mutually exclusive with --path.
+        #[arg(long, conflicts_with = "path")]
+        name: Option<String>,
+        /// Source archive name (e.g. `windows_vs`, `Patrician3.exe-aa1fd4`).
+        /// The ` (archive)` suffix shown by `datatype list` is stripped.
+        /// Use with --name to disambiguate when the same leaf name lives
+        /// in multiple archives.
+        #[arg(long, requires = "name")]
+        archive: Option<String>,
+        /// Category path (e.g. /Demangler). Use with --name to scope
+        /// the program-DTM search to a single category.
+        #[arg(long, requires = "name")]
+        category: Option<String>,
         /// Emit the raw JSON `detail` object instead of the C declaration [default: false]
         #[arg(long)]
         json: bool,
+        /// Emit the full dependency graph (builtins preamble + every
+        /// transitively-referenced type) instead of just the requested
+        /// type. By default the server filters the writer output to the
+        /// requested type's C block; pass --with-deps to opt into the
+        /// raw writer output (same as the GUI's "Export C"). [default: false]
+        #[arg(long)]
+        with_deps: bool,
     },
     /// Create a struct / union / enum / typedef
     Create {
@@ -334,14 +362,41 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
         Cmd::Show {
             program,
             path,
+            name,
+            archive,
+            category,
             json,
+            with_deps,
         } => {
-            let response = client.invoke(
-                Req::new("ShowDataType")
-                    .str("file", program)
-                    .str("path", path)
-                    .build(),
-            )?;
+            // Server enforces "exactly one of path / name" — we let clap
+            // reject the "both" case at parse time, and the empty-string
+            // case is handled by clap via Option<String> + requires/conflicts_with.
+            // Re-check here for the "neither" case so a `--path ""` slips through
+            // clap but still gets caught.
+            if path.is_none() && name.is_none() {
+                return Err(common::log_arg_err(
+                    "Pass either --path (e.g. /Category/Name) or --name (with \
+                     optional --archive / --category); not neither."
+                        .to_string(),
+                ));
+            }
+            let mut req = Req::new("ShowDataType").str("file", program);
+            if let Some(p) = path {
+                req = req.str("path", p);
+            }
+            if let Some(n) = name {
+                req = req.str("name", n);
+                if let Some(a) = archive {
+                    req = req.str("archive", a);
+                }
+                if let Some(c) = category {
+                    req = req.str("category", c);
+                }
+            }
+            if with_deps {
+                req = req.opt_bool("with_deps", Some(true));
+            }
+            let response = client.invoke(req.build())?;
             print_show(&response, json)?;
             Ok(())
         }
@@ -1055,22 +1110,47 @@ fn print_show(response: &Json, want_json: bool) -> Result<(), ()> {
         return Ok(());
     }
 
-    // Default (human) output: headline TSV line + C declaration below.
-    // The TSV line is preserved here because it is the one stable
-    // piece that scripts pipe to `head -1` or awk on the path. It does
-    // NOT appear in --json mode — see above.
+    // Two response shapes share this printer:
+    //
+    //   * ShowDataType (full): includes `c` (the C declaration) and
+    //     `detail` (the structured JSON). Used by `datatype show`.
+    //
+    //   * ConfirmResponse (lean): NO `c`, NO `detail`. Used by
+    //     `datatype create` / `replace` / `edit` to confirm
+    //     "I just wrote your type". The confirmation line is the
+    //     user's primary feedback — no multi-line C block.
+    //
+    // The discriminator is the presence of `c`. Lean responses don't
+    // have it; full responses always do (even if empty, the absence
+    // is the lean signal).
+    if response.get("c").is_some() {
+        print_show_full(response, name, kind, path, size)
+    } else {
+        print_confirm(response, name, kind, path, size)
+    }
+}
+
+/// Full ShowDataType response: TSV headline + multi-line C declaration.
+fn print_show_full(
+    response: &Json,
+    name: &str,
+    kind: &str,
+    path: &str,
+    size: i64,
+) -> Result<(), ()> {
+    // Headline TSV line: kind<TAB>path<TAB>size. The TSV line is
+    // preserved here because it is the one stable piece that
+    // scripts pipe to `head -1` or awk on the path.
     println!("{}\t{}\t{}", kind, path, size);
 
     // C output: require the server-generated `c` field (Ghidra's
-    // DataTypeWriter). If it is missing or empty, fail loudly with a
-    // non-zero exit — do NOT silently fall back to the JSON detail, because
-    // that would re-route output without the user knowing it. The user can
-    // rerun with --json to inspect the structured view.
+    // DataTypeWriter). If it is missing or empty, fail loudly with
+    // a non-zero exit — do NOT silently fall back to the JSON
+    // detail, because that would re-route output without the user
+    // knowing it. The user can rerun with --json to inspect the
+    // structured view.
     match response.get("c").and_then(Json::as_str) {
         Some(s) if !s.is_empty() => {
-            // Print each line on its own; preserve indentation. The headline
-            // TSV line already announces the type, so the C declaration
-            // appears below it.
             for line in s.lines() {
                 println!("{}", line);
             }
@@ -1083,6 +1163,72 @@ fn print_show(response: &Json, want_json: bool) -> Result<(), ()> {
             name, path, kind
         ))),
     }
+}
+
+/// Lean ConfirmResponse: one line on stdout, no flood.
+///
+/// Format: `replaced <name> (<kind>, size 0xNN, N fields)` for
+/// struct/union; `replaced <name> (<kind>, size 0xNN, N entries)` for
+/// enum; `replaced <name> (<kind>, size 0xNN, base=<base>)` for
+/// typedef; `replaced <name> (<kind>, size 0xNN)` otherwise.
+///
+/// The verb (`replaced` vs `created` vs `edited`) is inferred from
+/// the response shape: ConfirmResponse has no verb field, so the
+/// server returns a `verb` field that the caller set. If absent, we
+/// default to "wrote" as a neutral term (matches the printed form
+/// on the CLI help text — "I just wrote your type").
+fn print_confirm(
+    response: &Json,
+    name: &str,
+    kind: &str,
+    path: &str,
+    size: i64,
+) -> Result<(), ()> {
+    // Verb: server sets this to the operation that produced the
+    // confirmation ("created", "replaced", "edited"). If the server
+    // didn't set it, fall back to a generic verb that doesn't
+    // mis-represent any of the three.
+    let verb = response
+        .get("verb")
+        .and_then(Json::as_str)
+        .unwrap_or("wrote");
+
+    // Per-kind confirmation. Exactly one of fieldCount/entryCount/base
+    // is set in ConfirmResponse; gson omits the others.
+    let field_count = response
+        .get("fieldCount")
+        .and_then(Json::as_f64)
+        .map(|n| n as i64);
+    let entry_count = response
+        .get("entryCount")
+        .and_then(Json::as_f64)
+        .map(|n| n as i64);
+    let base = response.get("base").and_then(Json::as_str);
+
+    // size printed in hex for parity with Ghidra's Type Manager
+    // (which always shows struct sizes in hex). 0x0 for zero-size
+    // types (e.g. an empty struct with no fields yet).
+    let size_hex = format!("0x{:x}", size);
+
+    let mut line = format!("{} {} ({}, size {}", verb, name, kind, size_hex);
+    if let Some(n) = field_count {
+        let unit = if n == 1 { "field" } else { "fields" };
+        line.push_str(&format!(", {} {}", n, unit));
+    } else if let Some(n) = entry_count {
+        let unit = if n == 1 { "entry" } else { "entries" };
+        line.push_str(&format!(", {} {}", n, unit));
+    } else if let Some(b) = base {
+        line.push_str(&format!(", base={}", b));
+    }
+    line.push(')');
+
+    // Log a richer diagnostic to stderr for grep parity with the
+    // rest of the datatype subcommands. The confirmation line
+    // itself goes to stdout (scriptable: `replaced X (struct,
+    // size 0xc, 3 fields)` parses trivially).
+    log::info!("{} {} {}\t{}\t{}", verb, name, kind, path, size);
+    println!("{}", line);
+    Ok(())
 }
 
 /// Print a SetDataTypeFieldComment response as a small four-line block:

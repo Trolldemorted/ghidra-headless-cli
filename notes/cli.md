@@ -204,6 +204,11 @@ $BIN --host 127.0.0.1:18000 function disassemble --file /Mapeditor.exe --address
 # Find functions by name ("<address>  <name>" per match); substring, regex, or case-insensitive
 $BIN --host 127.0.0.1:18000 function find-by-name --file /Mapeditor.exe --query fn_cmd
 $BIN --host 127.0.0.1:18000 function find-by-name --file /Mapeditor.exe --query "^FUN_0040" --regex true --limit 50
+# `--ignore-case true` is long-only (no `-i` short — the project's
+# shorthand policy reserves shorts for `-H` and `-v` only). Without
+# it the match is case-sensitive, so `--query ENTRY` finds nothing
+# for a leaf named `entry`:
+$BIN --host 127.0.0.1:18000 function find-by-name --file /Mapeditor.exe --query ENTRY --ignore-case true --limit 5
 
 # Find functions by tag ("<address>  <name>  [tag,...]" per match)
 # Plain query = EXACT tag name ("has this tag"); use --regex for a substring/pattern.

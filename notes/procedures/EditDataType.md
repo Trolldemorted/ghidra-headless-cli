@@ -31,7 +31,41 @@ interface EditDataTypeRequest {
 
 ## Response
 
-Same shape as `ShowDataType` — the edited type, fully described (post-edit).
+Lean confirmation (`ShowDataTypeHandler.ConfirmResponse`):
+
+```typescript
+interface EditDataTypeResponse {
+  success: true;
+  verb: "edited";
+  kind: "struct" | "union" | "enum" | "typedef";
+  name: string;
+  path: string;
+  category: string;
+  size: number;            // post-edit
+  source: "USER";
+  sourceArchive: null;
+  // Per-kind: exactly one of these is set; the others are absent.
+  fieldCount?: number;     // struct, union — post-edit count
+  entryCount?: number;     // enum — post-edit count
+  base?: string;           // typedef (unchanged by edit; reported for consistency)
+}
+```
+
+**Default CLI output** (one line on stdout):
+
+```
+edited <name> (<kind>, size 0xNN, N fields)
+edited <name> (<kind>, size 0xNN, N entries)     // enum
+edited <name> (<kind>, size 0xNN, base=<base>)  // typedef
+```
+
+The C declaration (`c` field) and the full structured `detail` object
+are INTENTIONALLY OMITTED from the confirmation. For a multi-step
+edit (e.g. `replaceFields: true` + 5 `addFields`) the user typically
+already has a script that produced the call — they want a yes/no
+line, not the re-rendered C block. To get the C declaration, run
+`datatype show --path /X` afterwards. To get the structured detail,
+add `--json` (planned).
 
 ## Notes
 

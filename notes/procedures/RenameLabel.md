@@ -10,12 +10,25 @@ the push fails.
 <!-- Shared types: SourceType = "USER_DEFINED" | "ANALYSIS" | "IMPORTED" | "DEFAULT";
      AddressRange = { start: string; end?: string }  (hex addresses) -->
 
+## Name match is LITERAL
+
+`--query` is matched against the stored symbol name with `String.equals`
+(byte-for-byte, case-sensitive, whitespace-sensitive). There is no regex,
+no glob, no substring, no case folding. Dots, parens, brackets, dollar
+signs, etc. are matched as themselves. This is why auto-generated labels
+whose names contain `.` (e.g. `s_V1.1_0069719c` from Ghidra's
+string-analysis pass, or class names like `ns.MyClass_vftable`) round-trip
+exactly: copy the name `get-label` prints and pass it as `--query`.
+
+If your `--query` doesn't match, the error tells you what is actually
+stored (see [Diagnostics](#diagnostics) below).
+
 ## Request
 ```typescript
 interface RenameLabelRequest {
   procedure: "RenameLabel";
   file: string;              // project path of the target program, e.g. "/Mapeditor.exe"
-  query: string;             // current label name (exact match)
+  query: string;             // current label name (exact literal match — see "Name match is LITERAL")
   name: string;              // new label name
   source?: SourceType;       // default "USER_DEFINED"
   address?: string;          // disambiguate when multiple symbols share `query`
@@ -32,18 +45,56 @@ or `{ "success": false, "error": "<message>" }`.
  "query": "FUN_00401000", "name": "my_helper"}
 ```
 
+Rename an auto-generated string label verbatim (dots included):
+```sh
+memory rename-label --file /Mapeditor.exe \
+  --query "s_V1.1_0069719c" --name s_Version \
+  --address 0x0069719c
+```
+
 ## Errors
 
-- `"No label matched '<query>'."` — the exact name lookup in
-  `SymbolTable.getSymbols(query)` returned nothing. See
-  [Auto-generated DEFAULT labels](#auto-generated-default-labels) below for the
-  common cause (auto-generated vftable-style names like
-  `CMainWnd_vftable_0066e3c0`).
-- `"Multiple labels match '<query>'; pass --address to disambiguate: ..."` —
-  the same name exists at more than one address. Pass `--address` to pick
-  the target.
+- `"No label matched '<query>'. Name match is literal (no regex, no
+  substring); dots are dots."` — the exact name lookup returned nothing.
+  See [Diagnostics](#diagnostics) for the recovery path.
+- `"Multiple labels match '<query>'; pass --address to disambiguate:
+  ..."` — the same name exists at more than one address. Pass `--address`
+  to pick the target.
 - `"renameLabel: <message>"` — Ghidra rejected the rename (e.g.
   `DuplicateNameException` for a name clash at the destination namespace).
+
+## Diagnostics
+
+When the lookup misses, the error payload is actionable, not just a bare
+"No label matched". Two paths:
+
+**With `--address`** (address-scoped lookup): the error lists every label
+that IS at the address, with their actual stored names. This catches the
+common case where the user copy-pastes a name from `get-label` but the
+stored name has an invisible char (NBSP, trailing whitespace, …) or a
+typo. The user can immediately see what's there and re-issue the
+rename with the exact stored name:
+```
+No label matched 'wrong_typo_name'. Name match is literal (no regex, no substring); dots are dots.
+Labels at address 00404000:
+  00404000  real_name_at_404000
+Use `memory get-label --address 00404000` to see the exact stored names.
+```
+
+**Without `--address`** (program-wide lookup): the error offers up to
+five "did you mean?" symbols whose names contain `--query` as a
+substring (case-insensitive). This catches typos and shortened forms.
+The user can then re-issue with the full name, or run
+`memory list-labels --query "..."` for a full substring search:
+```
+No label matched 'real_nam'. Name match is literal (no regex, no substring); dots are dots.
+Did you mean one of these?
+  00404000  real_name_at_404000
+Use `memory list-labels --query "real_nam"` to search.
+```
+
+Both paths are wired through [`LabelLookup`](../../ghidra-rpc-server/procedures/ghidra/program/model/listing/LabelLookup.java)
+and surface in the same way for `delete-label`.
 
 ## Auto-generated DEFAULT labels
 
@@ -81,3 +132,4 @@ This is the same pattern documented for `DAT_<addr>` labels — use
 - `GetLabel` — read primary (and secondaries) at an address
 - `ListLabels` — substring search over all labels
 - `LookupLabel` — substring/regex search, returns source + primary + type
+- `DeleteLabel` — same lookup + diagnostics contract

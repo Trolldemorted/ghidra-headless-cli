@@ -95,7 +95,8 @@ existing dynamic label a secondary shadow.
   "query": "g_tick" }
 ```
 
-Looks up the symbol by `query` (exact name match) via
+Looks up the symbol by `query` (exact **literal** match —
+`String.equals`, no regex/substring/glob) via
 `SymbolTable.getSymbols(query)`, which falls back to Ghidra's
 dynamic-name table for auto-generated `DAT_<addr>` placeholders. Calls
 `Symbol.delete()` on the resolved symbol. Refuses to delete
@@ -104,6 +105,13 @@ dynamic-name table for auto-generated `DAT_<addr>` placeholders. Calls
 `Symbol.delete()`. Dynamic `DAT_…` labels cannot be deleted directly
 (they're synthesized); create a USER_DEFINED label at the address to
 shadow them.
+
+Name match is literal — dots, parens, etc. are matched as themselves
+(see `RenameLabel.md` "Name match is LITERAL"). On miss, the error
+payload is diagnostic: when `--address` is provided, it lists the
+labels actually at the address; when `--address` is absent, it offers
+up to five "did you mean?" substring matches. Same contract as
+`RenameLabel`.
 
 ### SetPrimary
 

@@ -65,8 +65,8 @@ public final class EditDataTypeHandler implements RpcProcedure {
                 touched[0] = true;
             });
             if (!touched[0]) return RpcResponse.error("Edit failed for '" + target.getName() + "'.");
-            return new ShowDataTypeHandler.ShowResponse(
-                ctx.program().getDataTypeManager(), target);
+            return new ShowDataTypeHandler.ConfirmResponse(
+                ctx.program().getDataTypeManager(), target, "edited");
         }
 
         // Explicit-JSON path: rename / move / replaceFields / addFields / addEntries.
@@ -76,8 +76,8 @@ public final class EditDataTypeHandler implements RpcProcedure {
             touched[0] = true;
         });
         if (!touched[0]) return RpcResponse.error("Edit failed for '" + target.getName() + "'.");
-        return new ShowDataTypeHandler.ShowResponse(
-            ctx.program().getDataTypeManager(), target);
+        return new ShowDataTypeHandler.ConfirmResponse(
+            ctx.program().getDataTypeManager(), target, "edited");
     }
 
     private static boolean sameKind(DataType a, DataType b) {

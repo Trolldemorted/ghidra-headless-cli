@@ -108,19 +108,42 @@ return an error rather than silently landing at the wrong place.
 
 ## Response
 
-Returns the same shape as `ShowDataType`:
-```json
-{
-  "kind": "struct",
-  "name": "L_String",
-  "path": "/Demangler/L_String",
-  "category": "/Demangler",
-  "size": 8,
-  "source": "ARCHIVE",          // or "USER" if the archive stub was promoted
-  "sourceArchive": "Battle_Realms_F.exe",  // or null when source=USER
-  "detail": { ...fields, packed, alignment, ... }
+Lean confirmation (`ShowDataTypeHandler.ConfirmResponse`):
+
+```typescript
+interface ReplaceDataTypeResponse {
+  success: true;
+  verb: "replaced";
+  kind: "struct" | "union" | "enum" | "typedef";
+  name: string;
+  path: string;        // full path, e.g. "/Demangler/L_String"
+  category: string;
+  size: number;
+  source: "USER" | "ARCHIVE";
+  sourceArchive: string | null;
+  // Per-kind: exactly one of these is set; the others are absent.
+  fieldCount?: number; // struct, union
+  entryCount?: number; // enum
+  base?: string;       // typedef
 }
 ```
+
+**Default CLI output** (one line on stdout):
+
+```
+replaced <name> (<kind>, size 0xNN, N fields)
+replaced <name> (<kind>, size 0xNN, N entries)     // enum
+replaced <name> (<kind>, size 0xNN, base=<base>)  // typedef
+```
+
+The C declaration (`c` field) and the full structured `detail` object
+are INTENTIONALLY OMITTED from the confirmation — even with the
+bug #8 lean filter, the C block for a struct that references other
+structs (e.g. `ClaudeHeadlessStruct { uint magic; L_String name; ... }`)
+was still multi-line and could bury the result. For a single-type
+write a one-line confirmation is the right UX. To get the C
+declaration, run `datatype show --path /X` afterwards. To get the
+structured detail, add `--json` (planned).
 
 The `source` / `sourceArchive` fields are the disambiguator: they tell
 you whether the type now lives in the program's DTM (`USER`) or whether

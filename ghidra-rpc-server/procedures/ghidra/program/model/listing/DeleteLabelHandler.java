@@ -12,8 +12,8 @@ import procedures.RpcResponse;
 
 /**
  * Procedure DeleteLabel: remove a label identified by its name (and, optionally,
- * its address to disambiguate). Disambiguation rule mirrors
- * {@link RenameLabelHandler}.
+ * its address to disambiguate). Disambiguation rule and miss diagnostics
+ * mirror {@link RenameLabelHandler} — see {@link LabelLookup}.
  *
  * <p>Refuses to delete function entry-point labels (SymbolType.FUNCTION) — use
  * {@code function delete} for that.
@@ -34,12 +34,30 @@ public final class DeleteLabelHandler implements RpcProcedure {
 
         LabelLookup lookup = LabelLookup.byName(ctx, name, addr);
         if (lookup.match == null) {
-            if (lookup.candidates == null || lookup.candidates.isEmpty()) {
-                return RpcResponse.error("No label matched '" + name + "'.");
+            if (lookup.candidates != null && !lookup.candidates.isEmpty()) {
+                StringBuilder sb = new StringBuilder("Multiple labels match '" + name + "'; pass --address to disambiguate:");
+                for (Symbol s : lookup.candidates) {
+                    sb.append("\n  ").append(LabelLookup.formatSymbol(s));
+                }
+                return RpcResponse.error(sb.toString());
             }
-            StringBuilder sb = new StringBuilder("Multiple labels match '" + name + "'; pass --address to disambiguate:");
-            for (Symbol s : lookup.candidates) {
-                sb.append("\n  ").append(s.getAddress()).append("  ").append(s.getName());
+            StringBuilder sb = new StringBuilder("No label matched '" + name + "'.");
+            sb.append(" Name match is literal (no regex, no substring); dots are dots.");
+            if (lookup.atAddress != null && !lookup.atAddress.isEmpty()) {
+                sb.append("\nLabels at address ").append(addr).append(':');
+                for (Symbol s : lookup.atAddress) {
+                    sb.append("\n  ").append(LabelLookup.formatSymbol(s));
+                }
+                sb.append("\nUse `memory get-label --address ").append(addr)
+                  .append("` to see the exact stored names.");
+            }
+            else if (lookup.suggestions != null && !lookup.suggestions.isEmpty()) {
+                sb.append("\nDid you mean one of these?");
+                for (Symbol s : lookup.suggestions) {
+                    sb.append("\n  ").append(LabelLookup.formatSymbol(s));
+                }
+                sb.append("\nUse `memory list-labels --query \"").append(name)
+                  .append("\"` to search.");
             }
             return RpcResponse.error(sb.toString());
         }

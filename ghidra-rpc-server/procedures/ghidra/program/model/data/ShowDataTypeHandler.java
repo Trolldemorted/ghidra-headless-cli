@@ -13,9 +13,39 @@ import procedures.RpcProcedure;
 import procedures.RpcResponse;
 
 /**
- * Procedure ShowDataType: read a single data type by full path
- * ({@code /Category/Sub/Name}) and return its full description (struct fields,
- * enum entries, typedef base, etc.) plus a C declaration. Read-only.
+ * Procedure ShowDataType: read a single data type and return its full
+ * description (struct fields, enum entries, typedef base, etc.) plus a C
+ * declaration. Read-only.
+ *
+ * <p>Three lookup modes (mutually exclusive — pass one):
+ * <ul>
+ *   <li><b>{@code path}</b> ({@code /Category/Sub/Name}, or the
+ *       archive-qualified {@code /<archive>/Cat/Sub/Name} form that
+ *       mirrors what {@code datatype list} prints — the {@code " (archive)"}
+ *       suffix is tolerated). See
+ *       {@link DataTypeOps#requireDataTypeByPath}.</li>
+ *   <li><b>{@code name}</b> (with optional {@code archive} and
+ *       {@code category}) — leaf-name lookup. Useful when the same name
+ *       lives in multiple categories/archives and you want to scope the
+ *       search. See {@link DataTypeOps#requireDataTypeByName}.</li>
+ * </ul>
+ *
+ * <p>The {@code --name} form was added 2026-06-23 to mirror the
+ * {@code --name} flag on {@code datatype create} / {@code datatype replace`
+ * (consistency: all three subcommands accept the same identifier shape).
+ *
+ * <p>{@code with_deps} (boolean, default {@code false}, added 2026-06-23):
+ * controls the {@code c} field's verbosity. Ghidra's
+ * {@link DataTypeWriter} unconditionally emits a ~25-line builtins
+ * preamble ({@code typedef unsigned char byte; typedef unsigned int
+ * dword;} ... ) and pulls in transitive typedefs of any field whose
+ * type is a typedef. For struct/union/enum/typedef, the {@code c}
+ * field defaults to just the requested type's block + its
+ * compile-required field typedefs (no preamble). Pass
+ * {@code with_deps=true} to get the raw writer output (preamble +
+ * the requested type + every transitively-referenced type, in
+ * declaration order). For built-in primitives the filter is a
+ * no-op (the preamble IS the requested type's declaration).
  *
  * <p>Response shape:
  * <ul>
@@ -39,13 +69,39 @@ import procedures.RpcResponse;
  * {@code ReplaceDataType}, and {@code EditDataType} to confirm what was
  * just written. Those callers now print C code by default too, which is the
  * right behavior ("I just created a struct, show me what it looks like").
+ * The {@code with_deps} flag is honored by the same response path so
+ * create/replace/edit benefit from the same lean-by-default output.
  */
 public final class ShowDataTypeHandler implements RpcProcedure {
 
     @Override
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
-        DataType dt = DataTypeOps.requireDataTypeByPath(ctx, RpcContext.reqStr(req, "path"));
-        return new ShowResponse(ctx.program().getDataTypeManager(), dt);
+        String path = RpcContext.optStr(req, "path");
+        String name = RpcContext.optStr(req, "name");
+        String archive = RpcContext.optStr(req, "archive");
+        String category = RpcContext.optStr(req, "category");
+        boolean hasPath = path != null && !path.trim().isEmpty();
+        boolean hasName = name != null && !name.trim().isEmpty();
+        if (hasPath == hasName) {
+            // both true or both false — neither nor both is an error.
+            return RpcResponse.error(
+                "Pass exactly one of `path` (e.g. /Category/Name or "
+                + "/<archive>/Cat/Name) or `name` (with optional `archive` / "
+                + "`category`); not both, not neither.");
+        }
+        // withDeps: optBool defaults to false. CLI flag is `--with-deps`.
+        // When true, the `c` field contains the full writer output
+        // (builtins preamble + transitively-referenced types). When
+        // false (default), only the requested type's C block is
+        // returned — see CDeclarationFilter.
+        boolean withDeps = req.has("with_deps") && req.get("with_deps").getAsBoolean();
+        DataType dt;
+        if (hasPath) {
+            dt = DataTypeOps.requireDataTypeByPath(ctx, path);
+        } else {
+            dt = DataTypeOps.requireDataTypeByName(ctx, name, archive, category);
+        }
+        return new ShowResponse(ctx.program().getDataTypeManager(), dt, withDeps);
     }
 
     @Override public boolean mutates() { return false; }
@@ -73,8 +129,19 @@ public final class ShowDataTypeHandler implements RpcProcedure {
          * canonical machine-readable form. (In practice {@code DataTypeWriter}
          * on a {@code StringWriter} does not throw — but the safer default is
          * "JSON always, C if we can".)
+         *
+         * <p>{@code withDeps} controls the post-processing of {@code c}:
+         * <ul>
+         *   <li>{@code false} (default): the writer's output is filtered
+         *       through {@link CDeclarationFilter} to keep only the
+         *       requested type's C block. The user gets a pasteable
+         *       single-type declaration.</li>
+         *   <li>{@code true}: the raw writer output is returned
+         *       unchanged — builtins preamble plus the full dependency
+         *       graph of the requested type.</li>
+         * </ul>
          */
-        ShowResponse(ghidra.program.model.data.DataTypeManager dtm, DataType dt) {
+        ShowResponse(ghidra.program.model.data.DataTypeManager dtm, DataType dt, boolean withDeps) {
             this.success = true;
             JsonObject o = new DataTypeSerializer(dtm).describe(dt);
             this.kind = o.has("kind") ? o.get("kind").getAsString() : null;
@@ -86,19 +153,22 @@ public final class ShowDataTypeHandler implements RpcProcedure {
             this.sourceArchive = o.has("sourceArchive") && !o.get("sourceArchive").isJsonNull()
                 ? o.get("sourceArchive").getAsString() : null;
             this.detail = o;
-            this.c = writeC(dtm, dt);
+            this.c = writeC(dtm, dt, withDeps);
         }
 
-        private static String writeC(ghidra.program.model.data.DataTypeManager dtm, DataType dt) {
+        private static String writeC(ghidra.program.model.data.DataTypeManager dtm, DataType dt,
+                boolean withDeps) {
             // DataTypeWriter.write(DataType[], ...) is the only public write
             // overload that accepts a single DataType — the package-private
             // write(DataType, ...) lives in ghidra.program.model.data and our
             // handler is in procedures.ghidra.program.model.data, so we cannot
             // call it. A 1-element array is the documented equivalent.
             StringWriter sw = new StringWriter();
+            String raw;
             try {
                 DataTypeWriter w = new DataTypeWriter(dtm, sw);
                 w.write(new DataType[] { dt }, ghidra.util.task.TaskMonitor.DUMMY);
+                raw = sw.toString();
             } catch (IOException | ghidra.util.exception.CancelledException e) {
                 // Empty string signals "no C available"; the CLI surfaces this
                 // as an error and exits non-zero (the user can retry with
@@ -109,8 +179,133 @@ public final class ShowDataTypeHandler implements RpcProcedure {
             }
             // DataTypeWriter ends with a newline; trim so the CLI can print
             // the C declaration cleanly without a trailing blank line.
-            String s = sw.toString();
-            return s.endsWith("\n") ? s.substring(0, s.length() - 1) : s;
+            String trimmed = raw.endsWith("\n") ? raw.substring(0, raw.length() - 1) : raw;
+            if (withDeps) {
+                return trimmed;
+            }
+            // Filter to just the requested type's C block (see
+            // CDeclarationFilter Javadoc for the per-kind strategy). The
+            // filter returns the raw input unchanged when no block
+            // matched, so a malformed type falls back to the writer's
+            // full output rather than empty C.
+            return CDeclarationFilter.filter(trimmed, kindOfForFilter(dt), displayNameOf(dt));
+        }
+
+        /** Local mirror of {@code DataTypeSerializer.kindOf} so the filter
+         * gets the same kind string the JSON response uses. */
+        private static String kindOfForFilter(DataType dt) {
+            if (dt instanceof ghidra.program.model.data.Structure) return "struct";
+            if (dt instanceof ghidra.program.model.data.Union) return "union";
+            if (dt instanceof ghidra.program.model.data.Enum) return "enum";
+            if (dt instanceof ghidra.program.model.data.TypeDef) return "typedef";
+            if (dt instanceof ghidra.program.model.data.BuiltInDataType) return "primitive";
+            if (dt instanceof ghidra.program.model.data.Pointer) return "pointer";
+            if (dt instanceof ghidra.program.model.data.Array) return "array";
+            if (dt instanceof ghidra.program.model.data.FunctionDefinition) return "functiondef";
+            if (dt instanceof ghidra.program.model.data.BitFieldDataType) return "bitfield";
+            return "unknown";
+        }
+
+        private static String displayNameOf(DataType dt) {
+            return dt.getDisplayName();
+        }
+    }
+
+    /**
+     * Lean confirmation response used by {@code CreateDataType},
+     * {@code ReplaceDataType}, and {@code EditDataType} to confirm
+     * "I just wrote your type". Mirrors the scalar fields of
+     * {@link ShowResponse} (kind, name, path, category, size, source,
+     * sourceArchive) plus a single per-kind counter (fieldCount for
+     * struct/union, entryCount for enum, base for typedef) — and
+     * INTENTIONALLY OMITS the {@code c} and {@code detail} fields that
+     * {@link ShowResponse} populates.
+     *
+     * <p>Why omit them: Ghidra's {@link DataTypeWriter} emits a C
+     * declaration that, even with the bug #8 lean filter, still
+     * re-emits the type's full body (the user just wrote it, they
+     * know what it looks like). For a struct that references
+     * other structs, the user typically only wants a one-line
+     * confirmation — a multi-line C block, even a lean one, is
+     * noise. The CLI prints
+     * {@code replaced <name> (<kind>, size 0xNN, N fields)} on
+     * stdout; users who want the full C declaration can run
+     * {@code datatype show --path /X} afterwards, or pass {@code --json}
+     * to see the structured detail here.
+     *
+     * <p>Layout contract: the {@code detail} and {@code c} fields are
+     * absent (gson omits nulls). Callers that need the C output should
+     * call {@code ShowDataType} explicitly with the resolved path.
+     */
+    public static final class ConfirmResponse extends RpcResponse {
+        public final String kind;
+        public final String name;
+        public final String path;
+        public final String category;
+        public final long size;
+        public final String source;
+        public final String sourceArchive;
+        /** The operation that produced this confirmation: "created",
+         *  "replaced", or "edited". The CLI uses this to print
+         *  "created X" vs "replaced X" vs "edited X" without the
+         *  caller having to know which procedure invoked us. */
+        public final String verb;
+
+        // Per-kind confirmation. Exactly one of these is set; gson omits
+        // the others as null.
+        public final Long fieldCount;     // struct, union
+        public final Long entryCount;     // enum
+        public final String base;         // typedef
+
+        /**
+         * Build a lean confirmation for a type that was just written.
+         * Computes the per-kind confirmation field by {@code instanceof}
+         * on the same hierarchy {@link DataTypeSerializer#kindOf} uses.
+         *
+         * @param dtm  the program DTM
+         * @param dt   the type that was just created/replaced/edited
+         * @param verb "created", "replaced", or "edited" — tells the CLI
+         *             how to phrase the confirmation line
+         */
+        public ConfirmResponse(ghidra.program.model.data.DataTypeManager dtm, DataType dt, String verb) {
+            this.success = true;
+            this.verb = verb;
+            // Use DataTypeSerializer to get the same scalar fields the
+            // ShowResponse uses (consistency: same kind string, same
+            // path/category formatting, same source labeling). We read
+            // those fields and discard the `detail` JsonObject the
+            // serializer also produces (it's not included here).
+            JsonObject o = new DataTypeSerializer(dtm).describe(dt);
+            this.kind = o.has("kind") ? o.get("kind").getAsString() : null;
+            this.name = o.has("name") ? o.get("name").getAsString() : null;
+            this.path = o.has("path") ? o.get("path").getAsString() : null;
+            this.category = o.has("category") ? o.get("category").getAsString() : null;
+            this.size = o.has("size") ? o.get("size").getAsLong() : 0;
+            this.source = o.has("source") ? o.get("source").getAsString() : null;
+            this.sourceArchive = o.has("sourceArchive") && !o.get("sourceArchive").isJsonNull()
+                ? o.get("sourceArchive").getAsString() : null;
+
+            // Per-kind counter. Composite covers both Structure and Union;
+            // Enum and TypeDef are the other two confirmable kinds.
+            if (dt instanceof ghidra.program.model.data.Composite) {
+                this.fieldCount = (long) ((ghidra.program.model.data.Composite) dt).getNumComponents();
+                this.entryCount = null;
+                this.base = null;
+            } else if (dt instanceof ghidra.program.model.data.Enum) {
+                this.fieldCount = null;
+                this.entryCount = (long) ((ghidra.program.model.data.Enum) dt).getCount();
+                this.base = null;
+            } else if (dt instanceof ghidra.program.model.data.TypeDef) {
+                this.fieldCount = null;
+                this.entryCount = null;
+                this.base = ((ghidra.program.model.data.TypeDef) dt).getBaseDataType().getDisplayName();
+            } else {
+                // Pointer, array, functiondef, bitfield, primitive — no
+                // special counter; the CLI just prints the size.
+                this.fieldCount = null;
+                this.entryCount = null;
+                this.base = null;
+            }
         }
     }
 }

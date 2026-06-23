@@ -1,15 +1,49 @@
 # DataType — Show
 
-Read a single data type by full path and return its full description (struct
-fields, enum entries, typedef base, pointer/array base, etc.) plus a C
-declaration. Read-only.
+Read a single data type and return its full description (struct fields, enum
+entries, typedef base, pointer/array base, etc.) plus a C declaration.
+Read-only.
 
 ## Request
+
+Pass **exactly one** of `path` or `name`:
+
 ```typescript
 interface ShowDataTypeRequest {
   procedure: "ShowDataType";
   file: string;
-  path: string;            // full type path, e.g. "/ELF/Elf64_Ehdr" or "/int"
+  // Lookup mode A: full path.
+  //   /Cat/Sub/Name          — program-DTM path (the most common form)
+  //   /<archive>/Cat/Sub/Name — archive-qualified form, accepted since
+  //                              2026-06-23 so users can paste what
+  //                              `datatype list` prints without thinking
+  //                              (the ` (archive)` suffix on the first
+  //                              segment is stripped; the rest is the
+  //                              real path)
+  //   /int                    — root category + primitive name
+  path?: string;
+
+  // Lookup mode B: leaf name (with optional archive/category filter).
+  //   --name MyStruct                            — search program DTM,
+  //                                                 fall back to all
+  //                                                 open source archives
+  //   --name MyStruct --archive "windows_vs12_32 (archive)"
+  //                                              — scope to one archive
+  //   --name MyStruct --category /Demangler     — scope to one category
+  name?: string;
+  archive?: string;        // source archive name (suffix tolerated)
+  category?: string;       // category path, e.g. "/Demangler"
+
+  // Controls verbosity of the `c` field (added 2026-06-23). Ghidra's
+  // DataTypeWriter unconditionally emits a ~25-line builtins preamble
+  // (`typedef unsigned char byte; typedef unsigned int dword;` ...) and
+  // pulls in transitive typedefs of every field whose type is a typedef.
+  // For most CLI uses (paste into a C file) the user wants just the
+  // requested type's block. Default `false` returns a lean, pasteable
+  // declaration. Pass `true` to get the raw writer output — useful when
+  // the user needs to recreate the type in a DTM that doesn't already
+  // have the same builtin typedefs (e.g. cross-platform rebuild).
+  with_deps?: boolean;     // [default: false]
 }
 ```
 
@@ -67,15 +101,27 @@ interface EnumEntry {
 
 ```
 ghidra-headless-cli datatype show --file /Mapeditor.exe --path /MyStruct
+ghidra-headless-cli datatype show --file /Mapeditor.exe --name MyStruct
+ghidra-headless-cli datatype show --file /Mapeditor.exe --name MyStruct --archive "Mapeditor.exe (archive)"
+ghidra-headless-cli datatype show --file /Mapeditor.exe --path "/Mapeditor.exe (archive)/DOS/IMAGE_DOS_HEADER"
+ghidra-headless-cli datatype show --file /Mapeditor.exe --path /MyStruct --with-deps
 ```
 
-prints the C declaration by default. Example output:
+The first four forms all resolve to the same struct on a program whose
+local DTM defines `MyStruct` (or `IMAGE_DOS_HEADER`). Use whichever
+matches how you found the type. The archive-qualified `--path` form is
+the discoverability fix added 2026-06-23: `datatype list` prints source
+archives in a separate column that visually looks like a category, so
+users naturally try `/<archive>/<name>`; the handler now strips the
+prefix and retries the rest as a normal path. The fifth form,
+`--with-deps`, opts into the raw DataTypeWriter output (preamble +
+transitive typedefs + the requested type). See **Lean C by default**
+under Notes.
+
+prints the C declaration by default. Example output (default, lean):
 
 ```
 struct   /MyStruct   32
-typedef unsigned char    byte;
-typedef unsigned int    dword;
-...
 typedef struct MyStruct MyStruct, *PMyStruct;
 
 struct MyStruct {
@@ -85,6 +131,12 @@ struct MyStruct {
     void *next;
 };
 ```
+
+Same query with `--with-deps` adds the ~25-line builtins preamble
+(`typedef unsigned char byte;` etc.) and any transitively-referenced
+typedefs before the struct. Use `--with-deps` when the lean output
+references types the consumer's DTM doesn't have; use the default
+(default) when pasting into a fresh C file.
 
 `--json` switches to the raw structured view:
 
@@ -112,6 +164,22 @@ scripts that pipe to `head -1` or awk on the path still work in either mode
 - `path` resolution: the last `/` separates the category path from the type
   name. `/byte` is the root category + name "byte". `ELF/Elf64_Ehdr` and
   `/ELF/Elf64_Ehdr` both resolve to category `/ELF` + name `Elf64_Ehdr`.
+- **Archive-qualified `--path` form** (added 2026-06-23, Bug #7): when the
+  first `/`-delimited segment of `path` matches a known source archive
+  name (local or upstream) — the form `datatype list` prints in its
+  `sourceArchive` column with the ` (archive)` suffix — the prefix is
+  stripped and the rest is retried as a normal `/Cat/Sub/Name` path in
+  the program DTM. This lets you paste the full
+  `/<archive>/<cat>/<name>` form back as `--path` without having to
+  know whether the archive is local (`Mapeditor.exe`) or upstream
+  (`windows_vs12_32`). Three-tier resolution:
+  1. Literal `/Cat/Sub/Name` lookup in the program DTM.
+  2. Archive-prefixed (if the first segment is a known archive) —
+     strip the prefix, retry in program DTM; if still no match AND
+     the archive is upstream, search its types.
+  3. Merged view across all open source archives (existing
+     behavior — makes `/Demangler/L_String` work when `/Demangler`
+     lives only in the Battle_Realms_F.exe archive).
 - Field types in `detail.fields[].type` render as **C-syntax display names**
   (`char *`, `MyStruct[4]`) to avoid infinite recursion through nested
   struct types. Use `ShowDataType` recursively if you need the full
@@ -129,8 +197,44 @@ scripts that pipe to `head -1` or awk on the path still work in either mode
   re-routing output without telling them would be worse than failing.
   The error message tells the user to retry with `--json` to see the
   structured view.
+- **ConfirmResponse is the lean sibling.** `CreateDataType`,
+  `ReplaceDataType`, and `EditDataType` return
+  `ShowDataTypeHandler.ConfirmResponse` instead of `ShowResponse`:
+  same scalar fields (kind, name, path, category, size, source,
+  sourceArchive) plus a per-kind counter (`fieldCount` / `entryCount` /
+  `base`) and a `verb` ("created" / "replaced" / "edited"). The `c`
+  and `detail` fields are absent. The CLI's `print_show` discriminates
+  on the presence of `c`: present → multi-line C output (this
+  procedure); absent → one-line confirmation. The confirmation line
+  is `<verb> <name> (<kind>, size 0xNN, N fields)` (or `N entries` for
+  enum, `base=<base>` for typedef). Added 2026-06-23 to fix the
+  `datatype replace --definition` stdout flood: even with the bug
+  #8 lean filter, the C block for a struct that references other
+  structs was still multi-line.
 - `size: -1` means the type is variable-length (e.g. `TerminatedCString`).
 - `category` on built-in primitives is always `"/"` (the root category).
+- **Lean C by default** (added 2026-06-23): the `c` field defaults to a
+  pasteable single-type declaration (the requested type's C block + any
+  field-typedefs the writer placed between the forward decl and the
+  body, no builtins preamble). Ghidra's `DataTypeWriter` has no public
+  flag to suppress the preamble (it emits `typedef unsigned char byte;
+  typedef unsigned int dword;` ... twenty-something lines from its
+  constructor, independent of which type you ask for); we post-process
+  the writer's output in `CDeclarationFilter`. Per-kind strategy:
+  - `struct`/`union`: find the forward decl
+    (`typedef struct NAME NAME, *PNAME;`) or the body start
+    (`struct NAME {`), then keep from there to the body's closing `};`.
+    The writer places field-typedefs that the struct transitively
+    references BETWEEN the forward decl and the body (from
+    `writeDeferredDeclarations`), so they are picked up automatically.
+  - `enum`: find the opening `typedef enum NAME {` (or `#define NAME v;`
+    for single-value `define_*` enums) and keep through `} NAME;`.
+  - `typedef`: keep just the matching `typedef <base> NAME;` line.
+  - `primitive` (built-in): no-op. The preamble IS the requested type's
+    declaration. Pass `--with-deps` to be explicit, but it makes no
+    difference. The CLI's `--with-deps` flag forwards to
+    `with_deps=true` in the request, which bypasses the filter and
+    returns the raw writer output unchanged.
 - The same response envelope is used by `CreateDataType`, `ReplaceDataType`,
   and `EditDataType` for their confirmation output (so `datatype create`
   prints the same C declaration by default, which is the right "I just

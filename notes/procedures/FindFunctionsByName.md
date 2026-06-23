@@ -82,3 +82,32 @@ Audit an existing doubled-underscore leaf (the `function set-name` corruption th
 ghidra-headless-cli function find-by-name --file /Patrician3.exe --query '__' \
   | awk '{print $2}' | grep '__' | head
 ```
+
+## CLI flags — `--ignore-case` is long-only, takes an explicit value
+
+`--ignore-case` and `--regex` are clap `Option<bool>` fields, so both
+require an explicit `true` / `false` value (parity with the
+project-wide convention; see `rust_cli_client.md`). The natural
+case-insensitive form is therefore
+
+```bash
+ghidra-headless-cli function find-by-name --file /Mapeditor.exe --query entry --ignore-case true
+ghidra-headless-cli function find-by-tag   --file /Mapeditor.exe --query entry --ignore-case true
+```
+
+There is intentionally **no** short form (`-i`). The project's
+shorthand policy (only `-H/--host` and `-v/--verbose` have short
+forms; all other args are long-only) was verified after an earlier
+proposal to add `-i` as a short alias for `--ignore-case`; the
+proposal was withdrawn 2026-06-23 because it violated that
+convention. The grep-style `-i` mental model doesn't carry over —
+use the long form.
+
+`--query` is also a long-only `--query <X>` (no short alias, no
+positional). Putting `-i` in its value slot (`--query -i Foo`) errors
+out with `error: unexpected argument '-i' found` (clap 4, no silent
+drop, no RPC call). This is the documented behavior; the confusion
+comes from the diagnostic blaming `-i` rather than pointing at the
+missing case-insensitive flag, not from any silent action. See
+`ghidra-headless-cli function find-by-name --help` for the current
+flag list.

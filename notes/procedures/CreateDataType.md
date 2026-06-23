@@ -32,7 +32,41 @@ interface CreateDataTypeRequest {
 
 ## Response
 
-Same shape as `ShowDataType` — the freshly-created type, fully described.
+Lean confirmation (`ShowDataTypeHandler.ConfirmResponse`):
+
+```typescript
+interface CreateDataTypeResponse {
+  success: true;
+  verb: "created";
+  kind: "struct" | "union" | "enum" | "typedef";
+  name: string;
+  path: string;        // full path, e.g. "/MyStruct"
+  category: string;    // category path, e.g. "/"
+  size: number;
+  source: "USER";
+  sourceArchive: null;
+  // Per-kind: exactly one of these is set; the others are absent
+  // (gson omits nulls).
+  fieldCount?: number; // struct, union — number of components
+  entryCount?: number; // enum — number of entries
+  base?: string;       // typedef — base type display name
+}
+```
+
+**Default CLI output** (one line on stdout):
+
+```
+created <name> (<kind>, size 0xNN, N fields)
+created <name> (<kind>, size 0xNN, N entries)     // enum
+created <name> (<kind>, size 0xNN, base=<base>)  // typedef
+```
+
+The C declaration (`c` field) and the full structured `detail` object
+are INTENTIONALLY OMITTED from the confirmation — the user just wrote
+the type and already knows what it looks like. To get the C
+declaration, run `datatype show --path /X` afterwards. To get the
+structured detail, add `--json` to either `datatype show` or this
+command (planned).
 
 ## Notes
 
