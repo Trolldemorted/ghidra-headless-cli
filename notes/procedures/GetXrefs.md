@@ -32,7 +32,7 @@ lands on a byte inside a multi-byte instruction.
 
 * **`function`** — if `to` parses as an address, `getFunctionAt` is tried first;
   otherwise an exact-name match is run against the function table (case-sensitive,
-  mirrors the `find-by-name` substring behaviour). The first match wins; the
+  mirrors the `find --query X --name` substring behaviour). The first match wins; the
   response always carries the resolved address so the caller can detect
   collisions.
 

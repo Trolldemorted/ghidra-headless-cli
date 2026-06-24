@@ -16,7 +16,7 @@ access to the analyzed program and the full Ghidra API.
 | `/workdir/ghidra-rpc-server/procedures/ghidra/app/cmd/function/*Handler.java` | one handler per command (mirrors Ghidra's package) |
 | `/workdir/ghidra-rpc-server/procedures/ghidra/app/decompiler/flatapi/FlatDecompilerAPIHandler.java` | decompile-to-C procedure |
 | `/workdir/ghidra-rpc-server/procedures/ghidra/program/model/listing/DisassembleHandler.java` | disassemble-a-function procedure |
-| `/workdir/ghidra-rpc-server/procedures/ghidra/program/model/listing/FindFunctionsBy{Name,Tag}Handler.java` | search functions by name / by tag |
+| `/workdir/ghidra-rpc-server/procedures/ghidra/program/model/listing/FindFunctionHandler.java` | unified function search (name / tag / address) |
 | `/workdir/ghidra-rpc-server/procedures/StringQuery.java` | substring/regex matcher shared by the find procedures |
 | `/workdir/ghidra-rpc-server/procedures/ghidra/app/util/importer/ProgramLoaderHandler.java` | import a new program from bytes in the request |
 | `/workdir/ghidra-rpc-server/procedures/ghidra/app/plugin/core/analysis/AnalyzeHandler.java` | run full auto-analysis over a program |
@@ -176,15 +176,20 @@ All non-deprecated, concrete `Command`s in `ghidra.app.cmd.function` (36). The f
   Iterates `Listing.getInstructions(function.getBody(), true)` and renders each with
   `CodeUnitFormat.DEFAULT` (GUI-faithful operands: resolved labels, stack-var/param
   names). Handler in `procedures.ghidra.program.model.listing`; `mutates()` false.
-* `FindFunctionsByName` — list functions whose name matches `query` (program-level,
-  read-only). Substring by default, regex with `regex:true` (`find()` semantics — anchor
-  with `^…$` for exact), optional `ignoreCase` and `limit`. Iterates
-  `FunctionManager.getFunctions(true)`.
-* `FindFunctionsByTag` — list functions that have the tag named `query`: **exact** tag-name
-  match by default (not substring), or a regex over tag names with `regex:true`; same
-  `ignoreCase`/`limit`. One O(functions) pass checking `Function.getTags()` (no reverse
-  tag→function index in the API). Both share `procedures.StringQuery` (`contains` for name,
-  `exact` for tag) and return `{count, truncated, functions:[{name, address, tags?}]}`.
+* `FindFunction` — unified function search (program-level, read-only). Required
+  `query` (the search string) plus optional `field` ∈ `{all, name, tag, address}`:
+  - `field=="name"` → substring/regex over the qualified function name (replaces the
+    older `FindFunctionsByName`).
+  - `field=="tag"` → substring/regex over tag names (replaces the older
+    `FindFunctionsByTag`; substring default differs from the old exact-match).
+  - `field=="address"` → parse `query` as an address; return the function returned by
+    `getFunctionContaining(addr)` (falls back to `getFunctionAt`); empty on miss.
+  - `field=="all"` (default) → match `query` against name OR any tag OR (if it parses
+    as an address) the address-slot lookup.
+  Optional `regex`, `ignoreCase`, `limit`. Iterates
+  `FunctionManager.getFunctions(true)`. Shares `procedures.StringQuery` and returns
+  `{count, truncated, functions:[{name, address, tags?}]}` (the `tags` array is
+  populated for every returned function).
 * `ProgramLoader` — import a new program from base64 bytes in the request (PROJECT-level:
   `needsProgram()` false, no `"file"` field; saves + adds to version control itself).
   Wraps the `ProgramLoader` builder (the older `AutoImporter` is deprecated).

@@ -1,4 +1,10 @@
-//! Function search commands (`FindFunctionsByName` / `FindFunctionsByTag`).
+//! Function search command (`FindFunction`).
+//!
+//! Unified replacement for the older `FindFunctionsByName` and
+//! `FindFunctionsByTag` server procedures; adds address lookup.
+//! --query is the search string (mandatory). --name / --tag / --address
+//! are mutually-exclusive scoping flags: when none is given the query
+//! is matched against names AND tags AND addresses (the "all" default).
 
 use clap::Args;
 
@@ -6,13 +12,22 @@ use crate::client::Client;
 use crate::json::{Json, Req};
 
 #[derive(Args, Debug)]
-pub struct FindByNameArgs {
+pub struct FindArgs {
     /// Target file project path
     #[arg(long = "file", value_name = "FILE")]
     program: String,
-    /// Substring to search for in function names (or a regex with --regex)
+    /// Search pattern (substring by default; regex with --regex). Required.
     #[arg(long)]
     query: String,
+    /// Restrict the search to function names [default: search names + tags + addresses]
+    #[arg(long, conflicts_with_all = ["tag", "address"])]
+    name: bool,
+    /// Restrict the search to function tags [default: search names + tags + addresses]
+    #[arg(long, conflicts_with_all = ["name", "address"])]
+    tag: bool,
+    /// Interpret the query as an address; returns the function at it [default: search names + tags + addresses]
+    #[arg(long, conflicts_with_all = ["name", "tag"])]
+    address: bool,
     /// Treat the query as a regular expression [default: false]
     #[arg(long)]
     regex: Option<bool>,
@@ -24,30 +39,23 @@ pub struct FindByNameArgs {
     limit: Option<i64>,
 }
 
-#[derive(Args, Debug)]
-pub struct FindByTagArgs {
-    /// Target file project path
-    #[arg(long = "file", value_name = "FILE")]
-    program: String,
-    /// Exact tag name a function must have (or a regex over tag names with --regex)
-    #[arg(long)]
-    query: String,
-    /// Treat the query as a regular expression [default: false]
-    #[arg(long)]
-    regex: Option<bool>,
-    /// Match case-insensitively [default: false]
-    #[arg(long)]
-    ignore_case: Option<bool>,
-    /// Cap the number of results [default: 0 = unlimited]
-    #[arg(long)]
-    limit: Option<i64>,
-}
+pub fn run_find(args: FindArgs, client: &Client) -> Result<(), ()> {
+    // Resolve the wire `field` from the three mutually-exclusive booleans.
+    let field = if args.name {
+        "name"
+    } else if args.tag {
+        "tag"
+    } else if args.address {
+        "address"
+    } else {
+        "all"
+    };
 
-pub fn run_by_name(args: FindByNameArgs, client: &Client) -> Result<(), ()> {
     let response = client.invoke(
-        Req::new("FindFunctionsByName")
+        Req::new("FindFunction")
             .str("file", args.program)
             .str("query", args.query)
+            .str("field", field)
             .opt_bool("regex", args.regex)
             .opt_bool("ignoreCase", args.ignore_case)
             .opt_int("limit", args.limit)
@@ -57,23 +65,9 @@ pub fn run_by_name(args: FindByNameArgs, client: &Client) -> Result<(), ()> {
     Ok(())
 }
 
-pub fn run_by_tag(args: FindByTagArgs, client: &Client) -> Result<(), ()> {
-    let response = client.invoke(
-        Req::new("FindFunctionsByTag")
-            .str("file", args.program)
-            .str("query", args.query)
-            .opt_bool("regex", args.regex)
-            .opt_bool("ignoreCase", args.ignore_case)
-            .opt_int("limit", args.limit)
-            .build(),
-    )?;
-    print_matches(&response, true);
-    Ok(())
-}
-
-/// Print one `<address>  <name>` line per match to stdout (appending `[tags]` when
-/// `show_tags`), and log the count to stderr.
-fn print_matches(response: &Json, show_tags: bool) {
+/// Print one `<address>  <name>` line per match to stdout (appending
+/// `[tags]` when the function has any), and log the count to stderr.
+fn print_matches(response: &Json, _show_tags_unused: bool) {
     let count = response.get("count").and_then(Json::as_f64).unwrap_or(0.0) as i64;
     let truncated = response
         .get("truncated")
@@ -93,20 +87,20 @@ fn print_matches(response: &Json, show_tags: bool) {
         for f in functions {
             let address = f.get("address").and_then(Json::as_str).unwrap_or("");
             let name = f.get("name").and_then(Json::as_str).unwrap_or("");
-            if show_tags {
-                let tags = f
-                    .get("tags")
-                    .and_then(Json::as_array)
-                    .map(|t| {
-                        t.iter()
-                            .filter_map(Json::as_str)
-                            .collect::<Vec<_>>()
-                            .join(",")
-                    })
-                    .unwrap_or_default();
-                println!("{}  {}  [{}]", address, name, tags);
-            } else {
+            let tags = f
+                .get("tags")
+                .and_then(Json::as_array)
+                .map(|t| {
+                    t.iter()
+                        .filter_map(Json::as_str)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .unwrap_or_default();
+            if tags.is_empty() {
                 println!("{}  {}", address, name);
+            } else {
+                println!("{}  {}  [{}]", address, name, tags);
             }
         }
     }

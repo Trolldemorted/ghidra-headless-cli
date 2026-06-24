@@ -124,8 +124,7 @@ These two are the only short flags (the task's stated exceptions to the
 | `analysis decompiler-convention` | DecompilerParallelConventionAnalysisCmd |
 | `function decompile` | FlatDecompilerAPI |
 | `function disassemble` | Disassemble |
-| `function find-by-name` | FindFunctionsByName |
-| `function find-by-tag` | FindFunctionsByTag |
+| `function find` | FindFunction (--query required; --name/--tag/--address mutually-exclusive scoping) |
 | `function apply-data-types` | ApplyFunctionDataTypesCmd |
 | `function capture-data-types` | CaptureFunctionDataTypesCmd |
 | `file load` | ProgramLoader |
@@ -205,19 +204,32 @@ $BIN --host 127.0.0.1:18000 function decompile --file /Mapeditor.exe --address 0
 $BIN --host 127.0.0.1:18000 function disassemble --file /Mapeditor.exe --address 0x4024f1
 $BIN --host 127.0.0.1:18000 function disassemble --file /Mapeditor.exe --address 0x4024f1 --bytes false
 
-# Find functions by name ("<address>  <name>" per match); substring, regex, or case-insensitive
-$BIN --host 127.0.0.1:18000 function find-by-name --file /Mapeditor.exe --query fn_cmd
-$BIN --host 127.0.0.1:18000 function find-by-name --file /Mapeditor.exe --query "^FUN_0040" --regex true --limit 50
+# Find functions by name, tag, or address. --query is required. The scoping
+# flags --name / --tag / --address are mutually exclusive; without one, the
+# query is matched against names AND tags AND addresses ("everything" default).
+# Output: "<address>  <name>" per match (with "  [tag,...]" when the function has tags).
+
+# Name scope (substring against qualified "ns::leaf" by default; regex with --regex):
+$BIN --host 127.0.0.1:18000 function find --file /Mapeditor.exe --query fn_cmd --name
+$BIN --host 127.0.0.1:18000 function find --file /Mapeditor.exe --query "^FUN_0040" --name --regex true --limit 50
+
+# Tag scope (substring against tag names; substring default differs from the old
+# find-by-tag which was always exact — see notes/procedures/FindFunction.md):
+$BIN --host 127.0.0.1:18000 function find --file /Mapeditor.exe --query RPC --tag
+$BIN --host 127.0.0.1:18000 function find --file /Mapeditor.exe --query RPC --tag --regex true
+
+# Address scope (single-function lookup; uses getFunctionContaining then
+# getFunctionAt — handles mid-function code pointers):
+$BIN --host 127.0.0.1:18000 function find --file /Patrician3.exe --query 0x0064F2C1 --address
+
 # `--ignore-case true` is long-only (no `-i` short — the project's
 # shorthand policy reserves shorts for `-H` and `-v` only). Without
-# it the match is case-sensitive, so `--query ENTRY` finds nothing
+# it the match is case-sensitive, so `--query ENTRY --name` finds nothing
 # for a leaf named `entry`:
-$BIN --host 127.0.0.1:18000 function find-by-name --file /Mapeditor.exe --query ENTRY --ignore-case true --limit 5
+$BIN --host 127.0.0.1:18000 function find --file /Mapeditor.exe --query ENTRY --name --ignore-case true --limit 5
 
-# Find functions by tag ("<address>  <name>  [tag,...]" per match)
-# Plain query = EXACT tag name ("has this tag"); use --regex for a substring/pattern.
-$BIN --host 127.0.0.1:18000 function find-by-tag --file /Mapeditor.exe --query RPC_TAG
-$BIN --host 127.0.0.1:18000 function find-by-tag --file /Mapeditor.exe --query RPC --regex true
+# Everything scope (the new default — searches names AND tags AND addresses):
+$BIN --host 127.0.0.1:18000 function find --file /Mapeditor.exe --query RPC
 
 # Rename a function (mutating: checked out, checked in on success)
 $BIN --host 127.0.0.1:18000 function set-name \

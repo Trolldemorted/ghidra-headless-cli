@@ -444,8 +444,9 @@ public class RpcServer extends GhidraScript {
         register("Analyze", new procedures.ghidra.app.plugin.core.analysis.AnalyzeHandler());
         register("Disassemble", new procedures.ghidra.program.model.listing.DisassembleHandler());
         register("Listings", new procedures.ghidra.program.model.listing.ListingsHandler());
-        register("FindFunctionsByName", new procedures.ghidra.program.model.listing.FindFunctionsByNameHandler());
-        register("FindFunctionsByTag", new procedures.ghidra.program.model.listing.FindFunctionsByTagHandler());
+        // Unified function search (replaces FindFunctionsByName + FindFunctionsByTag,
+        // adds address lookup). See FindFunctionHandler.java for dispatch rules.
+        register("FindFunction", new procedures.ghidra.program.model.listing.FindFunctionHandler());
         register("GetXrefs", new procedures.ghidra.program.model.listing.GetXrefsHandler());
         register("GetImports", new procedures.ghidra.program.model.listing.GetImportsHandler());
         register("GetExports", new procedures.ghidra.program.model.listing.GetExportsHandler());

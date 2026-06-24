@@ -133,7 +133,7 @@ the target is already primary.
 
 Walks `SymbolTable.getSymbolIterator()` and returns every `SymbolType.LABEL`
 whose name matches the query (substring by default; `regex:true` and
-`ignoreCase:true` work the same way as `function find-by-name`). Excludes
+`ignoreCase:true` work the same way as `function find --query X --name`). Excludes
 function entry-point labels, namespace labels, parameters/locals, and external
 symbols. Sorted by address, then by name. `query` is OPTIONAL — pass an empty
 or absent value to list all labels.

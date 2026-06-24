@@ -48,7 +48,7 @@ import ghidra.program.model.address.Address;
  * {@code success: true} but nothing was renamed — the program is not
  * dirty, no function is created, no symbol is renamed. The user has
  * no way to tell the call was a no-op without doing a follow-up
- * {@code find-by-name}.
+ * {@code find --query X --name}.
  *
  * <p>This handler detects that case up front and surfaces a clear
  * error pointing at {@code CreateFunctionCmd} (which can create the

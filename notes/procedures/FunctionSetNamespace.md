@@ -93,7 +93,7 @@ Prior to this, `function set-name --name "Foo::Bar"` was the only way to
 express a namespace move from the CLI. Ghidra's `Function.setName("Foo::Bar", ...)`
 silently fabricates a leaf (`Foo__Bar`) when the parent path can't be
 resolved relative to the function's current namespace, and the resulting
-garbage is invisible in `find-by-name` (which matches the literal mangled
+garbage is invisible in `find --query X --name` (which matches the literal mangled
 leaf). Bulk renames reported `success: true` for ~25 functions while
 producing 25 doubled names.
 

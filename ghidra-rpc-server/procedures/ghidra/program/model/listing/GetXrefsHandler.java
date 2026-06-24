@@ -33,9 +33,9 @@ import procedures.RpcResponse;
  *       because the result is what Ghidra's References window shows.
  *   <li>{@code function}: if {@code to} parses as an address, try
  *       {@code getFunctionAt} first; otherwise substring-match against the
- *       function table (case-sensitive, like {@code find-by-name} without
- *       regex). Multiple matches: the first wins (the result still reports
- *       the resolved address so the caller can verify).
+ *       function table (case-sensitive, like {@code find --query X --name}
+ *       without regex). Multiple matches: the first wins (the result still
+ *       reports the resolved address so the caller can verify).
  *   <li>{@code symbol}: exact match against {@link SymbolTable} labels,
  *       skipping external entries. (External refs to in-program locations
  *       are still returned as xrefs — see {@code isExternal} on the
@@ -44,7 +44,7 @@ import procedures.RpcResponse;
  * </ul>
  *
  * <p>Read-only (no checkout/check-in required for the program, matching
- * {@link FindFunctionsByNameHandler}). The result is sorted by the
+ * {@code FindFunction}). The result is sorted by the
  * underlying {@link ReferenceIterator} order (reference rank) — the caller
  * can sort client-side by {@code fromAddress} if address order is needed.
  */

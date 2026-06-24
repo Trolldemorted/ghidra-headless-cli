@@ -11,7 +11,7 @@ import procedures.RpcResponse;
  * {@code DEFINED} strings (any data whose type is an
  * {@code AbstractStringDataType} or an {@code ArrayStringable} array).
  *
- * <p>Read-only — same checkout policy as {@link FindFunctionsByName}.
+ * <p>Read-only — same checkout policy as {@code FindFunction}.
  * {@code query} is OPTIONAL: when absent or empty the procedure returns
  * EVERY defined string in scope (a "list all"). Pass {@code regex:true} or
  * {@code ignoreCase:true} to change match semantics (see

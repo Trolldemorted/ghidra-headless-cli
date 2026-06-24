@@ -21,7 +21,7 @@ import procedures.StringQuery;
  * Procedure ListLabels: list non-function labels (SymbolType.LABEL) whose name
  * matches {@code query} (substring by default; see {@link StringQuery}).
  *
- * <p>Read-only: like FindFunctionsByName the file is checked out by dispatch
+ * <p>Read-only: like {@code FindFunction} the file is checked out by dispatch
  * per policy but not checked in. Labels are returned sorted by address
  * (ascending), then by name.
  *
