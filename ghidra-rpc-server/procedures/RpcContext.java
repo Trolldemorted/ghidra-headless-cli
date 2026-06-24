@@ -35,6 +35,7 @@ import ghidra.program.model.listing.Variable;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.util.data.DataTypeParser;
+import procedures.ghidra.program.model.data.DataTypeOps;
 import ghidra.util.data.DataTypeParser.AllowedDataTypes;
 import ghidra.util.task.TaskMonitor;
 
@@ -633,37 +634,128 @@ public class RpcContext {
     /**
      * Resolve a data type by name/expression (e.g. "int", "char *", "MyStruct[4]").
      *
-     * <p>If the name starts with a single {@code '/'}, it is treated as a
-     * type <em>path</em> rather than a name and the leading slash is stripped
-     * before parsing. This lets callers paste the same identifier they would
-     * pass to {@code datatype show --path /X}: the Ghidra type whose canonical
-     * path is {@code /X} has name {@code X}, and {@code DataTypeParser} would
-     * otherwise misinterpret the leading slash as a category separator
-     * ("look up type String in category L" instead of "find type L_String").
-     * Multi-segment paths like {@code /cat/sub/Type} are also accepted, but
-     * the category prefix is dropped — only the leaf name is parsed, matching
-     * the unambiguous top-level-type case the rule covers. Path-based lookups
-     * that need category disambiguation must still go through {@code datatype
-     * show --path} first to discover the canonical name.
+     * <p>Resolution order:
+     * <ol>
+     *   <li><b>Multi-segment path</b> ({@code /Cat/Type} or {@code /<archive>/Cat/Type} —
+     *       anything with more than one slash): delegate to
+     *       {@link DataTypeOps#requireDataTypeByPath}, which is the same lookup
+     *       {@code datatype show --path} uses and handles archive-qualified
+     *       paths. A miss here is a hard error — the user gave a path and we
+     *       either found it or we didn't.</li>
+     *   <li><b>C-syntax expression</b> ({@code int}, {@code char *},
+     *       {@code MyStruct[4]}, or a bare leaf name like {@code X}): try
+     *       Ghidra's {@link DataTypeParser}. This handles built-ins and
+     *       unique-by-name user types.</li>
+     *   <li><b>Disambiguation</b>: when the parser returns null, distinguish
+     *       "leaf name exists in 2+ categories" from "leaf name doesn't exist
+     *       at all". For the ambiguous case, list up to 5 candidate paths and
+     *       point the caller at the full-path form ({@code --type /Cat/Type}).
+     *       For the not-found case, say so plainly.</li>
+     * </ol>
+     *
+     * <p>Single-segment inputs with a leading slash ({@code /X}) are
+     * normalised to {@code X} before step 2 — they're treated as a leaf name
+     * with a stray slash, not a path. Multi-segment inputs are treated as
+     * paths. The two cases are distinguished by counting slashes after
+     * position 0: more than one slash means it's a path.
      */
     public DataType dataType(String name) throws Exception {
         if (name == null || name.trim().isEmpty()) {
             return null;
         }
         DataTypeManager dtm = active().getDataTypeManager();
-        // Normalise "leading-slash path" to "bare name" so both --data-type X
-        // and --data-type /X resolve the same type. trim() is reused so leading
-        // whitespace doesn't slip through.
         String parsed = name.trim();
-        if (parsed.startsWith("/")) {
-            int lastSlash = parsed.lastIndexOf('/');
-            parsed = parsed.substring(lastSlash + 1);
+        // Multi-segment path: "/Cat/Type", "/A/B/Type", "/<archive>/Cat/Type".
+        // Anything with a second slash past the leading one is unambiguously a
+        // path (a leaf name cannot contain '/'). Delegate to the same lookup
+        // datatype show --path uses so archive-qualified paths and ambiguous
+        // category prefixes are handled the way the user expects. This is the
+        // path the user hits when the leaf name is ambiguous in their
+        // unprefixed --type; the error from the first call lists candidates
+        // and points them here.
+        if (parsed.startsWith("/") && parsed.indexOf('/', 1) > 0) {
+            return DataTypeOps.requireDataTypeByPath(this, parsed);
         }
-        DataType dt = new DataTypeParser(dtm, dtm, null, AllowedDataTypes.ALL).parse(parsed);
-        if (dt == null) {
-            throw new IllegalArgumentException("Unknown data type: " + name);
+        // Strip a leading slash so "/X" and "X" behave identically — the
+        // DataTypeParser would fail on the slash otherwise.
+        String leaf = parsed.startsWith("/")
+            ? parsed.substring(parsed.lastIndexOf('/') + 1)
+            : parsed;
+        // The C-syntax parser signals "no match" with EITHER a null return
+        // OR an InvalidDataTypeException whose message starts with
+        // "Unrecognized data type of" (verified across Ghidra 12.1.2 builds;
+        // the script.log captures both branches). The exception path fires
+        // when the parser rejects the token before the lookup completes —
+        // e.g. an ambiguous leaf name, a name with an embedded slash, or
+        // a syntax error. Catch it and fall through to the disambiguation
+        // check below so the caller sees the same diagnostic regardless of
+        // which way the parser signaled the miss.
+        DataType dt;
+        try {
+            dt = new DataTypeParser(dtm, dtm, null, AllowedDataTypes.ALL).parse(leaf);
+        } catch (ghidra.program.model.data.InvalidDataTypeException e) {
+            dt = null;
         }
-        return dt;
+        if (dt != null) {
+            return dt;
+        }
+        // Parser returned null (or threw). The previous implementation
+        // surfaced a single "Unknown data type: X" message that didn't
+        // distinguish "doesn't exist" from "exists in 2+ places, which
+        // one?" — chasing the second case as if it were the first is what
+        // burned the bug-report time. List candidates so the caller can
+        // pick the right one and re-run with a full path.
+        throw disambiguationError(dtm, leaf, name);
+    }
+
+    /**
+     * Build a disambiguation error for an unresolved leaf type name.
+     * Walks the program DTM (categories are a program-DTM concept — archives
+     * aren't enumerated here; the user can pass the archive-qualified path
+     * form to disambiguate archive matches).
+     *
+     * <ul>
+     *   <li>0 matches in program DTM → {@code no data type named "X"}.</li>
+     *   <li>2+ matches in program DTM → {@code ambiguous "X": /A/X, /B/X, ...
+     *       — pass --type by full path (e.g. --type /A/X)}.</li>
+     * </ul>
+     * Exactly one match is NOT an error — but in practice if the parser
+     * returned null and there is one program-DTM match, the lookup chain
+     * (parser + path) has already been exhausted. We fall through to the
+     * not-found message rather than returning the lone match, because the
+     * parser should have found it. Users who hit that corner case can
+     * resolve by passing the full path explicitly.
+     */
+    private static IllegalArgumentException disambiguationError(DataTypeManager dtm,
+            String leaf, String original) {
+        java.util.List<String> candidates = new java.util.ArrayList<>();
+        java.util.Iterator<DataType> it = dtm.getAllDataTypes();
+        while (it.hasNext()) {
+            DataType t = it.next();
+            if (t == null) continue;
+            if (!leaf.equals(t.getName())) continue;
+            String p = t.getCategoryPath().getPath();
+            if (p == null || p.isEmpty() || "/".equals(p)) {
+                p = "/" + t.getName();
+            } else {
+                p = p + "/" + t.getName();
+            }
+            candidates.add(p);
+        }
+        java.util.Collections.sort(candidates);
+        if (candidates.size() >= 2) {
+            StringBuilder sb = new StringBuilder("ambiguous \"").append(leaf).append("\": ");
+            int n = Math.min(5, candidates.size());
+            for (int i = 0; i < n; i++) {
+                if (i > 0) sb.append(", ");
+                sb.append(candidates.get(i));
+            }
+            if (candidates.size() > 5) sb.append(", ...");
+            sb.append(" — pass --type by full path (e.g. --type ")
+              .append(candidates.get(0)).append(")");
+            return new IllegalArgumentException(sb.toString());
+        }
+        return new IllegalArgumentException("no data type named \"" + leaf + "\"");
     }
 
     public DataType requireDataType(String name) throws Exception {

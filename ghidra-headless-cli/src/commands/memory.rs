@@ -185,7 +185,11 @@ pub struct ApplyTypeArgs {
     /// Target file project path
     #[arg(long = "file", value_name = "FILE")]
     pub program: String,
-    /// Data type to apply (C-syntax expression or full path; leading '/' stripped)
+    /// Data type to apply (C-syntax expression like "int" or "byte[16]", or
+    /// a full path like "/Cat/Type" or "/<archive>/Cat/Type" — same identifiers
+    /// accepted by `datatype show --path`). When the leaf name exists in 2+
+    /// categories, the server returns an `ambiguous "X": /A/X, /B/X, ...`
+    /// error; re-run with one of the listed full paths to disambiguate.
     #[arg(long = "type")]
     pub type_name: String,
     /// Single address to apply at (hex)

@@ -322,7 +322,11 @@ pub enum Cmd {
         /// Field: name (first-match-wins) | @0xN (byte offset, struct only) | N (index)
         #[arg(long)]
         field: String,
-        /// New type (C-syntax or full path, e.g. "int", "byte[16]", "MyStruct *", "/Cat/Type")
+        /// New type (C-syntax like "int", "byte[16]", "MyStruct *", or a full
+        /// path like "/Cat/Type" or "/<archive>/Cat/Type" — same identifiers
+        /// accepted by `datatype show --path`). When the leaf name exists
+        /// in 2+ categories, the server returns an `ambiguous "X": /A/X,
+        /// /B/X, ...` error; re-run with one of the listed full paths.
         #[arg(long = "type", value_name = "TYPE")]
         type_: String,
         /// Allow the new type's length to differ from the existing component

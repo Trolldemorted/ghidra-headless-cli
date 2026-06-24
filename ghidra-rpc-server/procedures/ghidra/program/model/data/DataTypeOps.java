@@ -28,7 +28,7 @@ import procedures.RpcContext;
  * set-field-name) share {@link #resolveFieldIndex} for the
  * {@code <name|@offset|N>} spec convention.
  */
-final class DataTypeOps {
+public final class DataTypeOps {
 
     /** Normalize a category path: leading slash, no trailing slash (root stays "/"). */
     static CategoryPath normalizePath(String path) {
@@ -80,7 +80,7 @@ final class DataTypeOps {
      * mutating, and use {@link #archiveName} to surface the source in
      * error messages.
      */
-    static DataType requireDataTypeByPath(RpcContext ctx, String path) {
+    public static DataType requireDataTypeByPath(RpcContext ctx, String path) {
         if (path == null || path.trim().isEmpty()) {
             throw new IllegalArgumentException("Missing data-type path.");
         }

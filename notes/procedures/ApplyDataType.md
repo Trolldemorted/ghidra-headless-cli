@@ -49,6 +49,21 @@ interface ApplyDataTypeResponse {
   primitives (`int`, `byte`, `char *`), user-defined types (`MyStruct`),
   arrays (`MyStruct[4]`), typedefs (`MyBytes`), etc. Resolution happens
   via `RpcContext.requireDataType`.
+- **`type` resolution on miss.** When `type` does not resolve uniquely,
+  the response is one of two distinct errors so the caller can act:
+  - `ambiguous "X": /A/X, /B/X, ... — pass --type by full path (e.g. --type /A/X)`
+    — the leaf name exists in 2+ program-DTM categories. Up to 5 candidate
+    paths are listed. Re-run with the full path you want.
+  - `no data type named "X"` — the leaf name does not exist anywhere.
+  The C-syntax parser signals a miss via either a null return or an
+  `InvalidDataTypeException` (Ghidra 12.1.2 — verified via
+  `BR_LStringProbe.java` in `script.log`); the resolver catches both
+  and routes them through the same disambiguation helper.
+- **Full paths in `type`.** A `type` value with more than one slash
+  (e.g. `/Cat/Type`, `/<archive>/Cat/Type`) is treated as a path and
+  resolved via the same lookup `datatype show --path` uses (including
+  archive-qualified paths). Single-segment inputs with a stray leading
+  slash (`/X`) are normalised to `X` before the parser step.
 - **Reads-then-mutates**: existing code units are cleared first via
   `Listing.clearCodeUnits`, so an existing instruction doesn't fight the
   new data. Both operations run inside one Ghidra transaction.

@@ -26,9 +26,24 @@ interface SetDataTypeFieldTypeRequest {
 
 `type` accepts the same forms as `EditDataType`'s `--fields` —
 C-syntax expressions (`int`, `char *`, `byte[16]`, `MyStruct *`) and
-full paths (`/MyCat/MyStruct`). The underlying
+full paths (`/MyCat/MyStruct`, `/<archive>/Cat/MyStruct`). The underlying
 [`RpcContext.requireDataType`](../../ghidra-rpc-server/procedures/RpcContext.java)
-handles both.
+handles both. When `type` does not resolve uniquely, the response is
+one of two distinct errors so the caller can act:
+
+- `ambiguous "X": /A/X, /B/X, ... — pass --type by full path (e.g. --type /A/X)`
+  — the leaf name exists in 2+ program-DTM categories. Up to 5 candidate
+  paths are listed. Re-run with the full path you want.
+- `no data type named "X"` — the leaf name does not exist anywhere.
+
+The C-syntax parser signals a miss via either a null return or an
+`InvalidDataTypeException` (Ghidra 12.1.2 — verified via
+`BR_LStringProbe.java` in `script.log`); the resolver catches both
+and routes them through the same disambiguation helper. A `type`
+value with more than one slash (e.g. `/Cat/Type`) is treated as a
+path and resolved via the same lookup `datatype show --path` uses;
+single-segment inputs with a stray leading slash (`/X`) are normalised
+to `X` before the parser step.
 
 ### `field` — name, offset, or index
 
