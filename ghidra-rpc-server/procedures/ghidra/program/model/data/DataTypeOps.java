@@ -23,6 +23,10 @@ import procedures.RpcContext;
  * use a strict {@link ghidra.program.model.data.DataTypeConflictHandler} that
  * throws on name conflict; the exception is caught and surfaced as a normal
  * {@code error} response so the caller sees the exact cause.
+ *
+ * <p>Field-level mutators (set-field-comment, set-field-type,
+ * set-field-name) share {@link #resolveFieldIndex} for the
+ * {@code <name|@offset|N>} spec convention.
  */
 final class DataTypeOps {
 
@@ -592,6 +596,178 @@ final class DataTypeOps {
             out.add(new EnumEntry(name, val));
         }
         return out;
+    }
+
+    /**
+     * Resolve a user-supplied field spec to a component index. Three forms:
+     * <ul>
+     *   <li>all-digit non-negative string (e.g. {@code "5"}) — literal
+     *       index, bounds-checked against the composite's component count.</li>
+     *   <li>{@code @0xN} or {@code @0XN} (e.g. {@code "@0x10"}) — byte
+     *       offset into a {@link ghidra.program.model.data.Structure}.
+     *       Rejected on unions (all components share offset 0; use name
+     *       or index instead).</li>
+     *   <li>anything else — first field-name match. Ambiguous (multiple
+     *       matches) is an error so the caller can disambiguate by
+     *       index or offset.</li>
+     * </ul>
+     * Shared by {@code SetDataTypeFieldComment}, {@code SetDataTypeFieldType},
+     * and {@code SetDataTypeFieldName}. All-digits is treated as an
+     * index (not a hex offset) for consistency with the pre-2026-06-24
+     * behavior; the new {@code @0xN} form is the only way to address by
+     * byte offset.
+     *
+     * @param composite the struct or union to address into
+     * @param field the user-supplied spec; see the rules above
+     * @param path the type's full path, used in error messages
+     * @return the resolved component index
+     * @throws IllegalArgumentException on any failure to resolve
+     */
+    static int resolveFieldIndex(ghidra.program.model.data.Composite composite,
+                                 String field, String path) {
+        Integer asIndex = tryParseIndex(field);
+        if (asIndex != null) {
+            int n = composite.getNumComponents();
+            if (asIndex < 0 || asIndex >= n) {
+                throw new IllegalArgumentException("Field index " + asIndex
+                    + " out of range for '" + path + "' (valid: 0.." + (n - 1) + ").");
+            }
+            return asIndex;
+        }
+        if (field.startsWith("@")) {
+            // @offset form — struct-only. Unions have all components at
+            // offset 0, so the form is meaningless; reject up front with
+            // a clear message rather than letting getComponentContaining
+            // return the first component and look like it "worked".
+            if (composite instanceof ghidra.program.model.data.Union) {
+                throw new IllegalArgumentException(
+                    "@offset form is not supported on unions (all components share "
+                  + "offset 0); use the field name or numeric index instead.");
+            }
+            Integer offset = tryParseOffset(field.substring(1));
+            if (offset == null) {
+                throw new IllegalArgumentException(
+                    "Invalid @offset form '" + field + "': expected @0xN (hex).");
+            }
+            ghidra.program.model.data.Structure s = (ghidra.program.model.data.Structure) composite;
+            ghidra.program.model.data.DataTypeComponent c = s.getComponentContaining(offset);
+            if (c == null) {
+                throw new IllegalArgumentException("No component at offset 0x"
+                    + Integer.toHexString(offset) + " in '" + path
+                    + "'. Available offsets: " + availableOffsets(s));
+            }
+            return c.getOrdinal();
+        }
+        // Name search: first match wins; ambiguity is an error so the
+        // caller can disambiguate by index or @offset.
+        int match = -1;
+        for (int i = 0; i < composite.getNumComponents(); i++) {
+            ghidra.program.model.data.DataTypeComponent c = composite.getComponent(i);
+            if (c == null) continue;
+            if (field.equals(c.getFieldName())) {
+                if (match != -1) {
+                    throw new IllegalArgumentException("Field name '" + field
+                        + "' is ambiguous in '" + path + "' (matches at least indices "
+                        + match + " and " + i + "); use the index or @offset instead.");
+                }
+                match = i;
+            }
+        }
+        if (match == -1) {
+            throw new IllegalArgumentException("Field '" + field + "' not found in '" + path
+                + "'. Available fields: " + availableFields(composite));
+        }
+        return match;
+    }
+
+    /** Parse a positive integer string; null if not a clean non-negative int. */
+    private static Integer tryParseIndex(String s) {
+        if (s == null || s.isEmpty() || s.length() > 9) {
+            return null;
+        }
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c < '0' || c > '9') {
+                return null;
+            }
+        }
+        try {
+            int n = Integer.parseInt(s);
+            return n >= 0 ? n : null;
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Parse a {@code "0xN"} or {@code "0XN"} hex string. Returns null if
+     * the prefix is missing, the suffix contains non-hex chars, or the
+     * parsed value overflows int. The {@code 0x} prefix is REQUIRED
+     * (the field-spec convention deliberately distinguishes hex offsets
+     * from decimal indices so all-digit values are unambiguous).
+     */
+    private static Integer tryParseOffset(String s) {
+        if (s == null || s.length() < 3) return null;
+        if (s.charAt(0) != '0' || (s.charAt(1) != 'x' && s.charAt(1) != 'X')) {
+            return null;
+        }
+        for (int i = 2; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
+                return null;
+            }
+        }
+        try {
+            return Integer.parseInt(s.substring(2), 16);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** List up to 5 field names for the not-found / ambiguous error message. */
+    private static String availableFields(ghidra.program.model.data.Composite composite) {
+        StringBuilder sb = new StringBuilder("[");
+        int n = Math.min(5, composite.getNumComponents());
+        for (int i = 0; i < n; i++) {
+            if (i > 0) sb.append(", ");
+            ghidra.program.model.data.DataTypeComponent c = composite.getComponent(i);
+            String name = c == null ? "?" : c.getFieldName();
+            sb.append(name == null ? "(unnamed)" : name);
+        }
+        if (composite.getNumComponents() > 5) {
+            sb.append(", ...");
+        }
+        sb.append(']');
+        return sb.toString();
+    }
+
+    /**
+     * List up to 5 byte offsets for the "no component at @offset" error
+     * message. Offsets are formatted as {@code 0xN} to match the input
+     * convention; ordinals in brackets when components are unnamed.
+     */
+    private static String availableOffsets(ghidra.program.model.data.Structure s) {
+        StringBuilder sb = new StringBuilder("[");
+        int n = Math.min(5, s.getNumComponents());
+        for (int i = 0; i < n; i++) {
+            if (i > 0) sb.append(", ");
+            ghidra.program.model.data.DataTypeComponent c = s.getComponent(i);
+            if (c == null) {
+                sb.append("?");
+            } else {
+                int off = c.getOffset();
+                sb.append("0x").append(Integer.toHexString(off));
+                String fn = c.getFieldName();
+                if (fn != null && !fn.isEmpty()) {
+                    sb.append(" ('").append(fn).append("')");
+                }
+            }
+        }
+        if (s.getNumComponents() > 5) {
+            sb.append(", ...");
+        }
+        sb.append(']');
+        return sb.toString();
     }
 
     /** (name, type) pair for struct/union fields. */

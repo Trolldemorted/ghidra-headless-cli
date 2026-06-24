@@ -12,9 +12,9 @@ import procedures.RpcResponse;
 
 /**
  * Procedure SetDataTypeFieldComment: set the comment on a single field of a
- * struct or union. The field is addressed either by its zero-based index or by
- * its name (first match wins; an ambiguous name is an error). Pass
- * {@code comment: ""} to clear.
+ * struct or union. The field is addressed by its zero-based index, by its
+ * name (first match wins; an ambiguous name is an error), or by a
+ * {@code @0xN} byte offset (structs only). Pass {@code comment: ""} to clear.
  *
  * <p>Type guard: the target must be a {@link Composite} (struct or union).
  * Typedefs, enums, pointers, arrays, etc. are rejected with a message that
@@ -23,7 +23,10 @@ import procedures.RpcResponse;
  *
  * <p>The new comment is applied inside one program transaction
  * ({@link RpcContext#runWrite}); the previous comment is returned alongside
- * the new value so callers can diff without re-querying.
+ * the new value so callers can diff without re-querying. The field-index
+ * resolver is shared with {@code SetDataTypeFieldType} and
+ * {@code SetDataTypeFieldName} — see
+ * {@link DataTypeOps#resolveFieldIndex}.
  */
 public final class SetDataTypeFieldCommentHandler implements RpcProcedure {
 
@@ -61,7 +64,7 @@ public final class SetDataTypeFieldCommentHandler implements RpcProcedure {
             return RpcResponse.error("'" + path + "' has no fields to comment.");
         }
 
-        int index = resolveFieldIndex(composite, field, path);
+        int index = DataTypeOps.resolveFieldIndex(composite, field, path);
 
         // Capture the field name BEFORE the setComment call: Ghidra's
         // DataTypeComponent.setComment returns a new DataTypeComponent
@@ -78,78 +81,6 @@ public final class SetDataTypeFieldCommentHandler implements RpcProcedure {
         });
 
         return new FieldCommentResponse(path, fieldName, applied[0], previous);
-    }
-
-    /**
-     * Map the user-supplied {@code field} specifier to a component index.
-     * All-digits and positive -> literal index (after bounds check). Anything
-     * else -> name search; first match wins. An ambiguous name is an error
-     * so the caller can disambiguate by index.
-     */
-    private static int resolveFieldIndex(Composite composite, String field, String path) {
-        Integer asIndex = tryParseIndex(field);
-        if (asIndex != null) {
-            int n = composite.getNumComponents();
-            if (asIndex < 0 || asIndex >= n) {
-                throw new IllegalArgumentException("Field index " + asIndex
-                    + " out of range for '" + path + "' (valid: 0.." + (n - 1) + ").");
-            }
-            return asIndex;
-        }
-        int match = -1;
-        for (int i = 0; i < composite.getNumComponents(); i++) {
-            DataTypeComponent c = composite.getComponent(i);
-            if (c == null) continue;
-            if (field.equals(c.getFieldName())) {
-                if (match != -1) {
-                    throw new IllegalArgumentException("Field name '" + field
-                        + "' is ambiguous in '" + path + "' (matches at least indices "
-                        + match + " and " + i + "); use the index instead.");
-                }
-                match = i;
-            }
-        }
-        if (match == -1) {
-            throw new IllegalArgumentException("Field '" + field + "' not found in '" + path
-                + "'. Available fields: " + availableFields(composite));
-        }
-        return match;
-    }
-
-    /** Parse a positive integer string; null if not a clean non-negative int. */
-    private static Integer tryParseIndex(String s) {
-        if (s == null || s.isEmpty() || s.length() > 9) {
-            return null;
-        }
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (c < '0' || c > '9') {
-                return null;
-            }
-        }
-        try {
-            int n = Integer.parseInt(s);
-            return n >= 0 ? n : null;
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
-    /** List up to 5 field names for the not-found / ambiguous error message. */
-    private static String availableFields(Composite composite) {
-        StringBuilder sb = new StringBuilder("[");
-        int n = Math.min(5, composite.getNumComponents());
-        for (int i = 0; i < n; i++) {
-            if (i > 0) sb.append(", ");
-            DataTypeComponent c = composite.getComponent(i);
-            String name = c == null ? "?" : c.getFieldName();
-            sb.append(name == null ? "(unnamed)" : name);
-        }
-        if (composite.getNumComponents() > 5) {
-            sb.append(", ...");
-        }
-        sb.append(']');
-        return sb.toString();
     }
 
     /** Response shape; gson drops null fields. */

@@ -274,8 +274,9 @@ pub enum Cmd {
         #[arg(long)]
         add_entries: Option<String>,
     },
-    /// Set the comment on a single struct/union field (by name or index).
-    /// Pass --comment "" to clear. Not supported on enums, typedefs, or built-ins.
+    /// Set the comment on a single struct/union field (by name, @offset, or
+    /// index). Pass --comment "" to clear. Not supported on enums, typedefs,
+    /// or built-ins.
     SetFieldComment {
         /// Target file project path
         #[arg(long = "file", value_name = "FILE")]
@@ -283,9 +284,7 @@ pub enum Cmd {
         /// Full data-type path
         #[arg(long)]
         path: String,
-        /// Field name OR zero-based index. Names match the first field; if
-        /// multiple fields share a name the call errors and asks for an
-        /// index.
+        /// Field: name (first-match-wins) | @0xN (byte offset, struct only) | N (index)
         #[arg(long)]
         field: String,
         /// New field comment. Pass "" to clear. Required (use "" to clear).
@@ -307,6 +306,46 @@ pub enum Cmd {
         /// New variant comment. Pass "" to clear. Required (use "" to clear).
         #[arg(long)]
         comment: String,
+    },
+    /// Retype a single struct/union field in place. Preserves the field's
+    /// name, comment, and all other fields. Default is strict-equal length
+    /// (new type length must equal existing component length); pass
+    /// --force true to allow grow/shrink (may shift trailing components).
+    /// Not supported on enums, typedefs, or built-ins.
+    SetFieldType {
+        /// Target file project path
+        #[arg(long = "file", value_name = "FILE")]
+        program: String,
+        /// Full data-type path
+        #[arg(long)]
+        path: String,
+        /// Field: name (first-match-wins) | @0xN (byte offset, struct only) | N (index)
+        #[arg(long)]
+        field: String,
+        /// New type (C-syntax or full path, e.g. "int", "byte[16]", "MyStruct *", "/Cat/Type")
+        #[arg(long = "type", value_name = "TYPE")]
+        type_: String,
+        /// Allow the new type's length to differ from the existing component
+        /// length; the struct may grow/shrink and trailing components may
+        /// shift. [default: false]
+        #[arg(long)]
+        force: Option<bool>,
+    },
+    /// Rename a single struct/union field. Preserves the field's type,
+    /// comment, and offset. Not supported on enums, typedefs, or built-ins.
+    SetFieldName {
+        /// Target file project path
+        #[arg(long = "file", value_name = "FILE")]
+        program: String,
+        /// Full data-type path
+        #[arg(long)]
+        path: String,
+        /// Field: name (first-match-wins) | @0xN (byte offset, struct only) | N (index)
+        #[arg(long)]
+        field: String,
+        /// New bare field name (no path, no whitespace)
+        #[arg(long)]
+        name: String,
     },
     /// Delete a user-defined data type by full path (built-ins are rejected)
     Delete {
@@ -507,6 +546,42 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                     .build(),
             )?;
             print_variant_comment(&response)?;
+            Ok(())
+        }
+        Cmd::SetFieldType {
+            program,
+            path,
+            field,
+            type_,
+            force,
+        } => {
+            let response = client.invoke(
+                Req::new("SetDataTypeFieldType")
+                    .str("file", program)
+                    .str("path", path)
+                    .str("field", field)
+                    .str("type", type_)
+                    .opt_bool("force", force)
+                    .build(),
+            )?;
+            print_field_typed(&response)?;
+            Ok(())
+        }
+        Cmd::SetFieldName {
+            program,
+            path,
+            field,
+            name,
+        } => {
+            let response = client.invoke(
+                Req::new("SetDataTypeFieldName")
+                    .str("file", program)
+                    .str("path", path)
+                    .str("field", field)
+                    .str("name", name)
+                    .build(),
+            )?;
+            print_field_renamed(&response)?;
             Ok(())
         }
         Cmd::Delete { program, path } => {
@@ -1280,6 +1355,77 @@ fn print_variant_comment(response: &Json) -> Result<(), ()> {
             Some(p) if !p.is_empty() => println!("cleared (was: {})", p),
             _ => println!("cleared"),
         },
+    }
+    Ok(())
+}
+
+/// Print a SetDataTypeFieldType response: a before/after diff for the field's
+/// type (with length) and the preserved comment. The path/field are logged to
+/// stderr; the was/now lines and any comment diff go to stdout (data). When
+/// the retype ran with force=true, the now line is tagged "[forced]" so the
+/// caller can audit the call after the fact.
+fn print_field_typed(response: &Json) -> Result<(), ()> {
+    let path = response.get("path").and_then(Json::as_str).unwrap_or("?");
+    let field = response.get("field").and_then(Json::as_str).unwrap_or("?");
+    let new_type = response.get("type").and_then(Json::as_str).unwrap_or("?");
+    let prev_type = response
+        .get("previousType")
+        .and_then(Json::as_str)
+        .unwrap_or("?");
+    let new_len = response
+        .get("typeLength")
+        .and_then(Json::as_f64)
+        .unwrap_or(0.0) as i64;
+    let prev_len = response
+        .get("previousLength")
+        .and_then(Json::as_f64)
+        .unwrap_or(0.0) as i64;
+    let comment = response.get("comment").and_then(Json::as_str);
+    let prev_comment = response.get("previousComment").and_then(Json::as_str);
+    let forced = response
+        .get("forced")
+        .and_then(Json::as_bool)
+        .unwrap_or(false);
+
+    log::info!("{} field '{}' type set", path, field);
+    println!("was:    {} ({} bytes)", prev_type, prev_len);
+    println!(
+        "now:    {} ({} bytes){}",
+        new_type,
+        new_len,
+        if forced { "  [forced]" } else { "" }
+    );
+    // Comment diff (when the previous or new comment is non-empty AND they
+    // differ). Same shape as print_field_comment's diff line.
+    match (prev_comment, comment) {
+        (Some(p), Some(c)) if !p.is_empty() && p != c => {
+            println!("comment was:    {}", p);
+            println!("comment now:    {}", c);
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Print a SetDataTypeFieldName response: the old name, the new name, and
+/// the (unchanged) type + comment echoed for round-trip visibility.
+fn print_field_renamed(response: &Json) -> Result<(), ()> {
+    let path = response.get("path").and_then(Json::as_str).unwrap_or("?");
+    let field = response.get("field").and_then(Json::as_str).unwrap_or("?");
+    let previous = response
+        .get("previous")
+        .and_then(Json::as_str)
+        .unwrap_or("?");
+    let type_ = response.get("type").and_then(Json::as_str).unwrap_or("?");
+    let comment = response.get("comment").and_then(Json::as_str);
+    log::info!("{} field renamed", path);
+    println!("was:    {}", previous);
+    println!("now:    {}", field);
+    println!("type:   {}", type_);
+    if let Some(c) = comment {
+        if !c.is_empty() {
+            println!("comment: {}", c);
+        }
     }
     Ok(())
 }
