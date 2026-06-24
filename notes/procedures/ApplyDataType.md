@@ -17,6 +17,9 @@ interface ApplyDataTypeRequest {
   addressSet?: Array<{ start: string; end?: string }>;
                            // end omitted = single-address range
                            // when supplied, overrides `address`
+  force?: boolean;          // default false; clear conflicting code units
+                           // inside the type's consumed range and retry
+                           // (raw bytes preserved; listing entries erased).
 }
 ```
 
@@ -29,6 +32,9 @@ interface ApplyDataTypeResponse {
   created: number;          // number of data units laid (1 for --address,
                              // 1 per --address-set entry)
   bytes: number;            // total bytes consumed
+  forced: boolean;          // true if at least one range needed the
+                             // force-clear retry path; false for clean
+                             // creates (no conflict) and for hard errors.
   warnings?: string[];      // one entry per --address-set range where the
                              // type's length is shorter than the range.
                              // Format: "START:END (type consumes N of M bytes)".
@@ -121,3 +127,44 @@ interface ApplyDataTypeResponse {
   non-null. For `--address` it's 1. For `--address-set` it's 1 per
   range element (the type is laid once per range). `bytes` is the sum
   of those units' lengths.
+
+### `--force true`: opt into clearing conflicting code units
+
+By default, when `Listing.createData` throws `CodeUnitInsertionException`
+(see the conflict-with-existing-data section above), the call is rejected
+with a clear error pointing at `memory undefine`. Passing `force:true`
+opts into this instead:
+
+1. Catch the `CodeUnitInsertionException`.
+2. Widen the pre-mutation clear from `[start, start]` to
+   `[start, start + len - 1]` — the full consumed range. Raw bytes are
+   preserved; only their listing entries (Data/Instruction definitions)
+   are erased.
+3. Retry `Listing.createData(start, dt, len)`.
+4. If the retry still throws (e.g. the conflicting byte is part of an
+   Instruction that `clearCodeUnits` won't touch — `clearCodeUnits`
+   preserves Instructions), surface the post-clear error verbatim with
+   the cleared range appended.
+
+The CLI flag is `--force true` (matching `datatype set-field-type`'s
+shape; long-only, no short alias per the project's shorthand policy).
+
+**What `--force` does NOT relax**:
+- The strict-length guard on `--length` against non-Dynamic types
+  (see "length is only honored for Dynamic types" above). Relaxing
+  that one would silently clobber bytes the type would have laid;
+  hard-rejected on both sides.
+- The "type longer than range" pre-validation (multi-address only).
+  Silently expanding past the user-supplied upper bound would be
+  surprising.
+- The non-conflicting default path: a clean create with `--force true`
+  is identical to one without; `forced` on the response stays `false`.
+
+**Use case**: a struct (say a 0x30-byte reader_blob) sits where you
+want to lay a different struct (say a 0x30-byte AIM_Stream). The new
+struct's first field is a 4-byte int; the existing struct's first
+field is a 4-byte int of the same width. `apply-type` rejects because
+the second field of the new struct overlaps the existing struct's
+sub-fields. Without `--force`, the user must first run `memory undefine`
+on the whole 0x30-byte range; with `--force true`, the apply-type call
+itself does the clear+create in one transaction.

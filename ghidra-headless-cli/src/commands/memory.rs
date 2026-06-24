@@ -175,6 +175,11 @@ pub struct ReadBytesArgs {
 /// runs. This matches the GUI's press-D-and-type behavior. To fill a
 /// region with copies of the type, pass multiple `--address-set` entries
 /// stepped by the type's length.
+///
+/// `--force true` opts in to clearing bytes inside the type's consumed
+/// range (raw bytes preserved, listing entries erased) and retrying when
+/// the new type would collide with already-defined code units. Without
+/// it, a collision returns a clear error pointing at `memory undefine`.
 #[derive(Args, Debug)]
 pub struct ApplyTypeArgs {
     /// Target file project path
@@ -196,6 +201,11 @@ pub struct ApplyTypeArgs {
     /// fixed-length type (int, char, struct, ...) is rejected. [default: type's length]
     #[arg(long)]
     pub length: Option<i64>,
+    /// Clear conflicting code units inside the type's consumed range and
+    /// retry the create. Raw bytes are preserved; listing entries inside
+    /// the range are erased. [default: false]
+    #[arg(long)]
+    pub force: Option<bool>,
 }
 
 /// Args for `memory undefine`. Clears listing entries (Data / Instruction
@@ -279,7 +289,8 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             let mut req = Req::new("ApplyDataType")
                 .str("file", a.program.clone())
                 .str("type", a.type_name.clone())
-                .opt_int("length", a.length);
+                .opt_int("length", a.length)
+                .opt_bool("force", a.force);
             if !a.address_set.is_empty() {
                 let items: Vec<Json> = a
                     .address_set

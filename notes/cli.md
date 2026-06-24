@@ -177,7 +177,7 @@ These two are the only short flags (the task's stated exceptions to the
 | `memory lookup-label` | LookupLabel |
 | `memory get-label` | GetLabel |
 | `memory read-bytes` | ReadBytes |
-| `memory apply-type` | ApplyDataType |
+| `memory apply-type` | ApplyDataType (supports `--force true` to clear conflicting code units in the type's consumed range and retry) |
 | `memory undefine` | ClearCodeUnits |
 | `string search` | SearchStrings |
 | `string get` | GetString |

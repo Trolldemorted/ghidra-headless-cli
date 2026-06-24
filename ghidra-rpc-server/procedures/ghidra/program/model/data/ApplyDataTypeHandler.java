@@ -46,6 +46,20 @@ import procedures.RpcResponse;
  * instruction doesn't fight the new data), then {@link Listing#createData}
  * lays the type. Built-in-only types like {@code int} work fine;
  * user-defined types work too.
+ *
+ * <p><b>{@code force} (default false).</b> When the new type would
+ * consume bytes that are already defined (instructions, scalars,
+ * sub-fields of an existing struct), {@link Listing#createData} throws
+ * {@link CodeUnitInsertionException} and the call is rejected with a
+ * hint pointing at {@code memory undefine}. Passing {@code force:true}
+ * opts in to clearing the conflicting bytes inside the type's consumed
+ * range (the raw bytes are preserved; only their listing entries are
+ * erased) and retrying the create. The {@code forced} field on the
+ * response is set to true when at least one range needed the
+ * force-clear. {@code force} does NOT relax the strict-length guard on
+ * the {@code length} field (non-Dynamic types) — that one stays hard-
+ * rejected because the alternative is silent clobbering of the bytes
+ * the type would have laid.
  */
 public final class ApplyDataTypeHandler implements RpcProcedure {
 
@@ -53,6 +67,7 @@ public final class ApplyDataTypeHandler implements RpcProcedure {
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
         String typeText = RpcContext.reqStr(req, "type");
         DataType dt = ctx.requireDataType(typeText);
+        boolean force = RpcContext.optBool(req, "force", false);
 
         // Ghidra's Listing.createData(addr, dt, len) honors `len` ONLY for
         // Dynamic types (typedefs of arrays, strings, FactoryDataType-based
@@ -111,6 +126,7 @@ public final class ApplyDataTypeHandler implements RpcProcedure {
 
         int[] created = {0};
         long[] bytes = {0};
+        boolean[] anyForced = {false};
         String[] conflictErr = {null};
         ctx.runWrite("ApplyDataType", () -> {
             Listing listing = ctx.program().getListing();
@@ -120,36 +136,71 @@ public final class ApplyDataTypeHandler implements RpcProcedure {
                 try {
                     d = listing.createData(r.start, dt, len);
                 } catch (CodeUnitInsertionException e) {
-                    // Ghidra's Listing.createData throws this when there is
-                    // already a defined code unit inside the byte range the
-                    // new type would consume — message starts with
-                    // "Conflicting data exists at address ..." (verified
-                    // across multiple Ghidra 12.x builds; this is also the
-                    // wording reported by users in the wild). Surface it
-                    // verbatim AND append an explicit fix: clear the bytes
-                    // first with `memory undefine`. Without that hint the
-                    // user doesn't know why apply-type rejected a struct
-                    // whose internal fields overlap with previously-typed
-                    // bytes (e.g. AIM_Stream at 0x1001C200 with a
-                    // 0x10-byte sub-field that collides with an existing
-                    // 0x10-byte reader_blob).
-                    String msg = e.getMessage() == null ? "" : e.getMessage();
-                    // Reconstruct the consumed range's last address from
-                    // r.start + (len-1). Address.addNoWrap returns an
-                    // Address we can toString() into the same display
-                    // format Ghidra uses everywhere (e.g. "001001c200"),
-                    // so the user can copy-paste the example command
-                    // without hand-converting hex.
+                    if (!force) {
+                        // Ghidra's Listing.createData throws this when
+                        // there is already a defined code unit inside the
+                        // byte range the new type would consume — message
+                        // starts with "Conflicting data exists at
+                        // address ..." (verified across multiple Ghidra
+                        // 12.x builds; this is also the wording reported
+                        // by users in the wild). Surface it verbatim AND
+                        // append an explicit fix: clear the bytes first
+                        // with `memory undefine`. Without that hint the
+                        // user doesn't know why apply-type rejected a
+                        // struct whose internal fields overlap with
+                        // previously-typed bytes (e.g. AIM_Stream at
+                        // 0x1001C200 with a 0x10-byte sub-field that
+                        // collides with an existing 0x10-byte
+                        // reader_blob).
+                        String msg = e.getMessage() == null ? "" : e.getMessage();
+                        // Reconstruct the consumed range's last address
+                        // from r.start + (len-1). Address.addNoWrap
+                        // returns an Address we can toString() into the
+                        // same display format Ghidra uses everywhere
+                        // (e.g. "001001c200"), so the user can copy-paste
+                        // the example command without hand-converting
+                        // hex.
+                        Address consumedEnd = r.start.addNoWrap(Math.max(0, len - 1));
+                        String hint =
+                            ". Fix: clear the conflicting range first with "
+                            + "`memory undefine --file /<file> --address-set "
+                            + r.start + ":" + consumedEnd
+                            + "` (the struct's internal fields overlap with "
+                            + "previously-typed bytes; apply-type will not "
+                            + "silently clobber them). Or pass --force true "
+                            + "to have apply-type clear the conflicting bytes "
+                            + "itself (raw bytes are preserved; only their "
+                            + "listing entries are erased). Then re-run apply-type.";
+                        conflictErr[0] = msg + hint;
+                        return;
+                    }
+                    // --force: clear the full consumed range [r.start,
+                    // r.start + len - 1] (raw bytes preserved, listing
+                    // entries erased) and retry. The previous clearCodeUnits
+                    // only nuked r.start itself; widening it to the
+                    // whole consumed range is the whole point of
+                    // --force — the user's struct is bigger than one
+                    // byte and the conflicting fields sit somewhere
+                    // inside it.
                     Address consumedEnd = r.start.addNoWrap(Math.max(0, len - 1));
-                    String hint =
-                        ". Fix: clear the conflicting range first with "
-                        + "`memory undefine --file /<file> --address-set "
-                        + r.start + ":" + consumedEnd
-                        + "` (the struct's internal fields overlap with "
-                        + "previously-typed bytes; apply-type will not "
-                        + "silently clobber them). Then re-run apply-type.";
-                    conflictErr[0] = msg + hint;
-                    return;
+                    listing.clearCodeUnits(r.start, consumedEnd, false);
+                    try {
+                        d = listing.createData(r.start, dt, len);
+                    } catch (CodeUnitInsertionException retry) {
+                        // Still conflicting after the wide clear — the
+                        // bytes are part of an Instruction rather than
+                        // Data. Instructions aren't removed by
+                        // clearCodeUnits(addr, addr, false) for a
+                        // single-byte range, and the wide clear may have
+                        // hit an Instruction boundary too. Surface the
+                        // post-clear error verbatim so the caller sees
+                        // the real cause (the user can disasm-clear with
+                        // memory undefine on the conflicting address).
+                        conflictErr[0] = (retry.getMessage() == null ? "" : retry.getMessage())
+                            + " (after force-clearing " + r.start + ":" + consumedEnd + ")";
+                        return;
+                    }
+                    anyForced[0] = true;
                 }
                 if (d != null) {
                     created[0]++;
@@ -167,12 +218,13 @@ public final class ApplyDataTypeHandler implements RpcProcedure {
         o.addProperty("path", DataTypeSerializer.pathOf(dt));
         o.addProperty("created", created[0]);
         o.addProperty("bytes", bytes[0]);
+        o.addProperty("forced", anyForced[0]);
         if (!underCoverage.isEmpty()) {
             JsonArray warns = new JsonArray();
             for (String s : underCoverage) warns.add(s);
             o.add("warnings", warns);
         }
-        return new ApplyResponse(o, underCoverage);
+        return new ApplyResponse(o, underCoverage, anyForced[0]);
     }
 
     /** Internal (start, end) pair, inclusive. */
@@ -220,18 +272,20 @@ public final class ApplyDataTypeHandler implements RpcProcedure {
         final String path;
         final int created;
         final long bytes;
+        final boolean forced;
         // List of (start:end + byte counts) for addressSet entries where
         // the type's consumption is shorter than the range. Empty when the
         // range exactly matches the type's length or when --address was
         // used (single-address entries don't track coverage). Serialized
         // by gson as a `warnings` JSON array on the response.
         final java.util.List<String> warnings;
-        ApplyResponse(JsonObject o, java.util.List<String> underCoverage) {
+        ApplyResponse(JsonObject o, java.util.List<String> underCoverage, boolean forced) {
             this.success = true;
             this.type = o.get("type").getAsString();
             this.path = o.has("path") ? o.get("path").getAsString() : null;
             this.created = o.get("created").getAsInt();
             this.bytes = o.get("bytes").getAsLong();
+            this.forced = forced;
             this.warnings = underCoverage == null
                 ? java.util.Collections.emptyList() : underCoverage;
         }
