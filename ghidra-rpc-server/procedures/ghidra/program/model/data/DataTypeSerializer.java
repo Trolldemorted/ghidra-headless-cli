@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
 import ghidra.program.model.data.Array;
+import ghidra.program.model.data.ArchiveType;
 import ghidra.program.model.data.BitFieldDataType;
 import ghidra.program.model.data.Category;
 import ghidra.program.model.data.Composite;
@@ -170,23 +171,41 @@ final class DataTypeSerializer {
         return "primitive";
     }
 
-    /** Coarse source: USER, BUILTIN, or the archive's name. */
+    /** Coarse source: PROGRAM (project's own DTM), USER (no archive),
+     * BUILTIN (built-ins / ANSI_C / windows_vs), or ARCHIVE (foreign .gdt). */
     private static String sourceOf(DataType dt) {
         SourceArchive arc = dt.getSourceArchive();
         if (arc == null) return "USER";
+        // ArchiveType.PROGRAM is the program's own DTM — Ghidra exposes
+        // this archive under the program's domain-file stem with a
+        // "-<UniversalID>" suffix in some setups (e.g. "<prog>.exe-
+        // <hex>"). That name reads as if it were an external archive,
+        // but ArchiveType.PROGRAM marks it as the local one. Detect by
+        // ArchiveType (not by name-prefix matching) so the call is
+        // robust across Ghidra versions and per-program name formats.
+        ArchiveType at = arc.getArchiveType();
+        if (at == ArchiveType.PROGRAM) {
+            return "PROGRAM";
+        }
         String n = arc.getName();
         if (n == null) return "USER";
-        if (n.equalsIgnoreCase("BuiltIns") || n.equalsIgnoreCase("ANSI_C")
-                || n.equalsIgnoreCase("windows_vs")) {
+        if (at == ArchiveType.BUILT_IN || n.equalsIgnoreCase("BuiltIns")
+                || n.equalsIgnoreCase("ANSI_C") || n.equalsIgnoreCase("windows_vs")) {
             return "BUILTIN";
         }
         return "ARCHIVE";
     }
 
-    /** Source archive name (or null when the type is user-defined). */
+    /** Source archive name (or null when the type is local or built-in).
+     * For local-archive types we return null — the "PROGRAM" source label
+     * already says where it lives, and the raw "<prog>.exe-<hex>"
+     * string is uninformative (it's the local archive's UniversalID-
+     * suffixed name, not a foreign archive filename). */
     private static String archiveOf(DataType dt) {
         SourceArchive arc = dt.getSourceArchive();
         if (arc == null) return null;
+        ArchiveType at = arc.getArchiveType();
+        if (at == ArchiveType.PROGRAM || at == ArchiveType.BUILT_IN) return null;
         String n = arc.getName();
         if (n == null || n.equalsIgnoreCase("BuiltIns") || n.equalsIgnoreCase("ANSI_C")
                 || n.equalsIgnoreCase("windows_vs")) {

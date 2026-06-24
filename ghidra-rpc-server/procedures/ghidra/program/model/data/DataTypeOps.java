@@ -109,8 +109,8 @@ public final class DataTypeOps {
         }
         // Archive-qualified path: first segment is a SourceArchive name, the
         // rest is a /Cat/Sub/Name path. Recognised formats (all equivalent):
-        //   /Patrician3.exe-aa1fd4 (archive)/DOS/IMAGE_DOS_HEADER
-        //   /Patrician3.exe-aa1fd4/DOS/IMAGE_DOS_HEADER
+        //   /<prog>.exe-<hex> (archive)/DOS/IMAGE_DOS_HEADER
+        //   /<prog>.exe-<hex>/DOS/IMAGE_DOS_HEADER
         //   /windows_vs/WinDef.h/HBITMAP__
         // The archive prefix is decoration: the type's REAL path is the rest.
         // We strip the prefix and retry the rest in the program DTM. This
@@ -149,8 +149,8 @@ public final class DataTypeOps {
             // No matching archive — fall through to merged-view search.
         }
         // Fall back to the merged view: search every open source archive.
-        // This is what makes `datatype show /Demangler/L_String` work when
-        // /Demangler lives only in the Battle_Realms_F.exe archive.
+        // This is what makes `datatype show /Demangler/<name>` work when
+        // /Demangler lives only in a non-local archive.
         DataType stubMatch = null;
         int stubMatches = 0;
         for (SourceArchive arc : dtm.getSourceArchives()) {

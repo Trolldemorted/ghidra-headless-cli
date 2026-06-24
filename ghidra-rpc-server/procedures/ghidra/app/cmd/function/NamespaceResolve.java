@@ -25,7 +25,7 @@ import ghidra.program.model.symbol.SymbolTable;
  *
  * <p>Why strict: a previous lenient fallback matched a namespace by its
  * simple name across the entire namespace subtree (e.g. request
- * {@code "/input/Patrician3/ddraw_Dll.dll"} silently resolved to whatever
+ * {@code "/input/<prog>/<lib>.dll"} silently resolved to whatever
  * file's parent happened to be named that). Strict lookup makes the
  * missing match visible to the caller instead of operating on the wrong
  * namespace.

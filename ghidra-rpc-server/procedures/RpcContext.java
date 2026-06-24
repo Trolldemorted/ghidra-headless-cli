@@ -250,8 +250,8 @@ public class RpcContext {
      *
      * <p>Why strict: a previous lenient fallback matched a file by its
      * basename across the whole project (e.g. request
-     * {@code "/input/Patrician3/ddraw_Dll.dll"} silently resolved to
-     * {@code "/ddraw_Dll.dll"}). The success log line echoed the
+     * {@code "/input/<prog>/<lib>.dll"} silently resolved to
+     * {@code "/<lib>.dll"}). The success log line echoed the
      * REQUESTED path, hiding the rewrite, so callers had no way to know
      * the server was operating on a different file. Strict lookup makes
      * the rewrite visible (or impossible): the call either matches

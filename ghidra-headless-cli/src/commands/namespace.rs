@@ -39,7 +39,7 @@ pub enum Cmd {
     /// struct lookup happens on function association (and may auto-stub
     /// one if absent; see `function set-class-association --help`).
     CreateClass {
-        /// Target file project path (e.g. /Patrician3.exe)
+        /// Target file project path (e.g. /<prog>.exe)
         #[arg(long = "file", value_name = "FILE")]
         program: String,
         /// Path of an existing parent namespace under which to create a
@@ -66,7 +66,7 @@ pub enum Cmd {
     /// NewName` separately. Class and struct are independent; sharing
     /// only a name.
     RenameClass {
-        /// Target file project path (e.g. /Patrician3.exe)
+        /// Target file project path (e.g. /<prog>.exe)
         #[arg(long = "file", value_name = "FILE")]
         program: String,
         /// Full path of the class to rename (e.g. "/Game/OldName")
@@ -90,7 +90,7 @@ pub enum Cmd {
     /// This verb only deletes classes — passing a plain namespace's path
     /// returns an error.
     DeleteClass {
-        /// Target file project path (e.g. /Patrician3.exe)
+        /// Target file project path (e.g. /<prog>.exe)
         #[arg(long = "file", value_name = "FILE")]
         program: String,
         /// Full path of the class to delete (e.g. "/Game/MyClass")
@@ -105,7 +105,7 @@ pub enum Cmd {
     /// address. The path output is slash-delimited and can be fed
     /// directly into `--class PATH` for the mutating namespace verbs.
     GetClass {
-        /// Target file project path (e.g. /Patrician3.exe)
+        /// Target file project path (e.g. /<prog>.exe)
         #[arg(long = "file", value_name = "FILE")]
         program: String,
         /// Full path of the class (e.g. "/Game/OpMarketTrade")
@@ -123,7 +123,7 @@ pub enum Cmd {
     /// Symbol Tree). Only CLASS namespaces are listed; plain namespaces
     /// are not.
     ListClass {
-        /// Target file project path (e.g. /Patrician3.exe)
+        /// Target file project path (e.g. /<prog>.exe)
         #[arg(long = "file", value_name = "FILE")]
         program: String,
         /// Path of the namespace to start from [default: / (root)]

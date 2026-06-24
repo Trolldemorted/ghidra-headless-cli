@@ -75,7 +75,7 @@ pub enum Cmd {
         program: String,
         /// Full data-type path, e.g. /ELF/Elf64_Ehdr. Archive-qualified
         /// paths from `datatype list` output (e.g.
-        /// `/Patrician3.exe-aa1fd4 (archive)/MainMenuLoaderScreen`) are
+        /// `/<prog>.exe-<hex> (archive)/<Type>`) are
         /// accepted; the ` (archive)` suffix is stripped automatically.
         /// Mutually exclusive with --name.
         #[arg(long, conflicts_with = "name")]
@@ -86,7 +86,7 @@ pub enum Cmd {
         /// that category. Mutually exclusive with --path.
         #[arg(long, conflicts_with = "path")]
         name: Option<String>,
-        /// Source archive name (e.g. `windows_vs`, `Patrician3.exe-aa1fd4`).
+        /// Source archive name (e.g. `windows_vs`, `<prog>.exe-<hex>`).
         /// The ` (archive)` suffix shown by `datatype list` is stripped.
         /// Use with --name to disambiguate when the same leaf name lives
         /// in multiple archives.
@@ -866,9 +866,13 @@ struct TypeRow {
     size: i64,
     /// Full path, e.g. "/Demangler/L_String" or "/ClaudeHeadlessStruct".
     path: String,
-    /// Coarse source: "USER" | "BUILTIN" | "ARCHIVE" (or unknown).
+    /// Coarse source: "USER" | "PROGRAM" | "BUILTIN" | "ARCHIVE" (or unknown).
+    /// "PROGRAM" = lives in this program's own DTM (the "<prog>.exe-<hex>"
+    /// archive Ghidra exposes — same UniversalID across every type defined in
+    /// the project; not a foreign `.gdt`). "ARCHIVE" = foreign archive type.
     source: String,
-    /// Optional archive name (e.g. "windows_vs", "Mapeditor.exe").
+    /// Optional archive name (e.g. "windows_vs", "<prog>.exe") — null
+    /// for PROGRAM / BUILTIN / USER types.
     source_archive: Option<String>,
 }
 
@@ -910,11 +914,15 @@ impl TypeRow {
         }
     }
 
-    /// Human-readable source label per the format in the plan:
-    /// `program (user)` / `built-in (builtin)` / `<archive> (builtin)`
-    /// / `<archive> (archive)`.
+    /// Human-readable source label. The shapes:
+    /// `program (program)` / `program (user)` / `built-in (builtin)` /
+    /// `<archive> (builtin)` / `<archive> (archive)`. The `program`
+    /// variant distinguishes the project's own DTM (which Ghidra exposes
+    /// under a UniversalID-suffixed local archive name like
+    /// "<prog>.exe-<hex>") from foreign archives.
     fn source_label(&self) -> String {
         match (self.source.as_str(), self.source_archive.as_deref()) {
+            ("PROGRAM", _) => "program (program)".to_string(),
             ("USER", _) => "program (user)".to_string(),
             ("BUILTIN", None) => "built-in (builtin)".to_string(),
             ("BUILTIN", Some(a)) => format!("{} (builtin)", a),

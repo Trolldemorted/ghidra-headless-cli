@@ -279,7 +279,7 @@ pub enum Cmd {
     ///   datatype delete --name <ClassName>
     /// The class association itself is unaffected.
     SetClassAssociation {
-        /// Target file project path (e.g. /Patrician3.exe)
+        /// Target file project path (e.g. /<prog>.exe)
         #[arg(long = "file", value_name = "FILE")]
         program: String,
         /// Function entry-point address (hex)
@@ -301,7 +301,7 @@ pub enum Cmd {
     /// with auto-stub semantics (where the decompiler types `this` as the
     /// class's struct), use `function set-class-association` instead.
     SetNamespace {
-        /// Target file project path (e.g. /Patrician3.exe)
+        /// Target file project path (e.g. /<prog>.exe)
         #[arg(long = "file", value_name = "FILE")]
         program: String,
         /// Function entry-point address (hex)

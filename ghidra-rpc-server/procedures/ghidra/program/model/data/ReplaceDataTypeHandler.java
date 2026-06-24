@@ -28,7 +28,7 @@ import procedures.RpcResponse;
  * <p>This is the CLI equivalent of the Ghidra GUI "Replace..." action on a
  * type in the Data Type Manager. The key use case is overwriting an
  * archive-resolved stub (a type pulled in from an upstream archive like
- * {@code Battle_Realms_F.exe}) with a user-defined version: the new
+ * {@code <prog>}) with a user-defined version: the new
  * type lives in the program DTM under the same name and category, and
  * all references automatically resolve to the local copy.
  *

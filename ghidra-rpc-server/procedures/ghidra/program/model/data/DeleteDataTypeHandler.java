@@ -92,8 +92,8 @@ public final class DeleteDataTypeHandler implements RpcProcedure {
      *    target)
      *  - the source archive NAME and its UniversalID (so an archive whose
      *    display name happens to match the current program's name — e.g.
-     *    "Battle_Realms_F.exe" pulled in from "Battle_Realms_F.exe_old" in
-     *    the same repo — is distinguishable from the local archive)
+     *    "<prog>" pulled in from "<prog>_old" in the same repo — is
+     *    distinguishable from the local archive)
      *  - the exact `datatype replace` command line, with the path filled in,
      *    so the user has a copy-pasteable fix
      *  - the GUI-equivalent caveat so the user knows this isn't a CLI bug
@@ -106,10 +106,9 @@ public final class DeleteDataTypeHandler implements RpcProcedure {
         // Heuristic: when the archive name matches the current program's
         // name but the ID is NOT the local archive, the type was pulled in
         // from a DIFFERENT program in the same repository that happens to
-        // have the same display name (a real Battle_Realms scenario:
-        // Battle_Realms_F.exe_old exports the same archive name). Call this
-        // out explicitly so the user knows why the local archive is not
-        // authoritative.
+        // have the same display name (a real scenario: <prog>_old exports
+        // the same archive name). Call this out explicitly so the user
+        // knows why the local archive is not authoritative.
         boolean sameNameDifferentArchive = arc != null
             && arcName.equals(program)
             && !arc.getSourceArchiveID().equals(
