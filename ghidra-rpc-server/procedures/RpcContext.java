@@ -478,6 +478,13 @@ public class RpcContext {
     /**
      * Build an address set from either {@code "addressSet":[{start,end?},...]} or a
      * single {@code "address"}. Throws if neither is present.
+     *
+     * <p>The {@code end} field (when present) is EXCLUSIVE — the byte at
+     * {@code end} is NOT included. The conversion to Ghidra's inclusive
+     * {@link AddressSet#addRange} is done by subtracting one. This matches the
+     * CLI's {@code --address-set START:END} syntax and standard half-open
+     * byte-range convention. A bare {@code {start}} (no end) is a single-byte
+     * range {@code [start, start]}.
      */
     public AddressSetView addressSet(JsonObject req) {
         if (req.has("addressSet") && req.get("addressSet").isJsonArray()) {
@@ -485,8 +492,19 @@ public class RpcContext {
             for (JsonElement e : req.getAsJsonArray("addressSet")) {
                 JsonObject o = e.getAsJsonObject();
                 Address start = requireAddress(o.get("start").getAsString());
-                Address end = o.has("end") ? requireAddress(o.get("end").getAsString()) : start;
-                set.addRange(start, end);
+                if (o.has("end") && !o.get("end").isJsonNull()) {
+                    Address wireEnd = requireAddress(o.get("end").getAsString());
+                    if (wireEnd.compareTo(start) <= 0) {
+                        throw new IllegalArgumentException(
+                            "addressSet entry end '" + wireEnd + "' must be strictly greater "
+                            + "than start '" + start + "' (use a bare {start} for a single-byte "
+                            + "range, or start:start+1 for an explicit one-byte range).");
+                    }
+                    set.addRange(start, wireEnd.previous());
+                }
+                else {
+                    set.addRange(start, start);
+                }
             }
             return set;
         }

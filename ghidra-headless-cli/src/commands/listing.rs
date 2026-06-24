@@ -28,9 +28,11 @@ pub struct Cmd {
     #[arg(long)]
     pub address: Option<String>,
 
-    /// Address range START[:END] (colon-separated end is inclusive).
-    /// Mutually exclusive with --address; may be specified at most once.
-    /// Example: `--address-set 0x401000:0x401050` or just `--address-set 0x401000`.
+    /// Address range START[:END] (END is EXCLUSIVE; the byte at END is NOT
+    /// included). Mutually exclusive with --address; may be specified at most
+    /// once. Example: `--address-set 0x401000:0x401050` covers 80 bytes
+    /// (`0x401000..0x40104f`); `--address-set 0x401000:0x401001` is exactly
+    /// one byte. Bare `--address-set 0x401000` is also a single byte.
     #[arg(long = "address-set", value_name = "START[:END]")]
     pub address_set: Vec<String>,
 
@@ -81,9 +83,6 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
         return Ok(());
     }
 
-    let count = response.get("count").and_then(Json::as_f64).unwrap_or(0.0) as i64;
-    log::info!("{} unit(s)", count);
-
     if let Some(units) = response.get("units").and_then(Json::as_array) {
         for u in units {
             print_unit(u);
@@ -108,12 +107,23 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
 /// view) the mnemonic slot is filled with `??` so the column count
 /// matches the data-row layout — keeps grep patterns like
 /// `^0x0...004  ??  ` working across the whole dump.
+///
+/// Composite Data rows (Struct/Union) get one parent row PLUS one row per
+/// immediate component (the server emits them as `kind="data"` with
+/// `depth >= 1`). Components are indented by `2 * depth` leading spaces to
+/// mirror the GUI's expanded-listing view (a vftable's parent row at
+/// depth=0; the inherited base struct at depth=1; that base's fields at
+/// depth=2). Indentation breaks column alignment within an expanded
+/// group, but matches the GUI's own rendering — and grouping is
+/// visually obvious from the address + label anyway.
 fn print_unit(u: &Json) {
     let kind = u.get("kind").and_then(Json::as_str).unwrap_or("?");
     let address = u.get("address").and_then(Json::as_str).unwrap_or("");
     let label = u.get("label").and_then(Json::as_str).unwrap_or("");
     let bytes = u.get("bytes").and_then(Json::as_str).unwrap_or("");
     let repr = u.get("representation").and_then(Json::as_str).unwrap_or("");
+    let depth = u.get("depth").and_then(Json::as_f64).unwrap_or(0.0) as usize;
+    let indent = "  ".repeat(depth);
 
     let line = match kind {
         "instruction" => {
@@ -121,31 +131,36 @@ fn print_unit(u: &Json) {
             // 8-byte instructions (16 hex chars) are the common case; widen
             // the bytes column to that minimum so mnemonics line up.
             format!(
-                "{:<10} {:<24} {:<16} {:<8} {}",
-                address, label, bytes, mnemonic, repr
+                "{}{:<10} {:<24} {:<16} {:<8} {}",
+                indent, address, label, bytes, mnemonic, repr
             )
         }
         "data" => {
             // Data rows have no mnemonic — representation carries the type's
             // rendered value (e.g. `"Hello, world!"` for char[N]). Skip the
-            // mnemonic column to keep one line per row.
-            format!("{:<10} {:<24} {:<16} {}", address, label, bytes, repr)
+            // mnemonic column to keep one line per row. Components of a
+            // composite parent get indented; the parent's own row does not.
+            format!(
+                "{}{:<10} {:<24} {:<16} {}",
+                indent, address, label, bytes, repr
+            )
         }
         // Undefined bytes — server emits one row per 16-byte chunk of the
         // gap (matches the GUI Hex view's row width). Render like a data row
         // but with `??` in the mnemonic slot so the column count matches —
         // a 16-byte hex string is 32 chars and will overflow the {<16} width
         // but that's fine (it widens the column for that line, like data rows
-        // do for long byte strings).
+        // do for long byte strings). Gap rows are always top-level (depth=0)
+        // — they are not nested under any composite.
         "undefined" => {
-            format!("{:<10} {:<24} {:<16} ??", address, label, bytes)
+            format!("{}{:<10} {:<24} {:<16} ??", indent, address, label, bytes)
         }
         // Unknown / future kind — render as data plus a [kind] tag so the
         // row is never silently dropped. Not expected from the current
         // server; defensive only.
         _ => format!(
-            "{:<10} {:<24} {:<16} [{}] {}",
-            address, label, bytes, kind, repr
+            "{}{:<10} {:<24} {:<16} [{}] {}",
+            indent, address, label, bytes, kind, repr
         ),
     };
     println!("{}", line);

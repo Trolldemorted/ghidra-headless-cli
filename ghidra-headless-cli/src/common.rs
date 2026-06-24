@@ -34,6 +34,14 @@ impl Source {
 ///
 /// Each entry becomes `{ "start": ..., "end"?: ... }`. Returns `None` when the
 /// list is empty so the field is omitted.
+///
+/// `START` alone is a single-byte range `[START, START]`. `START:END` is the
+/// half-open byte range `[START, END)` — `END` is the address of the byte
+/// AFTER the last wanted byte. So `--address-set 0x401000:0x401010` covers
+/// 16 bytes (`0x401000`..`0x40100f`), and `--address-set 0x401000:0x401001`
+/// is exactly one byte. `END <= START` (wire values, before subtraction) is
+/// rejected — use the bare-START form for a one-byte range, or
+/// `START:START+1` for an explicit one-byte range.
 pub fn address_set(ranges: &[String]) -> Result<Option<Json>, String> {
     if ranges.is_empty() {
         return Ok(None);
@@ -45,6 +53,22 @@ pub fn address_set(ranges: &[String]) -> Result<Option<Json>, String> {
             Some((start, end)) => {
                 if start.is_empty() || end.is_empty() {
                     return Err(format!("invalid range '{}': expected START:END", raw));
+                }
+                // Reject END <= START (hex-decoded). For non-hex literals (no
+                // 0x prefix), skip the check — Ghidra's address factory will
+                // surface a more specific parse error.
+                if let (Ok(s), Ok(e)) = (
+                    u64::from_str_radix(start.trim_start_matches("0x"), 16),
+                    u64::from_str_radix(end.trim_start_matches("0x"), 16),
+                ) {
+                    if e <= s {
+                        return Err(format!(
+                            "invalid range '{}': END must be strictly greater than START \
+                             (use bare START for a single-byte range, or START:START+1 \
+                              for an explicit one-byte range)",
+                            raw
+                        ));
+                    }
                 }
                 fields.push(("start".to_string(), Json::Str(start.to_string())));
                 fields.push(("end".to_string(), Json::Str(end.to_string())));

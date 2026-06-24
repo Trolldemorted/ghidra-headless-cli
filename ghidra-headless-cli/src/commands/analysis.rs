@@ -16,7 +16,7 @@ pub enum Cmd {
         /// Single entry point address (hex)
         #[arg(long)]
         address: Option<String>,
-        /// Address range START[:END] (repeatable)
+        /// Address range START[:END] (END is EXCLUSIVE; the byte at END is NOT included). Repeatable.
         #[arg(long)]
         address_set: Vec<String>,
         /// Force processing of already-analyzed functions [default: false]

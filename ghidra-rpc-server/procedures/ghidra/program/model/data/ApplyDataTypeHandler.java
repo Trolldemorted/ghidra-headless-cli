@@ -240,6 +240,9 @@ public final class ApplyDataTypeHandler implements RpcProcedure {
      * {@code "addressSet"} array of {@code {start, end?}} objects.
      */
     private static List<AddressRange> parseRanges(JsonObject req, RpcContext ctx) {
+        // Wire convention: `end` is EXCLUSIVE (the byte at `end` is NOT
+        // included). We subtract one to get the inclusive AddressRange end.
+        // Bare `{start}` (no end) is a single-byte range.
         List<AddressRange> out = new ArrayList<>();
         if (req.has("addressSet") && req.get("addressSet").isJsonArray()) {
             JsonArray arr = req.getAsJsonArray("addressSet");
@@ -247,15 +250,19 @@ public final class ApplyDataTypeHandler implements RpcProcedure {
             for (JsonElement e : arr) {
                 JsonObject o = e.getAsJsonObject();
                 Address start = ctx.requireAddress(o.get("start").getAsString());
-                Address end = o.has("end") && !o.get("end").isJsonNull()
-                    ? ctx.requireAddress(o.get("end").getAsString())
-                    : start;
-                if (end.compareTo(start) < 0) {
-                    throw new IllegalArgumentException(
-                        "addressSet entry end '" + end + "' precedes start '"
-                        + start + "'.");
+                if (o.has("end") && !o.get("end").isJsonNull()) {
+                    Address wireEnd = ctx.requireAddress(o.get("end").getAsString());
+                    if (wireEnd.compareTo(start) <= 0) {
+                        throw new IllegalArgumentException(
+                            "addressSet entry end '" + wireEnd + "' must be strictly greater "
+                            + "than start '" + start + "' (use a bare {start} for a single-byte "
+                            + "range, or start:start+1 for an explicit one-byte range).");
+                    }
+                    out.add(new AddressRange(start, wireEnd.previous()));
                 }
-                out.add(new AddressRange(start, end));
+                else {
+                    out.add(new AddressRange(start, start));
+                }
             }
             return out;
         }
