@@ -14,7 +14,7 @@ public final class SetFunctionPurgeCommandHandler implements RpcProcedure {
     @Override
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
         Function f = ctx.requireFunctionAt(RpcContext.reqStr(req, "address"));
-        int purge = RpcContext.optInt(req, "purge", 0);
+        int purge = RpcContext.reqInt(req, "purge");
         return ctx.applyCommand(new SetFunctionPurgeCommand(f, purge));
     }
 }

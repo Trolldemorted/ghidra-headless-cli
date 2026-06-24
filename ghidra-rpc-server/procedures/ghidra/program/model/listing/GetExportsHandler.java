@@ -43,14 +43,13 @@ public final class GetExportsHandler implements RpcProcedure {
 
     @Override
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
-        String typeRaw = RpcContext.optStr(req, "type");
-        String type = (typeRaw == null || typeRaw.isEmpty()) ? "all" : typeRaw.toLowerCase();
+        String type = RpcContext.reqStr(req, "type").toLowerCase();
         if (!type.equals("all") && !type.equals("function")) {
             return RpcResponse.error(
                 "Invalid 'type' '" + type + "': must be all or function.");
         }
         boolean functionsOnly = type.equals("function");
-        int limit = RpcContext.optInt(req, "limit", 0);
+        int limit = RpcContext.reqInt(req, "limit");
 
         SymbolTable st = ctx.program().getSymbolTable();
         FunctionManager fm = ctx.program().getFunctionManager();

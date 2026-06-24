@@ -15,8 +15,8 @@ pub struct DisassembleArgs {
     #[arg(long = "function", alias = "address", value_name = "FN_OR_ADDR")]
     address: String,
     /// Include raw instruction bytes [default: true]
-    #[arg(long)]
-    bytes: Option<bool>,
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    bytes: bool,
 }
 
 pub fn run(args: DisassembleArgs, client: &Client) -> Result<(), ()> {
@@ -24,7 +24,7 @@ pub fn run(args: DisassembleArgs, client: &Client) -> Result<(), ()> {
         Req::new("Disassemble")
             .str("file", args.program)
             .str("address", args.address)
-            .opt_bool("bytes", args.bytes)
+            .bool("bytes", args.bytes)
             .build(),
     )?;
 

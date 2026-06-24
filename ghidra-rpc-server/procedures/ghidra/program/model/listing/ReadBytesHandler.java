@@ -36,12 +36,11 @@ public final class ReadBytesHandler implements RpcProcedure {
 
     @Override
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
-        int length = RpcContext.optInt(req, "length", 0);
+        int length = RpcContext.reqInt(req, "length");
         if (length < 1 || length > MAX_LENGTH) {
             return RpcResponse.error("Length must be 1.." + MAX_LENGTH + ".");
         }
-        String formatRaw = RpcContext.optStr(req, "format");
-        String format = (formatRaw == null || formatRaw.isEmpty()) ? "hex" : formatRaw.toLowerCase();
+        String format = RpcContext.reqStr(req, "format").toLowerCase();
         if (!format.equals("hex") && !format.equals("dump")) {
             return RpcResponse.error("Invalid 'format' '" + format + "': must be hex or dump.");
         }

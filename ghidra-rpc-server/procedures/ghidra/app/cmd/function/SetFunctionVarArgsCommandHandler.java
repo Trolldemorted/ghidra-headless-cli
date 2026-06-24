@@ -14,7 +14,7 @@ public final class SetFunctionVarArgsCommandHandler implements RpcProcedure {
     @Override
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
         Function f = ctx.requireFunctionAt(RpcContext.reqStr(req, "address"));
-        boolean hasVarArgs = RpcContext.optBool(req, "hasVarArgs", true);
+        boolean hasVarArgs = RpcContext.reqBool(req, "hasVarArgs");
         return ctx.applyCommand(new SetFunctionVarArgsCommand(f, hasVarArgs));
     }
 }

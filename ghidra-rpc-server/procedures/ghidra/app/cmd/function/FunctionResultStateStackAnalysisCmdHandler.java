@@ -13,6 +13,6 @@ public final class FunctionResultStateStackAnalysisCmdHandler implements RpcProc
     @Override
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
         return ctx.applyCommand(new FunctionResultStateStackAnalysisCmd(
-            ctx.addressSet(req), RpcContext.optBool(req, "forceProcessing", false)));
+            ctx.addressSet(req), RpcContext.reqBool(req, "forceProcessing")));
     }
 }

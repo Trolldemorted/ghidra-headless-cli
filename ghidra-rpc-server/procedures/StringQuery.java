@@ -23,7 +23,7 @@ public final class StringQuery {
     /** Substring match (or regex when {@code regex} is true). */
     public static Predicate<String> contains(JsonObject req) {
         String query = RpcContext.reqStr(req, "query");
-        boolean ignoreCase = RpcContext.optBool(req, "ignoreCase", false);
+        boolean ignoreCase = RpcContext.reqBool(req, "ignoreCase");
         Predicate<String> regex = regexOrNull(req, query, ignoreCase);
         if (regex != null) {
             return regex;
@@ -54,7 +54,7 @@ public final class StringQuery {
     /** Whole-string match (or regex when {@code regex} is true). */
     public static Predicate<String> exact(JsonObject req) {
         String query = RpcContext.reqStr(req, "query");
-        boolean ignoreCase = RpcContext.optBool(req, "ignoreCase", false);
+        boolean ignoreCase = RpcContext.reqBool(req, "ignoreCase");
         Predicate<String> regex = regexOrNull(req, query, ignoreCase);
         if (regex != null) {
             return regex;
@@ -64,7 +64,7 @@ public final class StringQuery {
 
     /** The regex predicate when {@code regex} is true, else null; throws on a bad pattern. */
     private static Predicate<String> regexOrNull(JsonObject req, String query, boolean ignoreCase) {
-        if (!RpcContext.optBool(req, "regex", false)) {
+        if (!RpcContext.reqBool(req, "regex")) {
             return null;
         }
         try {

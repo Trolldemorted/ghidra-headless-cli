@@ -23,7 +23,7 @@ public final class CreateThunkFunctionCmdHandler implements RpcProcedure {
         if (refStr != null) {
             cmd = new CreateThunkFunctionCmd(entry, null, ctx.requireAddress(refStr));
         } else {
-            cmd = new CreateThunkFunctionCmd(entry, RpcContext.optBool(req, "checkExisting", false));
+            cmd = new CreateThunkFunctionCmd(entry, RpcContext.reqBool(req, "checkExisting"));
         }
         return ctx.applyCommand(cmd);
     }

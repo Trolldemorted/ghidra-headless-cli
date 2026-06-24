@@ -32,13 +32,13 @@ pub struct SearchArgs {
     pub query: Option<String>,
     /// Treat --query as a regular expression [default: false]
     #[arg(long)]
-    pub regex: Option<bool>,
+    pub regex: bool,
     /// Case-insensitive match [default: false]
     #[arg(long)]
-    pub ignore_case: Option<bool>,
+    pub ignore_case: bool,
     /// Cap the number of results [default: 0 = unlimited]
-    #[arg(long)]
-    pub limit: Option<i64>,
+    #[arg(long, default_value_t = 0i64)]
+    pub limit: i64,
     /// Restrict to a single address
     #[arg(long)]
     pub address: Option<String>,
@@ -89,9 +89,9 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             let mut b = Req::new("SearchStrings").str("file", a.program.clone());
             b = b
                 .opt_str("query", a.query.clone())
-                .opt_bool("regex", a.regex)
-                .opt_bool("ignoreCase", a.ignore_case)
-                .opt_int("limit", a.limit)
+                .bool("regex", a.regex)
+                .bool("ignoreCase", a.ignore_case)
+                .int("limit", a.limit)
                 .opt_str("address", a.address.clone());
             match address_set(&a.address_set).map_err(crate::common::log_arg_err)? {
                 Some(j) => b.opt_json("addressSet", Some(j)),

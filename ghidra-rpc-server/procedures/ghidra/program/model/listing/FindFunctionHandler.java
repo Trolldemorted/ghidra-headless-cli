@@ -64,7 +64,7 @@ public final class FindFunctionHandler implements RpcProcedure {
         // unknown value.)
         // No additional check needed beyond Field.parse below.
 
-        int limit = RpcContext.optInt(req, "limit", 0);
+        int limit = RpcContext.reqInt(req, "limit");
 
         List<FunctionMatch> results = new ArrayList<>();
         boolean truncated = false;

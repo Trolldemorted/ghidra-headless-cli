@@ -64,7 +64,7 @@ public final class ListingsHandler implements RpcProcedure {
     @Override
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
         AddressSetView addrSet = ctx.addressSet(req);
-        boolean includeBytes = RpcContext.optBool(req, "bytes", true);
+        boolean includeBytes = RpcContext.reqBool(req, "bytes");
 
         Listing listing = ctx.program().getListing();
         CodeUnitFormat fmt = CodeUnitFormat.DEFAULT;

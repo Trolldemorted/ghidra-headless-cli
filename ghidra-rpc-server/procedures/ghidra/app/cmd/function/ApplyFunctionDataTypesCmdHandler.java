@@ -23,7 +23,7 @@ public final class ApplyFunctionDataTypesCmdHandler implements RpcProcedure {
         return ctx.applyCommand(new ApplyFunctionDataTypesCmd(
             managers, ctx.addressSet(req),
             ctx.sourceType(RpcContext.optStr(req, "source")),
-            RpcContext.optBool(req, "createBookmarks", true),
-            RpcContext.optBool(req, "alwaysReplace", false)));
+            RpcContext.reqBool(req, "createBookmarks"),
+            RpcContext.reqBool(req, "alwaysReplace")));
     }
 }

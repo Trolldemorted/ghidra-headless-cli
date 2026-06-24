@@ -15,8 +15,8 @@ pub struct DecompileArgs {
     #[arg(long = "function", alias = "address", value_name = "FN_OR_ADDR")]
     address: String,
     /// Decompiler timeout in seconds [default: 0 = library default]
-    #[arg(long)]
-    timeout_secs: Option<i64>,
+    #[arg(long, default_value_t = 0i64)]
+    timeout_secs: i64,
 }
 
 pub fn run(args: DecompileArgs, client: &Client) -> Result<(), ()> {
@@ -24,7 +24,7 @@ pub fn run(args: DecompileArgs, client: &Client) -> Result<(), ()> {
         Req::new("FlatDecompilerAPI")
             .str("file", args.program)
             .str("address", args.address)
-            .opt_int("timeoutSecs", args.timeout_secs)
+            .int("timeoutSecs", args.timeout_secs)
             .build(),
     )?;
 

@@ -33,8 +33,8 @@ pub struct Cmd {
     pub address_set: Vec<String>,
 
     /// Include raw instruction/data bytes (hex) [default: true]
-    #[arg(long)]
-    pub bytes: Option<bool>,
+    #[arg(long, default_value_t = true)]
+    pub bytes: bool,
 
     /// Emit the raw RPC JSON response instead of formatted text [default: false]
     #[arg(long)]
@@ -68,7 +68,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             .str("file", &cmd.program)
             .opt_str("address", cmd.address)
             .opt_json("addressSet", set)
-            .opt_bool("bytes", cmd.bytes)
+            .bool("bytes", cmd.bytes)
             .build(),
     )?;
 

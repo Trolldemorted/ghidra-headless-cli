@@ -89,12 +89,12 @@ public final class ShowDataTypeHandler implements RpcProcedure {
                 + "/<archive>/Cat/Name) or `name` (with optional `archive` / "
                 + "`category`); not both, not neither.");
         }
-        // withDeps: optBool defaults to false. CLI flag is `--with-deps`.
-        // When true, the `c` field contains the full writer output
+        // with_deps: required boolean (CLI flag `--with-deps`). When
+        // true, the `c` field contains the full writer output
         // (builtins preamble + transitively-referenced types). When
         // false (default), only the requested type's C block is
         // returned — see CDeclarationFilter.
-        boolean withDeps = req.has("with_deps") && req.get("with_deps").getAsBoolean();
+        boolean withDeps = RpcContext.reqBool(req, "with_deps");
         DataType dt;
         if (hasPath) {
             dt = DataTypeOps.requireDataTypeByPath(ctx, path);

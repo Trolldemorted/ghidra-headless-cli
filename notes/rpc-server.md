@@ -42,6 +42,25 @@ Handlers live in package `procedures.ghidra.app.cmd.function`, named `<GhidraCmd
   `{"success":false,"error":"..."}`.
 * Long-lived connection; many clients at once (one thread per connection).
 
+### Required vs optional fields
+
+Every field whose value the server was previously defaulting is now
+**required** on the wire. The CLI ships the documented default explicitly
+so the wire carries the resolved value; third-party clients MUST do the
+same. Missing-required-field errors come back as:
+
+```
+-> {"procedure":"FindFunction","file":"/X","query":"foo"}
+<- {"success":false,"error":"Missing required field 'field'."}
+```
+
+The full table of which fields are required for each procedure (and what
+the old server default was) lives at
+`/workdir/notes/required-fields-audit.md`. Hand-rolled clients should
+treat that table as part of the wire contract — if a field isn't listed
+there as "stays optional" (e.g. `comment`, `source`, `path`/`name` for
+lookups), it MUST be sent.
+
 ```
 -> {"procedure":"SetFunctionNameCmd","file":"/Mapeditor.exe","address":"0x4024f1","name":"main"}
 <- {"success":true}

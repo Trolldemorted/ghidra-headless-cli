@@ -130,11 +130,11 @@ pub enum Cmd {
         #[arg(long)]
         parent: Option<String>,
         /// Recurse into plain namespaces to find nested classes [default: true]
-        #[arg(long)]
-        recursive: Option<bool>,
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        recursive: bool,
         /// Cap the number of results [default: 0 = unlimited]
-        #[arg(long)]
-        limit: Option<i64>,
+        #[arg(long, default_value_t = 0i64)]
+        limit: i64,
         /// Emit the raw server `classes` array as JSON (for jq / scripts) [default: false]
         #[arg(long)]
         json: bool,
@@ -242,8 +242,8 @@ fn run_get_class(program: &str, class: &str, want_json: bool, client: &Client) -
 fn run_list_class(
     program: &str,
     parent: Option<String>,
-    recursive: Option<bool>,
-    limit: Option<i64>,
+    recursive: bool,
+    limit: i64,
     want_json: bool,
     client: &Client,
 ) -> Result<(), ()> {
@@ -251,8 +251,8 @@ fn run_list_class(
         Req::new("NamespaceListClasses")
             .str("file", program)
             .opt_str("parent", parent.clone())
-            .opt_bool("recursive", recursive)
-            .opt_int("limit", limit)
+            .bool("recursive", recursive)
+            .int("limit", limit)
             .build(),
     )?;
 

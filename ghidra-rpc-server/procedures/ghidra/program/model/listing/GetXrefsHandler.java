@@ -68,8 +68,8 @@ public final class GetXrefsHandler implements RpcProcedure {
             return RpcResponse.error("No " + type + " matched '" + to + "'.");
         }
 
-        boolean includeOffcut = RpcContext.optBool(req, "includeOffcut", true);
-        int limit = RpcContext.optInt(req, "limit", 0);
+        boolean includeOffcut = RpcContext.reqBool(req, "includeOffcut");
+        int limit = RpcContext.reqInt(req, "limit");
 
         FunctionManager fm = ctx.program().getFunctionManager();
         ReferenceManager rm = ctx.program().getReferenceManager();

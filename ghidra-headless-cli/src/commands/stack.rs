@@ -15,8 +15,8 @@ pub enum Cmd {
         #[arg(long)]
         address: String,
         /// Stack depth change in bytes [default: 0]
-        #[arg(long)]
-        stack_depth_change: Option<i64>,
+        #[arg(long, default_value_t = 0i64)]
+        stack_depth_change: i64,
     },
     /// Remove the stack-depth-change value at an address
     RemoveDepthChange {
@@ -37,7 +37,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             Req::new("SetStackDepthChangeCommand")
                 .str("file", program)
                 .str("address", address)
-                .opt_int("stackDepthChange", stack_depth_change)
+                .int("stackDepthChange", stack_depth_change)
                 .build(),
         ),
         Cmd::RemoveDepthChange { program, address } => client.run_simple(

@@ -30,9 +30,9 @@ public final class ListDataTypesHandler implements RpcProcedure {
     @Override
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
         CategoryPath folderPath = DataTypeOps.normalizePath(RpcContext.optStr(req, "category"));
-        boolean recursive = RpcContext.optBool(req, "recursive", true);
+        boolean recursive = RpcContext.reqBool(req, "recursive");
         String kind = RpcContext.optStr(req, "kind");
-        int limit = RpcContext.optInt(req, "limit", 0);
+        int limit = RpcContext.reqInt(req, "limit");
 
         Category root = ctx.program().getDataTypeManager().getCategory(folderPath);
         if (root == null) {

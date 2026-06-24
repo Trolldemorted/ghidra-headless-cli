@@ -30,13 +30,13 @@ pub struct FindArgs {
     address: bool,
     /// Treat the query as a regular expression [default: false]
     #[arg(long)]
-    regex: Option<bool>,
+    regex: bool,
     /// Match case-insensitively [default: false]
     #[arg(long)]
-    ignore_case: Option<bool>,
+    ignore_case: bool,
     /// Cap the number of results [default: 0 = unlimited]
-    #[arg(long)]
-    limit: Option<i64>,
+    #[arg(long, default_value_t = 0i64)]
+    limit: i64,
 }
 
 pub fn run_find(args: FindArgs, client: &Client) -> Result<(), ()> {
@@ -56,9 +56,9 @@ pub fn run_find(args: FindArgs, client: &Client) -> Result<(), ()> {
             .str("file", args.program)
             .str("query", args.query)
             .str("field", field)
-            .opt_bool("regex", args.regex)
-            .opt_bool("ignoreCase", args.ignore_case)
-            .opt_int("limit", args.limit)
+            .bool("regex", args.regex)
+            .bool("ignoreCase", args.ignore_case)
+            .int("limit", args.limit)
             .build(),
     )?;
     print_matches(&response, false);

@@ -15,7 +15,7 @@ public final class AddStackVarCmdHandler implements RpcProcedure {
     @Override
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
         Address funcEntry = ctx.requireAddress(RpcContext.reqStr(req, "address"));
-        int stackOffset = RpcContext.optInt(req, "stackOffset", 0);
+        int stackOffset = RpcContext.reqInt(req, "stackOffset");
         String name = RpcContext.optStr(req, "name");
         DataType dt = ctx.dataType(RpcContext.optStr(req, "dataType")); // null allowed
         return ctx.applyCommand(new AddStackVarCmd(

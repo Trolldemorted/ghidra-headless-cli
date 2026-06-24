@@ -32,11 +32,15 @@ public final class ListFilesHandler implements RpcProcedure {
         if (ctx.project() == null) {
             return RpcResponse.error("No project is available; cannot list files.");
         }
+        // folder is genuinely nullable — null means "root" (the
+        // normalize() helper handles null/empty by returning "/").
+        // The CLI's "file list" with no --folder still works; third-party
+        // clients can omit the field. See required-fields-audit.md.
         String folderPath = normalize(RpcContext.optStr(req, "folder"));
-        boolean recursive = RpcContext.optBool(req, "recursive", true);
-        boolean includeFolders = RpcContext.optBool(req, "includeFolders", false);
+        boolean recursive = RpcContext.reqBool(req, "recursive");
+        boolean includeFolders = RpcContext.reqBool(req, "includeFolders");
         String contentType = RpcContext.optStr(req, "contentType");
-        int limit = RpcContext.optInt(req, "limit", 0);
+        int limit = RpcContext.reqInt(req, "limit");
 
         ProjectData data = ctx.project().getProjectData();
         DomainFolder folder = data.getFolder(folderPath);

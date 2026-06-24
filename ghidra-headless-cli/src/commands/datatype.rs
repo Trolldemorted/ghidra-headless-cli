@@ -55,14 +55,14 @@ pub enum Cmd {
         #[arg(long)]
         category: Option<String>,
         /// Recurse into subcategories [default: true]
-        #[arg(long)]
-        recursive: Option<bool>,
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        recursive: bool,
         /// Keep only this kind: struct|union|enum|typedef|all [default: all]
         #[arg(long)]
         kind: Option<String>,
         /// Cap the number of results [default: 0 = unlimited]
-        #[arg(long)]
-        limit: Option<i64>,
+        #[arg(long, default_value_t = 0i64)]
+        limit: i64,
         /// Emit the raw server `types[]` array as JSON (for jq / scripts) [default: false]
         #[arg(long)]
         json: bool,
@@ -163,8 +163,8 @@ pub enum Cmd {
         #[arg(long)]
         base: Option<String>,
         /// Enum byte width [default: 4]
-        #[arg(long)]
-        enum_size: Option<i64>,
+        #[arg(long, default_value_t = 4i64)]
+        enum_size: i64,
     },
     /// Create or REPLACE a struct / union / enum / typedef (silently overwrites
     /// on name collision; references preserved). Same input shape as `create`.
@@ -230,8 +230,8 @@ pub enum Cmd {
         #[arg(long)]
         base: Option<String>,
         /// Enum byte width [default: 4]
-        #[arg(long)]
-        enum_size: Option<i64>,
+        #[arg(long, default_value_t = 4i64)]
+        enum_size: i64,
     },
     /// Edit an existing data type (batched: rename/move/description/addFields/replaceFields/addEntries)
     Edit {
@@ -260,7 +260,7 @@ pub enum Cmd {
         description: Option<String>,
         /// Drop all existing fields before adding (struct/union) [default: false]
         #[arg(long)]
-        replace_fields: Option<bool>,
+        replace_fields: bool,
         /// Fields to append as a C snippet: "struct { long long sum; char tag; };".
         /// The target type's name is auto-injected for anonymous snippets. The
         /// snippet's kind must match the target (struct/union/enum); mismatch
@@ -329,7 +329,7 @@ pub enum Cmd {
         /// length; the struct may grow/shrink and trailing components may
         /// shift. [default: false]
         #[arg(long)]
-        force: Option<bool>,
+        force: bool,
     },
     /// Rename a single struct/union field. Preserves the field's type,
     /// comment, and offset. Not supported on enums, typedefs, or built-ins.
@@ -380,14 +380,14 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             let category_ref: Option<&str> = category_for_print.as_deref();
             let kind_for_print = kind.clone();
             let kind_ref: Option<&str> = kind_for_print.as_deref();
-            let recursive_flag = recursive.unwrap_or(true);
+            let recursive_flag = recursive;
             let response = client.invoke(
                 Req::new("ListDataTypes")
                     .str("file", program)
                     .opt_str("category", category)
-                    .opt_bool("recursive", recursive)
+                    .bool("recursive", recursive)
                     .opt_str("kind", kind)
-                    .opt_int("limit", limit)
+                    .int("limit", limit)
                     .build(),
             )?;
             print_list(
@@ -435,7 +435,9 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                 }
             }
             if with_deps {
-                req = req.opt_bool("with_deps", Some(true));
+                req = req.bool("with_deps", true);
+            } else {
+                req = req.bool("with_deps", false);
             }
             let response = client.invoke(req.build())?;
             print_show(&response, json)?;
@@ -505,7 +507,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                     .opt_str("rename", rename)
                     .opt_str("move", move_to)
                     .opt_str("description", description)
-                    .opt_bool("replaceFields", replace_fields)
+                    .bool("replaceFields", replace_fields)
                     .opt_str("definition", definition)
                     .opt_json("addFields", add_fields_json)
                     .opt_json("addEntries", add_entries_json)
@@ -561,7 +563,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                     .str("path", path)
                     .str("field", field)
                     .str("type", type_)
-                    .opt_bool("force", force)
+                    .bool("force", force)
                     .build(),
             )?;
             print_field_typed(&response)?;
@@ -642,7 +644,7 @@ fn run_create_or_replace(
     fields: Option<String>,
     entries: Option<String>,
     base: Option<String>,
-    enum_size: Option<i64>,
+    enum_size: i64,
     client: &Client,
 ) -> Result<(), ()> {
     // --definition wins over the explicit JSON arrays: when both are
@@ -683,7 +685,7 @@ fn run_create_or_replace(
             .opt_json("fields", fields_json)
             .opt_json("entries", entries_json)
             .opt_str("base", base)
-            .opt_int("enumSize", enum_size)
+            .int("enumSize", enum_size)
             .build(),
     )?;
     print_show(&response, false)?;
@@ -705,7 +707,7 @@ fn run_replace(
     fields: Option<String>,
     entries: Option<String>,
     base: Option<String>,
-    enum_size: Option<i64>,
+    enum_size: i64,
     client: &Client,
 ) -> Result<(), ()> {
     // --definition wins over the explicit JSON arrays: when given, the
@@ -758,7 +760,7 @@ fn run_replace(
             .opt_json("fields", fields_json)
             .opt_json("entries", entries_json)
             .opt_str("base", base)
-            .opt_int("enumSize", enum_size)
+            .int("enumSize", enum_size)
             .build(),
     )?;
     print_show(&response, false)?;

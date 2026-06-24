@@ -52,7 +52,7 @@ public final class ClearCodeUnitsHandler implements RpcProcedure {
         if (ranges.isEmpty()) {
             return RpcResponse.error("Missing 'address' or 'addressSet'.");
         }
-        boolean clearContext = RpcContext.optBool(req, "clearContext", false);
+        boolean clearContext = RpcContext.reqBool(req, "clearContext");
 
         int[] unitsCleared = {0};
         Throwable[] error = {null};

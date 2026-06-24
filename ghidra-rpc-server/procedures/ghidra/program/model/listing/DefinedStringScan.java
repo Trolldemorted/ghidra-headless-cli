@@ -33,7 +33,7 @@ final class DefinedStringScan {
     static RpcResponse execute(RpcContext ctx, JsonObject req) throws Exception {
         Predicate<String> matches = StringQuery.containsOptional(req);
 
-        int limit = RpcContext.optInt(req, "limit", 0);
+        int limit = RpcContext.reqInt(req, "limit");
         AddressSetView scope = (req.has("address") || req.has("addressSet"))
             ? ctx.addressSet(req)
             : null;

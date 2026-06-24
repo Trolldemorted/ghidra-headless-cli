@@ -52,7 +52,7 @@ public final class SetDataTypeFieldTypeHandler implements RpcProcedure {
         String path = RpcContext.reqStr(req, "path");
         String field = RpcContext.reqStr(req, "field");
         String typeSpec = RpcContext.reqStr(req, "type");
-        boolean force = RpcContext.optBool(req, "force", false);
+        boolean force = RpcContext.reqBool(req, "force");
 
         DataType target = DataTypeOps.requireDataTypeByPath(ctx, path);
         if (DataTypeOps.isBuiltIn(ctx, target)) {

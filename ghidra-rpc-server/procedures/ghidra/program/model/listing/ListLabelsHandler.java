@@ -37,8 +37,8 @@ public final class ListLabelsHandler implements RpcProcedure {
         // we can default the needle to "" instead of requiring it.
         String query = RpcContext.optStr(req, "query");
         if (query == null) query = "";
-        boolean ignoreCase = RpcContext.optBool(req, "ignoreCase", false);
-        boolean regex = RpcContext.optBool(req, "regex", false);
+        boolean ignoreCase = RpcContext.reqBool(req, "ignoreCase");
+        boolean regex = RpcContext.reqBool(req, "regex");
         final String needle = regex ? query : (ignoreCase ? query.toLowerCase() : query);
         final boolean isRegex = regex;
         final boolean isCaseInsensitive = ignoreCase;
@@ -50,7 +50,7 @@ public final class ListLabelsHandler implements RpcProcedure {
             : (isCaseInsensitive
                 ? s -> s.toLowerCase().contains(needle)
                 : s -> s.contains(needle));
-        int limit = RpcContext.optInt(req, "limit", 0);
+        int limit = RpcContext.reqInt(req, "limit");
 
         SymbolTable st = ctx.program().getSymbolTable();
         List<LabelMatch> results = new ArrayList<>();

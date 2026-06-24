@@ -143,8 +143,8 @@ public final class CreateDataTypeHandler implements RpcProcedure {
     }
 
     private DataType createEnum(JsonObject req, String name, CategoryPath cp) throws Exception {
-        int size = RpcContext.optInt(req, "enumSize", 0);
-        if (size <= 0) size = RpcContext.optInt(req, "size", 4);
+        int size = RpcContext.reqInt(req, "enumSize");
+        if (size <= 0) size = 4; // defensive: caller passed 0 or negative
         EnumDataType e = new EnumDataType(cp, name, size);
         if (req.has("entries") && req.get("entries").isJsonArray()) {
             for (DataTypeOps.EnumEntry ee : DataTypeOps.enumEntries(req.getAsJsonArray("entries"))) {

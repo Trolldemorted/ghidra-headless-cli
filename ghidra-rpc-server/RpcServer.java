@@ -475,6 +475,7 @@ public class RpcServer extends GhidraScript {
         register("DeleteString", new procedures.ghidra.program.model.listing.DeleteStringHandler());
         register("ListFiles", new procedures.ghidra.framework.model.ListFilesHandler());
         register("FileMetadata", new procedures.ghidra.framework.model.FileMetadataHandler());
+        register("DeleteFile", new procedures.ghidra.framework.model.DeleteFileHandler());
 
         // Data-type management: list / show / create / replace / edit / delete / apply.
         // Built-ins (path "/" + BuiltIns/ANSI_C/windows_vs archive) are rejected by

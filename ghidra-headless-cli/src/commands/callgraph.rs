@@ -26,7 +26,7 @@ pub struct Cmd {
     pub format: String,
     /// Include non-call references (jump/data refs) [default: false]
     #[arg(long)]
-    pub include_refs: Option<bool>,
+    pub include_refs: bool,
 }
 
 pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
@@ -37,7 +37,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             .str("direction", cmd.direction)
             .int("depth", cmd.depth)
             .str("format", cmd.format)
-            .opt_bool("includeRefs", cmd.include_refs)
+            .bool("includeRefs", cmd.include_refs)
             .build(),
     )?;
     print_callgraph(&response);

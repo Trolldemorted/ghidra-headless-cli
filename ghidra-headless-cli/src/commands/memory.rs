@@ -6,7 +6,7 @@
 use clap::{Args, Subcommand};
 
 use crate::client::Client;
-use crate::common;
+use crate::common::{self, Source};
 use crate::json::{Json, Req};
 
 #[derive(Subcommand, Debug)]
@@ -50,9 +50,9 @@ pub struct CreateLabelArgs {
     /// Label name
     #[arg(long)]
     pub name: String,
-    /// Source type: USER_DEFINED | IMPORTED | ANALYSIS | AI [default: USER_DEFINED]
-    #[arg(long, value_name = "KIND", default_value = "USER_DEFINED")]
-    pub source: String,
+    /// Symbol source type [default: user-defined]
+    #[arg(long, value_enum)]
+    pub source: Option<Source>,
 }
 
 #[derive(Args, Debug)]
@@ -69,9 +69,9 @@ pub struct RenameLabelArgs {
     /// New label name (named `--name` to match `create-label --name`)
     #[arg(long, value_name = "NEW_NAME")]
     pub name: String,
-    /// Source type for the rename [default: USER_DEFINED]
-    #[arg(long, value_name = "KIND", default_value = "USER_DEFINED")]
-    pub source: String,
+    /// Symbol source type for the rename [default: user-defined]
+    #[arg(long, value_enum)]
+    pub source: Option<Source>,
 }
 
 #[derive(Args, Debug)]
@@ -107,13 +107,13 @@ pub struct ListLabelArgs {
     pub query: Option<String>,
     /// Treat --query as a regex [default: false]
     #[arg(long)]
-    pub regex: Option<bool>,
+    pub regex: bool,
     /// Case-insensitive name match [default: false]
     #[arg(long)]
-    pub ignore_case: Option<bool>,
+    pub ignore_case: bool,
     /// Cap the number of results [default: 0 = unlimited]
-    #[arg(long)]
-    pub limit: Option<i64>,
+    #[arg(long, default_value_t = 0i64)]
+    pub limit: i64,
 }
 
 #[derive(Args, Debug)]
@@ -126,10 +126,10 @@ pub struct LookupLabelArgs {
     pub query: String,
     /// Treat --query as a regex [default: false]
     #[arg(long)]
-    pub regex: Option<bool>,
+    pub regex: bool,
     /// Case-insensitive name match [default: false]
     #[arg(long)]
-    pub ignore_case: Option<bool>,
+    pub ignore_case: bool,
     /// Restrict the search to one address
     #[arg(long)]
     pub address: Option<String>,
@@ -205,7 +205,7 @@ pub struct ApplyTypeArgs {
     /// retry the create. Raw bytes are preserved; listing entries inside
     /// the range are erased. [default: false]
     #[arg(long)]
-    pub force: Option<bool>,
+    pub force: bool,
 }
 
 /// Args for `memory undefine`. Clears listing entries (Data / Instruction
@@ -230,7 +230,7 @@ pub struct UndefineArgs {
     /// Also drop references and analysis context [default: false]. When
     /// false, only the listing entries are removed; references are kept.
     #[arg(long)]
-    pub clear_context: Option<bool>,
+    pub clear_context: bool,
 }
 
 pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
@@ -239,14 +239,14 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             .str("file", a.program.clone())
             .str("address", a.address.clone())
             .str("name", a.name.clone())
-            .str("source", a.source.clone())
+            .opt_str("source", Source::opt(a.source.clone()))
             .build(),
         Cmd::RenameLabel(a) => Req::new("RenameLabel")
             .str("file", a.program.clone())
             .str("query", a.query.clone())
             .opt_str("address", a.address.clone())
             .str("newName", a.name.clone())
-            .str("source", a.source.clone())
+            .opt_str("source", Source::opt(a.source.clone()))
             .build(),
         Cmd::DeleteLabel(a) => Req::new("DeleteLabel")
             .str("file", a.program.clone())
@@ -261,15 +261,15 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
         Cmd::ListLabel(a) => Req::new("ListLabels")
             .str("file", a.program.clone())
             .opt_str("query", a.query.clone())
-            .opt_bool("regex", a.regex)
-            .opt_bool("ignoreCase", a.ignore_case)
-            .opt_int("limit", a.limit)
+            .bool("regex", a.regex)
+            .bool("ignoreCase", a.ignore_case)
+            .int("limit", a.limit)
             .build(),
         Cmd::LookupLabel(a) => Req::new("LookupLabel")
             .str("file", a.program.clone())
             .str("query", a.query.clone())
-            .opt_bool("regex", a.regex)
-            .opt_bool("ignoreCase", a.ignore_case)
+            .bool("regex", a.regex)
+            .bool("ignoreCase", a.ignore_case)
             .opt_str("address", a.address.clone())
             .build(),
         Cmd::GetLabel(a) => Req::new("GetLabel")
@@ -290,7 +290,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                 .str("file", a.program.clone())
                 .str("type", a.type_name.clone())
                 .opt_int("length", a.length)
-                .opt_bool("force", a.force);
+                .bool("force", a.force);
             if !a.address_set.is_empty() {
                 let items: Vec<Json> = a
                     .address_set
@@ -315,7 +315,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
         Cmd::Undefine(a) => {
             let req = Req::new("ClearCodeUnits")
                 .str("file", a.program.clone())
-                .opt_bool("clearContext", a.clear_context);
+                .bool("clearContext", a.clear_context);
             if !a.address_set.is_empty() {
                 let items: Vec<Json> = a
                     .address_set

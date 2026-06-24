@@ -17,8 +17,8 @@ pub enum Cmd {
         #[arg(long)]
         address: String,
         /// Stack frame offset [default: 0]
-        #[arg(long)]
-        stack_offset: Option<i64>,
+        #[arg(long, default_value_t = 0i64)]
+        stack_offset: i64,
         /// Variable name [default: auto-generated]
         #[arg(long)]
         name: Option<String>,
@@ -133,7 +133,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             Req::new("AddStackVarCmd")
                 .str("file", program)
                 .str("address", address)
-                .opt_int("stackOffset", stack_offset)
+                .int("stackOffset", stack_offset)
                 .opt_str("name", name)
                 .opt_str("dataType", data_type)
                 .opt_str("source", Source::opt(source))

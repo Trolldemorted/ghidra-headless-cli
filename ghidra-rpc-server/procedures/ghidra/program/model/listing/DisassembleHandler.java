@@ -36,7 +36,7 @@ public final class DisassembleHandler implements RpcProcedure {
         // `address` accepts either a hex address or an exact function name
         // (resolved via RpcContext.requireFunction).
         Function function = ctx.requireFunction(RpcContext.reqStr(req, "address"));
-        boolean includeBytes = RpcContext.optBool(req, "bytes", true);
+        boolean includeBytes = RpcContext.reqBool(req, "bytes");
 
         Listing listing = ctx.program().getListing();
         CodeUnitFormat fmt = CodeUnitFormat.DEFAULT;

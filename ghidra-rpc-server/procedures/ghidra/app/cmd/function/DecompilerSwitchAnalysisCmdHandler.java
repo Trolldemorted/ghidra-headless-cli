@@ -19,7 +19,7 @@ public final class DecompilerSwitchAnalysisCmdHandler implements RpcProcedure {
     @Override
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
         Function f = ctx.requireFunctionAt(RpcContext.reqStr(req, "address"));
-        int timeout = RpcContext.optInt(req, "timeout", 60);
+        int timeout = RpcContext.reqInt(req, "timeout");
         DecompInterface di = ctx.openedDecompiler();
         try {
             DecompileResults results = di.decompileFunction(f, timeout, ctx.monitor());

@@ -19,8 +19,8 @@ public final class DecompilerParameterIdCmdHandler implements RpcProcedure {
             "DecompilerParameterId (RPC)",
             ctx.addressSet(req),
             ctx.sourceType(RpcContext.optStr(req, "source")),
-            RpcContext.optBool(req, "commitDataTypes", true),
-            RpcContext.optBool(req, "commitVoidReturn", true),
-            RpcContext.optInt(req, "timeout", 60)));
+            RpcContext.reqBool(req, "commitDataTypes"),
+            RpcContext.reqBool(req, "commitVoidReturn"),
+            RpcContext.reqInt(req, "timeout")));
     }
 }

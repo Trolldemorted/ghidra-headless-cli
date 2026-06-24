@@ -47,24 +47,22 @@ public final class CallgraphHandler implements RpcProcedure {
         if (fnSpec.isEmpty()) {
             return RpcResponse.error("Missing 'function'.");
         }
-        String directionRaw = RpcContext.optStr(req, "direction");
-        String direction = (directionRaw == null || directionRaw.isEmpty()) ? "called" : directionRaw;
+        String direction = RpcContext.reqStr(req, "direction");
         if (!"called".equals(direction) && !"calling".equals(direction)) {
             return RpcResponse.error(
                 "Invalid 'direction' '" + direction + "': must be called or calling.");
         }
-        int depth = RpcContext.optInt(req, "depth", 2);
+        int depth = RpcContext.reqInt(req, "depth");
         if (depth < 1 || depth > MAX_DEPTH_CAP) {
             return RpcResponse.error(
                 "'depth' must be between 1 and " + MAX_DEPTH_CAP + ".");
         }
-        String formatRaw = RpcContext.optStr(req, "format");
-        String format = (formatRaw == null || formatRaw.isEmpty()) ? "mermaid" : formatRaw;
+        String format = RpcContext.reqStr(req, "format");
         if (!"mermaid".equals(format) && !"json".equals(format)) {
             return RpcResponse.error(
                 "Invalid 'format' '" + format + "': must be mermaid or json.");
         }
-        boolean includeRefs = RpcContext.optBool(req, "includeRefs", false);
+        boolean includeRefs = RpcContext.reqBool(req, "includeRefs");
 
         Function root = resolveFunction(ctx, fnSpec);
         if (root == null) {

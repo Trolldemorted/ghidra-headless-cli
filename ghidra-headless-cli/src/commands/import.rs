@@ -15,8 +15,8 @@ pub struct Cmd {
     #[arg(long, value_name = "KIND", default_value = "all")]
     pub r#type: String,
     /// Cap the total number of entries across all libraries [default: 0 = unlimited]
-    #[arg(long)]
-    pub limit: Option<i64>,
+    #[arg(long, default_value_t = 0i64)]
+    pub limit: i64,
 }
 
 pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
@@ -24,7 +24,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
         Req::new("GetImports")
             .str("file", cmd.program)
             .str("type", cmd.r#type)
-            .opt_int("limit", cmd.limit)
+            .int("limit", cmd.limit)
             .build(),
     )?;
     print_imports(&response);

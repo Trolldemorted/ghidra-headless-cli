@@ -35,7 +35,7 @@ public final class FlatDecompilerAPIHandler implements RpcProcedure {
         // to resolve the address first. requireFunction throws with a
         // diagnosed error message on miss — see RpcContext.diagnoseMissingFunction.
         Function function = ctx.requireFunction(RpcContext.reqStr(req, "address"));
-        int timeoutSecs = RpcContext.optInt(req, "timeoutSecs", 0);
+        int timeoutSecs = RpcContext.reqInt(req, "timeoutSecs");
 
         // FlatDecompilerAPI lazily opens a DecompInterface; dispose() releases it.
         FlatProgramAPI flat = new FlatProgramAPI(ctx.program(), ctx.monitor());

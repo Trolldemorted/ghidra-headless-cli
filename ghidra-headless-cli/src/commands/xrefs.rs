@@ -18,11 +18,11 @@ pub struct Cmd {
     #[arg(long, value_name = "KIND", default_value = "function")]
     pub r#type: String,
     /// Include offcut references (refs whose "from" is mid-instruction) [default: true]
-    #[arg(long)]
-    pub include_offcut: Option<bool>,
+    #[arg(long, default_value_t = true)]
+    pub include_offcut: bool,
     /// Cap the number of results [default: 0 = unlimited]
-    #[arg(long)]
-    pub limit: Option<i64>,
+    #[arg(long, default_value_t = 0i64)]
+    pub limit: i64,
 }
 
 pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
@@ -31,8 +31,8 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             .str("file", cmd.program)
             .str("to", cmd.to)
             .str("type", cmd.r#type)
-            .opt_bool("includeOffcut", cmd.include_offcut)
-            .opt_int("limit", cmd.limit)
+            .bool("includeOffcut", cmd.include_offcut)
+            .int("limit", cmd.limit)
             .build(),
     )?;
     print_xrefs(&response);

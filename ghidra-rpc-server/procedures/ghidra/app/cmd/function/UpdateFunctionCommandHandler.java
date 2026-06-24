@@ -34,10 +34,14 @@ public final class UpdateFunctionCommandHandler implements RpcProcedure {
         Function f = ctx.requireFunctionAt(RpcContext.reqStr(req, "address"));
         SourceType source = ctx.sourceType(RpcContext.optStr(req, "source"));
 
-        String ut = RpcContext.optStr(req, "updateType");
-        FunctionUpdateType updateType = (ut == null)
-            ? FunctionUpdateType.DYNAMIC_STORAGE_FORMAL_PARAMS
-            : FunctionUpdateType.valueOf(ut.trim().toUpperCase());
+        String ut = RpcContext.reqStr(req, "updateType");
+        FunctionUpdateType updateType;
+        try {
+            updateType = FunctionUpdateType.valueOf(ut.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Invalid 'updateType' '" + ut
+                + "': must be DYNAMIC_STORAGE_FORMAL_PARAMS, DYNAMIC_STORAGE_ALL_PARAMS, or CUSTOM_STORAGE.");
+        }
 
         String callingConvention = RpcContext.optStr(req, "callingConvention");
 
@@ -54,7 +58,7 @@ public final class UpdateFunctionCommandHandler implements RpcProcedure {
             }
         }
 
-        boolean force = RpcContext.optBool(req, "force", false);
+        boolean force = RpcContext.reqBool(req, "force");
         return ctx.applyCommand(new UpdateFunctionCommand(
             f, updateType, callingConvention, returnVar, params, source, force));
     }

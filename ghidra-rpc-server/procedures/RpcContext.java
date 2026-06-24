@@ -758,13 +758,48 @@ public class RpcContext {
             ? req.get(field).getAsString() : null;
     }
 
-    /** Read a required string field; throws when missing/empty. */
+    /**
+     * Read a required string field; throws when missing/empty.
+     *
+     * <p><b>Required vs. optional.</b> The wire contract treats
+     * {@code req*} as <em>required</em>: a missing or empty value is
+     * an error. The matching CLI flag is responsible for sending the
+     * old server-side default explicitly, so the server does not
+     * pick defaults for the caller. Use {@code req*} for any field
+     * where the server used to read it with {@code optBool/optInt} or
+     * with a {@code null} fallback. Use {@code optStr} only for fields
+     * whose absence is a real "no value" input (e.g. an auto-named
+     * function, an optional comment, a path-or-name lookup).
+     */
     public static String reqStr(JsonObject req, String field) {
         String v = optStr(req, field);
         if (v == null || v.isEmpty()) {
             throw new IllegalArgumentException("Missing required field '" + field + "'.");
         }
         return v;
+    }
+
+    /**
+     * Read a required boolean field; throws when missing/null. See
+     * {@link #reqStr} for the wire contract: a server-side default is
+     * always picked by the caller, not by the server.
+     */
+    public static boolean reqBool(JsonObject req, String field) {
+        if (!req.has(field) || req.get(field).isJsonNull()) {
+            throw new IllegalArgumentException("Missing required field '" + field + "'.");
+        }
+        return req.get(field).getAsBoolean();
+    }
+
+    /**
+     * Read a required int field; throws when missing/null. See
+     * {@link #reqStr} for the wire contract.
+     */
+    public static int reqInt(JsonObject req, String field) {
+        if (!req.has(field) || req.get(field).isJsonNull()) {
+            throw new IllegalArgumentException("Missing required field '" + field + "'.");
+        }
+        return req.get(field).getAsInt();
     }
 
     // ---------------------------------------------------------------------------

@@ -21,7 +21,7 @@ pub enum Cmd {
         address_set: Vec<String>,
         /// Force processing of already-analyzed functions [default: false]
         #[arg(long)]
-        force_processing: Option<bool>,
+        force_processing: bool,
     },
     /// Newer stack-analysis pass over the set
     StackNew {
@@ -33,7 +33,7 @@ pub enum Cmd {
         address_set: Vec<String>,
         /// Force processing of already-analyzed functions [default: false]
         #[arg(long)]
-        force_processing: Option<bool>,
+        force_processing: bool,
     },
     /// Result-state-based stack analysis over the set
     StackResultState {
@@ -45,7 +45,7 @@ pub enum Cmd {
         address_set: Vec<String>,
         /// Force processing of already-analyzed functions [default: false]
         #[arg(long)]
-        force_processing: Option<bool>,
+        force_processing: bool,
     },
     /// Compute stack purge for functions in the set
     Purge {
@@ -68,14 +68,14 @@ pub enum Cmd {
         #[arg(long, value_enum)]
         source: Option<Source>,
         /// Commit identified data types [default: true]
-        #[arg(long)]
-        commit_data_types: Option<bool>,
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        commit_data_types: bool,
         /// Commit a void return when identified [default: true]
-        #[arg(long)]
-        commit_void_return: Option<bool>,
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        commit_void_return: bool,
         /// Decompiler timeout in seconds [default: 60]
-        #[arg(long)]
-        timeout: Option<i64>,
+        #[arg(long, default_value_t = 60i64)]
+        timeout: i64,
     },
     /// Recover switch tables for the function at an address
     DecompilerSwitch {
@@ -84,8 +84,8 @@ pub enum Cmd {
         #[arg(long)]
         address: String,
         /// Decompiler timeout in seconds [default: 60]
-        #[arg(long)]
-        timeout: Option<i64>,
+        #[arg(long, default_value_t = 60i64)]
+        timeout: i64,
     },
     /// Decompiler-based calling-convention analysis for a function
     DecompilerConvention {
@@ -94,8 +94,8 @@ pub enum Cmd {
         #[arg(long)]
         address: String,
         /// Decompiler timeout in seconds [default: 60]
-        #[arg(long)]
-        timeout: Option<i64>,
+        #[arg(long, default_value_t = 60i64)]
+        timeout: i64,
     },
 }
 
@@ -172,9 +172,9 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                     .opt_str("address", address)
                     .opt_json("addressSet", set)
                     .opt_str("source", Source::opt(source))
-                    .opt_bool("commitDataTypes", commit_data_types)
-                    .opt_bool("commitVoidReturn", commit_void_return)
-                    .opt_int("timeout", timeout)
+                    .bool("commitDataTypes", commit_data_types)
+                    .bool("commitVoidReturn", commit_void_return)
+                    .int("timeout", timeout)
                     .build(),
             )
         }
@@ -186,7 +186,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             Req::new("DecompilerSwitchAnalysisCmd")
                 .str("file", program)
                 .str("address", address)
-                .opt_int("timeout", timeout)
+                .int("timeout", timeout)
                 .build(),
         ),
         Cmd::DecompilerConvention {
@@ -197,7 +197,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             Req::new("DecompilerParallelConventionAnalysisCmd")
                 .str("file", program)
                 .str("address", address)
-                .opt_int("timeout", timeout)
+                .int("timeout", timeout)
                 .build(),
         ),
     }
@@ -211,7 +211,7 @@ fn run_set_force(
     program: String,
     address: Option<String>,
     address_set: Vec<String>,
-    force_processing: Option<bool>,
+    force_processing: bool,
 ) -> Result<(), ()> {
     common::require_address_or_set(&address, &address_set).map_err(common::log_arg_err)?;
     let set = common::address_set(&address_set).map_err(common::log_arg_err)?;
@@ -220,7 +220,7 @@ fn run_set_force(
             .str("file", program)
             .opt_str("address", address)
             .opt_json("addressSet", set)
-            .opt_bool("forceProcessing", force_processing)
+            .bool("forceProcessing", force_processing)
             .build(),
     )
 }

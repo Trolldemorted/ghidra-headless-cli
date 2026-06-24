@@ -42,8 +42,8 @@ public final class NamespaceListClassesHandler implements RpcProcedure {
     @Override
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
         String parentPath = RpcContext.optStr(req, "parent");
-        boolean recursive = RpcContext.optBool(req, "recursive", true);
-        int limit = RpcContext.optInt(req, "limit", 0);
+        boolean recursive = RpcContext.reqBool(req, "recursive");
+        int limit = RpcContext.reqInt(req, "limit");
 
         Namespace parent;
         try {

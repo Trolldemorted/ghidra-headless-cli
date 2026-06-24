@@ -66,7 +66,7 @@ pub enum Cmd {
         referenced_function_address: Option<String>,
         /// Check existing function when auto-detecting [default: false]
         #[arg(long)]
-        check_existing: Option<bool>,
+        check_existing: bool,
     },
     /// Create an external function in a library
     CreateExternal {
@@ -163,11 +163,11 @@ pub enum Cmd {
         #[arg(long, value_enum)]
         source: Option<Source>,
         /// Create bookmarks for applied types [default: true]
-        #[arg(long)]
-        create_bookmarks: Option<bool>,
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        create_bookmarks: bool,
         /// Always replace existing signatures [default: false]
         #[arg(long)]
-        always_replace: Option<bool>,
+        always_replace: bool,
     },
     /// Capture function signatures in the set into the program's DTM
     CaptureDataTypes {
@@ -185,8 +185,8 @@ pub enum Cmd {
         #[arg(long)]
         address: String,
         /// Parameter storage handling [default: dynamic-storage-formal-params]
-        #[arg(long, value_enum)]
-        update_type: Option<UpdateType>,
+        #[arg(long, value_enum, default_value_t = UpdateType::DynamicStorageFormalParams)]
+        update_type: UpdateType,
         /// Calling convention, e.g. "__stdcall" [default: unchanged]
         ///
         /// `__thiscall` carries an IMPLICIT `this` in ECX (RCX on x64)
@@ -205,7 +205,7 @@ pub enum Cmd {
         source: Option<Source>,
         /// Override conflicting storage [default: false]
         #[arg(long)]
-        force: Option<bool>,
+        force: bool,
     },
     /// Toggle varargs on a function
     SetVarargs {
@@ -213,9 +213,10 @@ pub enum Cmd {
         program: String,
         #[arg(long)]
         address: String,
-        /// Whether the function has varargs [default: true]
-        #[arg(long)]
-        has_var_args: Option<bool>,
+        /// Whether the function has varargs. Pass `false` to clear varargs
+        /// from an already-varargs function. [default: true, value: true|false]
+        #[arg(long, value_name = "BOOL", default_value_t = true, action = clap::ArgAction::Set)]
+        has_var_args: bool,
     },
     /// Set a function's stack purge size
     SetPurge {
@@ -224,8 +225,8 @@ pub enum Cmd {
         #[arg(long)]
         address: String,
         /// Purge size in bytes [default: 0]
-        #[arg(long)]
-        purge: Option<i64>,
+        #[arg(long, default_value_t = 0i64)]
+        purge: i64,
     },
     /// Set a function's repeatable comment
     SetRepeatableComment {
@@ -361,7 +362,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                 .str("file", program)
                 .str("address", address)
                 .opt_str("referencedFunctionAddress", referenced_function_address)
-                .opt_bool("checkExisting", check_existing)
+                .bool("checkExisting", check_existing)
                 .build(),
         ),
         Cmd::CreateExternal {
@@ -420,8 +421,8 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                     .opt_str("address", address)
                     .opt_json("addressSet", set)
                     .opt_str("source", Source::opt(source))
-                    .opt_bool("createBookmarks", create_bookmarks)
-                    .opt_bool("alwaysReplace", always_replace)
+                    .bool("createBookmarks", create_bookmarks)
+                    .bool("alwaysReplace", always_replace)
                     .build(),
             )
         }
@@ -481,12 +482,12 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                 Req::new("UpdateFunctionCommand")
                     .str("file", program)
                     .str("address", address)
-                    .opt_str("updateType", update_type.map(|u| u.wire().to_string()))
+                    .str("updateType", update_type.wire())
                     .opt_str("callingConvention", calling_convention)
                     .opt_str("returnType", return_type)
                     .opt_json("parameters", params)
                     .opt_str("source", Source::opt(source))
-                    .opt_bool("force", force)
+                    .bool("force", force)
                     .build(),
             )
         }
@@ -498,7 +499,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             Req::new("SetFunctionVarArgsCommand")
                 .str("file", program)
                 .str("address", address)
-                .opt_bool("hasVarArgs", has_var_args)
+                .bool("hasVarArgs", has_var_args)
                 .build(),
         ),
         Cmd::SetPurge {
@@ -509,7 +510,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             Req::new("SetFunctionPurgeCommand")
                 .str("file", program)
                 .str("address", address)
-                .opt_int("purge", purge)
+                .int("purge", purge)
                 .build(),
         ),
         Cmd::SetRepeatableComment {

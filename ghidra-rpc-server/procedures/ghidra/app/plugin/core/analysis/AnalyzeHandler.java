@@ -35,7 +35,7 @@ public final class AnalyzeHandler implements RpcProcedure {
     @Override
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
         Program program = ctx.program();
-        boolean force = RpcContext.optBool(req, "force", true);
+        boolean force = RpcContext.reqBool(req, "force");
 
         boolean wasAnalyzed = GhidraProgramUtilities.isAnalyzed(program);
         if (wasAnalyzed && !force) {

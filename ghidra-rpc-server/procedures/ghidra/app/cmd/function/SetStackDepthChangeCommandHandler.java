@@ -14,7 +14,7 @@ public final class SetStackDepthChangeCommandHandler implements RpcProcedure {
     @Override
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
         Address addr = ctx.requireAddress(RpcContext.reqStr(req, "address"));
-        int depthChange = RpcContext.optInt(req, "stackDepthChange", 0);
+        int depthChange = RpcContext.reqInt(req, "stackDepthChange");
         return ctx.applyCommand(new SetStackDepthChangeCommand(addr, depthChange));
     }
 }

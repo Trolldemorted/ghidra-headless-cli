@@ -67,7 +67,7 @@ public final class ApplyDataTypeHandler implements RpcProcedure {
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
         String typeText = RpcContext.reqStr(req, "type");
         DataType dt = ctx.requireDataType(typeText);
-        boolean force = RpcContext.optBool(req, "force", false);
+        boolean force = RpcContext.reqBool(req, "force");
 
         // Ghidra's Listing.createData(addr, dt, len) honors `len` ONLY for
         // Dynamic types (typedefs of arrays, strings, FactoryDataType-based

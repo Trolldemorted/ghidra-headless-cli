@@ -31,8 +31,8 @@ pub enum Cmd {
         #[arg(long = "file", value_name = "FILE")]
         program: String,
         /// Re-analyze even if already analyzed [default: true]
-        #[arg(long)]
-        force: Option<bool>,
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        force: bool,
     },
     /// List project files under a folder
     List {
@@ -40,21 +40,27 @@ pub enum Cmd {
         #[arg(long)]
         folder: Option<String>,
         /// Recurse into subfolders [default: true]
-        #[arg(long)]
-        recursive: Option<bool>,
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        recursive: bool,
         /// Include folder entries in the output [default: false]
         #[arg(long)]
-        include_folders: Option<bool>,
+        include_folders: bool,
         /// Keep only files of this content type, e.g. "Program" [default: all]
         #[arg(long)]
         content_type: Option<String>,
         /// Cap the number of results [default: 0 = unlimited]
-        #[arg(long)]
-        limit: Option<i64>,
+        #[arg(long, default_value_t = 0i64)]
+        limit: i64,
     },
     /// Show a project file's attributes and stored metadata
     Metadata {
         /// Target file project path
+        #[arg(long)]
+        file: String,
+    },
+    /// Delete a file from the project tree (irreversible; future versions will support folders)
+    Delete {
+        /// Target file project path (e.g. /foo.exe)
         #[arg(long)]
         file: String,
     },
@@ -95,7 +101,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             let response = client.invoke(
                 Req::new("Analyze")
                     .str("file", program)
-                    .opt_bool("force", force)
+                    .bool("force", force)
                     .build(),
             )?;
             let analyzed = field_bool(&response, "analyzed");
@@ -123,10 +129,10 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             let response = client.invoke(
                 Req::new("ListFiles")
                     .opt_str("folder", folder)
-                    .opt_bool("recursive", recursive)
-                    .opt_bool("includeFolders", include_folders)
+                    .bool("recursive", recursive)
+                    .bool("includeFolders", include_folders)
                     .opt_str("contentType", content_type)
-                    .opt_int("limit", limit)
+                    .int("limit", limit)
                     .build(),
             )?;
             print_listing(&response);
@@ -135,6 +141,13 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
         Cmd::Metadata { file } => {
             let response = client.invoke(Req::new("FileMetadata").str("file", file).build())?;
             print_metadata(&response);
+            Ok(())
+        }
+        Cmd::Delete { file } => {
+            let response = client.invoke(Req::new("DeleteFile").str("file", file).build())?;
+            let name = response.get("name").and_then(Json::as_str).unwrap_or("?");
+            let path = response.get("path").and_then(Json::as_str).unwrap_or("?");
+            log::info!("deleted {} (was {})", name, path);
             Ok(())
         }
     }
