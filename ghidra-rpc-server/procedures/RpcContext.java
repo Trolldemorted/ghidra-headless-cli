@@ -117,6 +117,30 @@ public class RpcContext {
         }
     };
 
+    /**
+     * Callback invoked when a write to the Ghidra Server surfaces "Not connected
+     * to repository server" — the RMI connection has died mid-session. The
+     * callback should arrange for the JVM to exit so an external orchestrator
+     * (compose / k8s / systemd) can restart us. Reconnecting a parked JVM to a
+     * live Ghidra Server is non-trivial (the cached {@link Project} is bound to
+     * the dead RMI connection, and re-authenticating mid-session is not a
+     * documented Ghidra flow), so a clean restart is the simplest correct
+     * recovery for now. Null until {@link #onConnectionLost(Runnable)} wires one
+     * up. Set rarely, fired rarely; volatile suffices.
+     */
+    private volatile Runnable onConnectionLost;
+
+    /**
+     * Register a handler that fires when {@link #checkin} detects the underlying
+     * Ghidra Server connection has been lost. Only one handler at a time;
+     * passing a new one replaces the previous. Pass null to clear. Called from
+     * the server's main thread at startup; invoked from an rpc-client thread
+     * inside the request lock when checkin hits the disconnect signature.
+     */
+    public void onConnectionLost(Runnable handler) {
+        this.onConnectionLost = handler;
+    }
+
     /** The program selected for the in-flight request; set/cleared by {@link #dispatch} under {@link #lock}. */
     private Program active;
 
@@ -588,13 +612,49 @@ public class RpcContext {
             }
             return null;
         } catch (Exception e) {
-            return RpcResponse.error("Check-in/push failed: " + message(e));
+            String m = message(e);
+            // If the Ghidra Server connection has died mid-session, fire the
+            // registered handler so the orchestrator can restart us. We still
+            // return the error below — the in-flight request fails for the
+            // client, the next one (if the JVM is still up long enough to
+            // receive it) will hit the same dead connection and trigger the
+            // same shutdown. Without this, every subsequent request loops on
+            // the same "Not connected" error until something external kills
+            // the JVM. The handler is advisory; exceptions from it must not
+            // mask the original error response.
+            if (isConnectionLost(m)) {
+                Runnable h = onConnectionLost;
+                if (h != null) {
+                    try {
+                        h.run();
+                    } catch (Exception ignored) {
+                        // best-effort; advisory callback
+                    }
+                }
+            }
+            return RpcResponse.error("Check-in/push failed: " + m);
         }
     }
 
     private static String message(Throwable t) {
         String m = t.getMessage();
         return (m != null && !m.isEmpty()) ? m : t.getClass().getSimpleName();
+    }
+
+    /**
+     * Match Ghidra's RMI-connection-lost signature thrown by the repository
+     * adapter when an RMI call hits a dead socket. The exact wording is
+     * {@code "Not connected to repository server"} (verified against Ghidra
+     * 12.1.2; the suffix the user sees in logs — e.g. {@code "(RpcServer)"} —
+     * is the consumer name Ghidra appends when wrapping the IOException, so
+     * prefix-matching covers all observed variants). If a future Ghidra
+     * release changes the wording, add the new signature here; until then,
+     * the JVM will keep serving requests through a dead connection (the same
+     * spam the user is trying to escape) and just log "Not connected" errors
+     * without exiting.
+     */
+    static boolean isConnectionLost(String message) {
+        return message != null && message.startsWith("Not connected to repository server");
     }
 
     // ---------------------------------------------------------------------------

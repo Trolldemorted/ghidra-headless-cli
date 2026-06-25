@@ -91,6 +91,28 @@ public class RpcServer extends GhidraScript {
         // is only a trigger — we use it solely to close the enclosing transaction (below)
         // and otherwise ignore it, so the initial state is genuinely empty.
         context = new RpcContext(state.getProject(), monitor);
+        // Detect mid-session Ghidra Server connection loss in RpcContext.checkin
+        // and exit through the same graceful path the SIGTERM shutdown hook uses,
+        // so compose / k8s / systemd can restart us with a fresh RMI connection.
+        // (Reconnecting a parked JVM to a live Ghidra Server is non-trivial; a
+        // clean restart is the simplest correct recovery until we build proper
+        // reconnection. RpcContext surfaces the detection as "Not connected to
+        // repository server"; without this callback every subsequent request
+        // would loop on the same error forever.)
+        context.onConnectionLost(() -> {
+            Msg.error(this, "Ghidra Server connection lost (RpcContext detected "
+                + "'Not connected to repository server' on checkin); exiting so "
+                + "the orchestrator can restart the RPC server.");
+            stopping = true; // drive the accept loop to exit (monitor.cancel is a no-op)
+            ServerSocket s = serverSocket;
+            if (s != null) {
+                try {
+                    s.close(); // interrupt accept() and let the run() finally run
+                } catch (IOException ignored) {
+                    // already closed
+                }
+            }
+        });
         registerHandlers();
 
         // Push out the server-side password expiry by re-setting the password to
