@@ -159,12 +159,14 @@ public class RpcContext {
     public RpcResponse dispatch(RpcProcedure procedure, JsonObject request) throws Exception {
         lock.lock();
         try {
+            // Capture path up front so the corruption-recovery retry (below) can re-resolve
+            // the DomainFile. Only set when the procedure targets a program.
+            String path = procedure.needsProgram() ? optStr(request, "file") : null;
+            if (procedure.needsProgram() && (path == null || path.isEmpty())) {
+                return RpcResponse.error("Missing required field 'file'.");
+            }
             Program program = null;
-            if (procedure.needsProgram()) {
-                String path = optStr(request, "file");
-                if (path == null || path.isEmpty()) {
-                    return RpcResponse.error("Missing required field 'file'.");
-                }
+            if (path != null) {
                 try {
                     program = openProgram(path); // checks the file out before opening it
                 } catch (Exception e) {
@@ -173,7 +175,52 @@ public class RpcContext {
             }
             active = program;
             try {
-                RpcResponse response = procedure.execute(request, this);
+                RpcResponse response = null;
+                boolean recovered = false; // exactly one retry per request
+                // 1st attempt (or the retry after recovery): may throw or return a response.
+                try {
+                    response = procedure.execute(request, this);
+                } catch (Exception primaryEx) {
+                    if (!recovered && program != null && isBufferLockError(primaryEx)) {
+                        // Thrown-buffer-lock surface (e.g. "Locked buffer: N" escapes the
+                        // decompiler subprocess): evict + retry once.
+                        logBufferLockRecovery(procedureOf(request), message(primaryEx));
+                        try {
+                            program = evictAndReopen(path);
+                        } catch (Exception reopenEx) {
+                            return RpcResponse.error("Recovery reopen failed after "
+                                + "buffer-lock corruption: " + message(reopenEx));
+                        }
+                        active = program;
+                        recovered = true;
+                        try {
+                            response = procedure.execute(request, this);
+                        } catch (Exception retryEx) {
+                            // Retry also threw. Re-throw so the caller sees a real error;
+                            // the recovery already logged the WARN above.
+                            throw retryEx;
+                        }
+                    } else {
+                        throw primaryEx;
+                    }
+                }
+                // 2nd surface: the command returns false with a status message like
+                // "Can't checkpoint with locked buffers (N locks found)" rather than
+                // throwing — see the original traceback. Same eviction + retry, gated
+                // by the `recovered` flag so we never loop.
+                if (!recovered && program != null && response != null && !response.success
+                        && isBufferLockError(response.error)) {
+                    logBufferLockRecovery(procedureOf(request), response.error);
+                    try {
+                        program = evictAndReopen(path);
+                    } catch (Exception reopenEx) {
+                        return RpcResponse.error("Recovery reopen failed after "
+                            + "buffer-lock corruption: " + message(reopenEx));
+                    }
+                    active = program;
+                    recovered = true;
+                    response = procedure.execute(request, this);
+                }
                 if (response != null && response.success && procedure.mutates() && program != null) {
                     RpcResponse checkinError = checkin(program, procedureOf(request));
                     if (checkinError != null) {
@@ -186,6 +233,22 @@ public class RpcContext {
             }
         } finally {
             lock.unlock();
+        }
+    }
+
+    /**
+     * Operator-visible WARN line emitted when {@link #dispatch} evicts a cached
+     * Program because of a BufferMgr corruption. Kept here (next to the only call
+     * site) so the recovery semantics are grep-able as one block.
+     */
+    private void logBufferLockRecovery(String procedure, String originalError) {
+        try {
+            ghidra.util.Msg.warn(this,
+                "RPC " + procedure + " hit buffer-lock corruption ("
+                + (originalError == null ? "<no message>" : originalError)
+                + "); dropping cached program and retrying with recovery.");
+        } catch (Exception ignored) {
+            // Msg.warn failing (e.g. during shutdown) must not abort the recovery path.
         }
     }
 
@@ -202,12 +265,29 @@ public class RpcContext {
     // ---------------------------------------------------------------------------
 
     /**
+     * Open (and cache) the program at {@code path}. Convenience overload with
+     * {@code okToRecover=false}; see {@link #openProgram(String, boolean)} for the
+     * recovery-on-open semantics.
+     */
+    private Program openProgram(String path) throws Exception {
+        return openProgram(path, false);
+    }
+
+    /**
      * Open (and cache) the program at {@code path}. {@code path} is a project path
      * (e.g. {@code "/Mapeditor.exe"}); a bare name with no {@code '/'} is also accepted
      * and resolved by a recursive name search. Returns the cached instance on repeat
      * calls. Throws {@link IllegalArgumentException} if no such program exists.
+     *
+     * <p>{@code okToRecover} is passed through to {@link DomainFile#getDomainObject}:
+     * when true, Ghidra applies any pending recovery change-set left behind by a
+     * previous JVM that crashed mid-edit (e.g. an OOM-killed prior RPC server) so the
+     * fresh in-memory state matches the on-disk intent. The default (false) is
+     * preserved for the normal open path — we are a fresh consumer and don't want to
+     * silently pull in another session's unfinished work. Recovery is opted into only
+     * by the corruption-recovery retry in {@link #dispatch}.
      */
-    private Program openProgram(String path) throws Exception {
+    private Program openProgram(String path, boolean okToRecover) throws Exception {
         if (project == null) {
             throw new IllegalArgumentException(
                 "No project is available; cannot select program '" + path + "'.");
@@ -234,11 +314,95 @@ public class RpcContext {
                     "Failed to check out '" + df.getPathname() + "' (held by another user?).");
             }
         }
-        // okToUpgrade=true (open older DB versions), okToRecover=false. We are the consumer.
-        Program p = (Program) df.getDomainObject(this, true, false, monitor);
+        // okToUpgrade=true (open older DB versions). okToRecover is parameterized — see
+        // the Javadoc above.
+        Program p = (Program) df.getDomainObject(this, true, okToRecover, monitor);
         open.put(key, p);
         owned.add(p);
         return p;
+    }
+
+    /**
+     * Drop the cached {@link Program} for {@code path} and reopen it with
+     * {@code okToRecover=true}. Used by {@link #dispatch}'s corruption-recovery retry
+     * when a request hits a {@link #isBufferLockError(Throwable) BufferMgr corruption}
+     * (e.g. {@code "Locked buffer: N"} or {@code "Can't checkpoint with locked
+     * buffers"}); the on-disk file is fine, but the cached instance's in-memory
+     * {@code db.buffers.BufferMgr} is wedged and would re-throw the same error on
+     * every subsequent request. Releasing the {@link Program} disposes its
+     * {@code BufferMgr} (releasing every pinned {@code BufferNode} regardless of
+     * {@code lockCount}); the reopen re-reads buffers from disk.
+     *
+     * <p>The exclusive checkout lives on the {@link DomainFile} (server-side), not
+     * on the {@link Program}, so {@link Program#release release} does NOT orphan the
+     * checkout — the subsequent open reuses the same checkout. Release is
+     * best-effort: a failed release is itself a symptom of the corruption we're
+     * recovering from, so we swallow it and let the reopen take over.
+     */
+    private Program evictAndReopen(String path) throws Exception {
+        java.util.List<String> candidates = new java.util.ArrayList<>();
+        DomainFile df = resolveFile(path, candidates);
+        if (df == null) {
+            throw new IllegalArgumentException(noFileMessage(path, candidates));
+        }
+        String key = normalize(df.getPathname());
+        Program old = open.get(key);
+        if (old != null) {
+            try {
+                old.release(this);
+            } catch (Exception ignored) {
+                // best-effort; a failed release is part of the corruption we're recovering from
+            }
+            open.remove(key);
+            owned.remove(old);
+        }
+        return openProgram(path, true);
+    }
+
+    /**
+     * Match the Ghidra 12.1.2 {@code db.buffers.BufferMgr} in-memory-corruption
+     * signatures (verified via {@code javap -v} of {@code BufferMgr.class} in
+     * {@code Ghidra/Framework/DB/lib/DB.jar}; only {@code BufferMgr} holds the
+     * "Locked buffer" strings, so there is no on-disk lock state to clean up —
+     * recovery is purely an in-memory eviction). Returns true for:
+     * <ul>
+     *   <li>{@code "Locked buffer: <id>"} (a {@code BufferNode} was pinned by an
+     *       earlier caller that forgot to {@code releaseBuffer(...)})</li>
+     *   <li>{@code "Invalid or locked buffer"}</li>
+     *   <li>{@code "Can't checkpoint with locked buffers (N locks found)"} and
+     *       the matching undo/redo variants — fired by the command's own
+     *       checkpoint at the end of {@code applyTo}; the original
+     *       {@code "Locked buffer: N"} exception is logged upstream and swallowed
+     *       inside the command, so this string is what surfaces to the client.</li>
+     *   <li>{@code "Corrupted BufferMgr state"} and {@code "BufferMgr is Corrupt!\n"}</li>
+     * </ul>
+     * The signature-match style (prefix / exact) mirrors how Ghidra builds each
+     * message — the buffer ID, lock count and trailing newline vary.
+     */
+    static boolean isBufferLockError(String message) {
+        if (message == null) {
+            return false;
+        }
+        if (message.startsWith("Locked buffer:")            // "Locked buffer: <id>"
+                || message.equals("Invalid or locked buffer")
+                || message.startsWith("Can't checkpoint with locked buffers")
+                || message.startsWith("Can't undo with locked buffers")
+                || message.startsWith("Can't redo with locked buffers")
+                || message.equals("Corrupted BufferMgr state")
+                || message.startsWith("BufferMgr is Corrupt!")) {
+            return true;
+        }
+        return false;
+    }
+
+    /** Walks the cause chain so a wrapped {@code DomainObjectException} -> {@code IOException} matches. */
+    static boolean isBufferLockError(Throwable t) {
+        for (Throwable cur = t; cur != null; cur = cur.getCause()) {
+            if (isBufferLockError(cur.getMessage())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
