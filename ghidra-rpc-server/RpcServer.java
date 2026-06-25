@@ -115,6 +115,17 @@ public class RpcServer extends GhidraScript {
         });
         registerHandlers();
 
+        // Phase 3 startup revert: if a previous JVM exited with dirty local
+        // files (e.g. because the Ghidra Server connection was down at SIGTERM
+        // time and closeAll's revertDirtyLocalFiles had no server to talk to),
+        // the next JVM starts up with stale local caches whose on-disk content
+        // doesn't match the server. Walk the project tree once and undo-checkout
+        // any file whose local cache says modifiedSinceCheckout() — that flag
+        // is the canonical signal that a checkout has local changes not yet
+        // pushed. Best-effort: failures log and continue so a single bad file
+        // can't block the server from starting.
+        context.revertDirtyLocalFilesOnStartup();
+
         // Push out the server-side password expiry by re-setting the password to
         // its current value. Fresh user accounts on a -a0 Ghidra Server default to
         // a 24h expiry (see svrREADME "Allows the reset password expiration to be

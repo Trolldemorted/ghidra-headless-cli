@@ -2,9 +2,11 @@ package procedures;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
 
 import com.google.gson.JsonElement;
@@ -35,6 +37,7 @@ import ghidra.program.model.listing.Program;
 import ghidra.program.model.listing.Variable;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Symbol;
+import ghidra.util.Msg;
 import ghidra.util.data.DataTypeParser;
 import procedures.ghidra.program.model.data.DataTypeOps;
 import ghidra.util.data.DataTypeParser.AllowedDataTypes;
@@ -131,6 +134,20 @@ public class RpcContext {
     private volatile Runnable onConnectionLost;
 
     /**
+     * Consecutive {@code "Not connected to repository server"} checkin failures
+     * before {@link #onConnectionLost} fires. A short TCP blip usually produces
+     * 1-2 such errors before recovery (TCP retransmits handle in-flight calls;
+     * the next new call after the blip succeeds). Sustained outages produce
+     * many in a row — that's the regime where an orchestrator-driven restart
+     * is the right move. Read &amp; written only inside {@link #lock} (dispatch
+     * holds the lock across checkin), so no extra synchronization needed.
+     */
+    private static final int CONNECTION_LOST_THRESHOLD = 5;
+
+    /** Consecutive connection-lost checkin failures since the last successful checkin. */
+    private int connectionLostFailures = 0;
+
+    /**
      * Register a handler that fires when {@link #checkin} detects the underlying
      * Ghidra Server connection has been lost. Only one handler at a time;
      * passing a new one replaces the previous. Pass null to clear. Called from
@@ -143,6 +160,34 @@ public class RpcContext {
 
     /** The program selected for the in-flight request; set/cleared by {@link #dispatch} under {@link #lock}. */
     private Program active;
+
+    /**
+     * Transaction id of the dispatch-owned transaction on the active program,
+     * or {@code -1} if none is open. For mutating procedures, {@link #dispatch}
+     * opens the transaction itself and holds it open across the checkin
+     * attempt so a failed push can roll back the in-memory state. Read &
+     * written only inside {@link #lock} (dispatch holds the lock across the
+     * entire request lifecycle, including the checkin).
+     *
+     * <p>Re-opened after a buffer-lock corruption recovery
+     * ({@link #evictAndReopen}) because the old {@link Program} is released —
+     * Ghidra implicitly aborts the old transaction on release, and the new
+     * program needs a fresh tx.
+     */
+    private int dispatchTxId = -1;
+
+    /**
+     * Files whose most recent {@link #checkin} failed and whose local on-disk
+     * copy may now diverge from the Ghidra Server. {@link #closeAll} and the
+     * server startup hook call {@link #revertDirtyLocalFiles} to bring the
+     * local state back in line with the server. Read &amp; written only
+     * inside {@link #lock} (dispatch holds the lock across checkin, so this
+     * set is touched only by the request thread). Identity-based set
+     * ({@link DomainFile} has no stable equals/hashCode contract) so we use
+     * a {@link HashSet} and operate on the exact reference the live program
+     * is bound to.
+     */
+    private final Set<DomainFile> dirtyLocalFiles = new HashSet<>();
 
     /** Serializes the whole request lifecycle (see class doc). Reentrant for nested runWrite. */
     private final ReentrantLock lock = new ReentrantLock();
@@ -242,6 +287,19 @@ public class RpcContext {
                 }
             }
             active = program;
+            // For mutating procedures, dispatch owns the transaction and holds
+            // it open across the checkin attempt so a failed push can roll
+            // back the in-memory state — the CLI's contract is "non-zero exit
+            // means the change did NOT land". Read-only procedures don't open
+            // a tx here (they don't need one and runWrite isn't on their path).
+            boolean dispatchOwnsTx = procedure.mutates() && program != null;
+            if (dispatchOwnsTx) {
+                dispatchTxId = program.startTransaction("RPC " + procedureOf(request));
+            }
+            // Whether the dispatch-owned tx has been finalized (commit/rollback)
+            // yet — drives the finally's defensive rollback if a throw bypassed
+            // the explicit endTransaction call.
+            boolean txFinalized = false;
             try {
                 RpcResponse response = null;
                 boolean recovered = false; // exactly one retry per request
@@ -261,6 +319,13 @@ public class RpcContext {
                         }
                         active = program;
                         recovered = true;
+                        // The old program was released; Ghidra implicitly aborts
+                        // its open transactions. Start a fresh dispatch tx on
+                        // the new program so runWrite's dispatchOwnedTransaction
+                        // check correctly sees the open tx.
+                        if (dispatchOwnsTx) {
+                            dispatchTxId = program.startTransaction("RPC " + procedureOf(request));
+                        }
                         try {
                             response = procedure.execute(request, this);
                         } catch (Exception retryEx) {
@@ -287,16 +352,64 @@ public class RpcContext {
                     }
                     active = program;
                     recovered = true;
+                    if (dispatchOwnsTx) {
+                        dispatchTxId = program.startTransaction("RPC " + procedureOf(request));
+                    }
                     response = procedure.execute(request, this);
                 }
                 if (response != null && response.success && procedure.mutates() && program != null) {
                     RpcResponse checkinError = checkin(program, procedureOf(request));
                     if (checkinError != null) {
-                        return checkinError; // push failed -> the whole call fails
+                        // Push failed -> roll back the dispatch-owned tx so the
+                        // in-memory state reverts (the next request on this
+                        // program must not see the change). checkin() has
+                        // already recorded the dirty flag for the local-file
+                        // divergence; the JVM will pick it up at shutdown or
+                        // on next startup.
+                        if (dispatchOwnsTx && !txFinalized) {
+                            program.endTransaction(dispatchTxId, false);
+                            txFinalized = true;
+                        }
+                        response = checkinError;
                     }
                 }
+                // Commit on the success path. Reaching here with dispatchOwnsTx
+                // and an unfinalized tx means: execute succeeded, checkin
+                // succeeded (or wasn't needed). Either way the change is now
+                // visible (or wasn't really there) — commit so the change-set
+                // clears and subsequent operations don't see a stale open tx.
+                if (response != null && response.success && dispatchOwnsTx && !txFinalized) {
+                    program.endTransaction(dispatchTxId, true);
+                    txFinalized = true;
+                }
                 return response;
+            } catch (Exception e) {
+                // Handler threw (not the checkin-failure branch above). The tx
+                // is still open; roll back so the next request on this program
+                // doesn't see a partial in-memory mutation.
+                if (dispatchOwnsTx && !txFinalized) {
+                    try {
+                        program.endTransaction(dispatchTxId, false);
+                    } catch (Exception ignored) {
+                        // best-effort; Ghidra will dispose it on program release anyway
+                    }
+                    txFinalized = true;
+                }
+                throw e;
             } finally {
+                // Defensive: if some path slipped through without finalizing
+                // (which shouldn't happen given the catch above, but the
+                // checkin-failure branch sets txFinalized before returning
+                // through here), roll back. Without this an unhandled throw
+                // could leak an open tx onto the cached Program.
+                if (dispatchOwnsTx && !txFinalized) {
+                    try {
+                        program.endTransaction(dispatchTxId, false);
+                    } catch (Exception ignored) {
+                        // last-resort; same justification as the catch above
+                    }
+                }
+                dispatchTxId = -1;
                 active = null;
             }
         } finally {
@@ -560,8 +673,184 @@ public class RpcContext {
         return sb.toString();
     }
 
+    // ---------------------------------------------------------------------------
+    // Dirty-file tracking (Phase 2). A "dirty" file's last save+checkin failed,
+    // so its on-disk copy may differ from the server. {@link #revertDirtyLocalFiles}
+    // brings the local state back in line via {@link DomainFile#undoCheckout}.
+    // ---------------------------------------------------------------------------
+
+    /**
+     * Record that {@code program}'s file failed its most recent checkin and
+     * may now diverge from the Ghidra Server. Idempotent: re-marking an
+     * already-dirty file is a no-op. Called only from {@link #checkin} when
+     * save or checkin throws. Called only under {@link #lock}.
+     */
+    private void markDirty(Program program) {
+        DomainFile df = program.getDomainFile();
+        if (df == null) {
+            return;
+        }
+        dirtyLocalFiles.add(df);
+    }
+
+    /**
+     * Clear the dirty flag on {@code program}'s file: a successful push now
+     * landed and the local copy matches the server. Idempotent. Called from
+     * {@link #checkin} on the success path. Called only under {@link #lock}.
+     */
+    private void clearDirty(Program program) {
+        DomainFile df = program.getDomainFile();
+        if (df == null) {
+            return;
+        }
+        dirtyLocalFiles.remove(df);
+    }
+
+    /**
+     * Revert every dirty file's local content to the server's version via
+     * {@link DomainFile#undoCheckout(boolean) DomainFile.undoCheckout(false)},
+     * which discards the local checkout copy and (for shared projects)
+     * re-fetches the file from the Ghidra Server. Best-effort: a single
+     * file's failure (e.g. RMI is down right now) is logged and skipped, so
+     * a partial pass leaves the dirty set reduced but not empty, ready for
+     * a later attempt.
+     *
+     * <p>Snapshots the dirty set under the lock, then iterates outside the
+     * lock: {@code undoCheckout} issues an RMI call to the Ghidra Server and
+     * can block on a dead connection; we don't want to hold the dispatch
+     * lock for that. The next dispatch observes the cleared entries (via the
+     * {@code removed} set below) on subsequent checks.
+     *
+     * <p>Safe to call when the set is empty — it's a no-op. Wired into both
+     * {@link #closeAll} (in-JVM shutdown path) and the server startup hook
+     * (cross-JVM path; if a previous JVM exited with dirty files because
+     * the connection was down, the next JVM reverts them when the
+     * connection is back).
+     */
+    public void revertDirtyLocalFiles() {
+        // Snapshot under the lock so the dispatch loop can't mutate the set
+        // mid-iteration. Copy to a local list — iteration itself is lock-free.
+        java.util.List<DomainFile> snapshot;
+        lock.lock();
+        try {
+            if (dirtyLocalFiles.isEmpty()) {
+                return;
+            }
+            snapshot = new java.util.ArrayList<>(dirtyLocalFiles);
+        } finally {
+            lock.unlock();
+        }
+        java.util.Set<DomainFile> reverted = new HashSet<>();
+        for (DomainFile df : snapshot) {
+            if (df == null) {
+                reverted.add(null); // skip on result-side filter below
+                continue;
+            }
+            try {
+                // keep=false: discard the local checkout copy entirely so the
+                // local file matches the server's version. force=false: only
+                // do it when we can reach the repository server — otherwise
+                // we'd risk leaving a stale checkout behind.
+                df.undoCheckout(false, false);
+                reverted.add(df);
+                Msg.info(this, "Reverted dirty local file '" + df.getPathname()
+                    + "' to server version (last checkin had failed).");
+            } catch (Exception e) {
+                Msg.warn(this, "Could not revert dirty local file '" + df.getPathname()
+                    + "': " + e.getClass().getSimpleName() + ": " + e.getMessage()
+                    + " (will retry on next startup).");
+            }
+        }
+        // Remove successfully-reverted entries under the lock. Failures stay
+        // in the set for a later attempt.
+        lock.lock();
+        try {
+            for (DomainFile df : reverted) {
+                if (df != null) {
+                    dirtyLocalFiles.remove(df);
+                }
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Phase 3 startup hook: walk the project tree once and revert every
+     * versioned file whose local cache reports {@code modifiedSinceCheckout()
+     * == true}. This catches dirty files left behind by a previous JVM that
+     * exited with the Ghidra Server unreachable (so {@link #closeAll}'s
+     * {@link #revertDirtyLocalFiles} couldn't reach the server to undo the
+     * checkouts). The on-disk content of those files is stale — undoing the
+     * checkout restores the server's version before any in-memory mutation
+     * could be observed against it.
+     *
+     * <p>Called by {@link RpcServer#run} after handler registration and before
+     * the accept loop. The walk is bounded by the project's file count (a few
+     * hundred ms for a typical repo) and each {@code undoCheckout} is an RMI
+     * call, so a slow server connection makes this slower — but it's a
+     * one-time cost paid only on JVM start.
+     *
+     * <p>Best-effort: a single file's failure (e.g. the server is still down
+     * right now) is logged and skipped so a transient outage doesn't block
+     * the JVM from starting. We don't retry later — {@link
+     * #revertDirtyLocalFiles} is the in-JVM retry path for any file whose
+     * THIS-JVM checkin fails; cross-JVM retry would require a persistent
+     * dirty-file record, which we don't have yet.
+     */
+    public void revertDirtyLocalFilesOnStartup() {
+        if (project == null) {
+            return;
+        }
+        DomainFolder root = project.getProjectData().getRootFolder();
+        if (root == null) {
+            return;
+        }
+        Msg.info(this, "Scanning project tree for dirty local files left by a previous JVM...");
+        java.util.List<DomainFile> dirty = new java.util.ArrayList<>();
+        collectDirtyFiles(root, dirty);
+        if (dirty.isEmpty()) {
+            Msg.info(this, "No dirty local files found at startup.");
+            return;
+        }
+        Msg.info(this, "Found " + dirty.size() + " dirty local file(s) at startup; reverting...");
+        for (DomainFile df : dirty) {
+            try {
+                df.undoCheckout(false, false);
+                Msg.info(this, "Reverted dirty local file '" + df.getPathname()
+                    + "' to server version on startup.");
+            } catch (Exception e) {
+                Msg.warn(this, "Could not revert dirty local file '" + df.getPathname()
+                    + "' at startup: " + e.getClass().getSimpleName() + ": " + e.getMessage()
+                    + " (skipping; the file's local content may diverge from the server "
+                    + "until this JVM can push or revert it).");
+            }
+        }
+    }
+
+    /** Recursive project-tree walk; collect versioned files with local changes not yet pushed. */
+    private static void collectDirtyFiles(DomainFolder folder, java.util.List<DomainFile> out) {
+        for (DomainFile f : folder.getFiles()) {
+            try {
+                if (f.isVersioned() && f.modifiedSinceCheckout()) {
+                    out.add(f);
+                }
+            } catch (Exception ignored) {
+                // best-effort; a single file's check failing shouldn't abort the whole walk
+            }
+        }
+        for (DomainFolder sub : folder.getFolders()) {
+            collectDirtyFiles(sub, out);
+        }
+    }
+
     /** Release every program we opened. Call on shutdown; leaves the context empty. */
     public void closeAll() {
+        // Revert any dirty local files BEFORE releasing programs: undoCheckout
+        // needs the DomainFile reachable, and once we release the cached
+        // Program + its checkout, the server-side lock disappears and the
+        // revert path becomes ambiguous.
+        revertDirtyLocalFiles();
         lock.lock();
         try {
             for (Program p : open.values()) {
@@ -585,6 +874,13 @@ public class RpcContext {
      * Save + check {@code program}'s file in to the shared server so the change is
      * immediately visible to other clients. Returns null on success (or nothing to
      * push) and an error response if the push fails (per policy the whole call fails).
+     *
+     * <p>Dirty-tracking: on a push failure (save or checkin threw), {@code df}
+     * is added to {@link #dirtyLocalFiles} so the JVM can revert its local
+     * divergence from the server at shutdown ({@link #closeAll}) or on the
+     * next startup ({@link #revertDirtyLocalFiles}). The early-return error
+     * branches (read-only / not checked out) are configuration problems that
+     * never touched the on-disk file, so they don't mark the file dirty.
      */
     private RpcResponse checkin(Program program, String procedure) {
         program.flushEvents();
@@ -598,7 +894,8 @@ public class RpcContext {
                 df.save(monitor);
             }
             if (!df.isVersioned()) {
-                return null; // local non-versioned project: the save is the persistence
+                clearDirty(program); // local non-versioned: save is the persistence
+                return null;
             }
             if (!df.isCheckedOut()) {
                 return RpcResponse.error("File is not checked out; cannot check in.");
@@ -610,28 +907,38 @@ public class RpcContext {
                 df.checkin(new DefaultCheckinHandler(
                     "RPC " + procedure, true, false), monitor);
             }
+            connectionLostFailures = 0; // healthy connection — reset the failure counter
+            clearDirty(program); // push landed — any prior dirty flag is now stale
             return null;
         } catch (Exception e) {
             String m = message(e);
-            // If the Ghidra Server connection has died mid-session, fire the
-            // registered handler so the orchestrator can restart us. We still
-            // return the error below — the in-flight request fails for the
-            // client, the next one (if the JVM is still up long enough to
-            // receive it) will hit the same dead connection and trigger the
-            // same shutdown. Without this, every subsequent request loops on
-            // the same "Not connected" error until something external kills
-            // the JVM. The handler is advisory; exceptions from it must not
-            // mask the original error response.
+            // If the Ghidra Server connection has died mid-session, count it
+            // and — once we hit CONNECTION_LOST_THRESHOLD consecutive failures
+            // (so a transient TCP blip doesn't immediately restart the JVM) —
+            // fire the registered handler so the orchestrator can restart us.
+            // We still return the error below; the in-flight request fails for
+            // the client, subsequent requests keep failing until either the
+            // connection recovers (resets the counter via the success path) or
+            // we hit the threshold and exit. Other failure modes (version
+            // conflicts, save errors, ...) don't touch the counter — they're
+            // not connection-health signals.
             if (isConnectionLost(m)) {
-                Runnable h = onConnectionLost;
-                if (h != null) {
-                    try {
-                        h.run();
-                    } catch (Exception ignored) {
-                        // best-effort; advisory callback
+                connectionLostFailures++;
+                if (connectionLostFailures >= CONNECTION_LOST_THRESHOLD) {
+                    Runnable h = onConnectionLost;
+                    if (h != null) {
+                        try {
+                            h.run();
+                        } catch (Exception ignored) {
+                            // best-effort; advisory callback
+                        }
                     }
                 }
             }
+            // Save may have landed bytes before checkin failed — mark dirty so
+            // the next shutdown or startup attempt reverts the local file.
+            // Idempotent; safe to call repeatedly for the same file.
+            markDirty(program);
             return RpcResponse.error("Check-in/push failed: " + m);
         }
     }
@@ -670,9 +977,24 @@ public class RpcContext {
      * Run {@code body} inside a transaction on the active program (committed iff it
      * returns normally; otherwise rolled back and rethrown). Always called while
      * holding {@link #lock}.
+     *
+     * <p>If {@link #dispatch} already opened a transaction for the current
+     * request (i.e. a mutating procedure is mid-flight), this just runs the
+     * body inside that outer transaction — no nested tx is opened. The outer
+     * tx is committed by dispatch after a successful checkin, or rolled back
+     * if the checkin fails. Callers outside {@link #dispatch} (tests, internal
+     * helpers invoked without the request lifecycle) hit the legacy path and
+     * get their own self-contained transaction.
      */
     public void runWrite(String description, Write body) throws Exception {
         Program program = active();
+        if (dispatchTransactionOpen()) {
+            // dispatch owns the tx; just run the body. The success/failure of
+            // the body is propagated to the outer request lifecycle, where
+            // dispatch decides commit vs. rollback.
+            body.run();
+            return;
+        }
         int txId = program.startTransaction(description);
         boolean committed = false;
         try {
@@ -681,6 +1003,11 @@ public class RpcContext {
         } finally {
             program.endTransaction(txId, committed);
         }
+    }
+
+    /** Whether {@link #dispatch} currently owns an open transaction. Only meaningful under {@link #lock}. */
+    private boolean dispatchTransactionOpen() {
+        return dispatchTxId != -1;
     }
 
     /**
