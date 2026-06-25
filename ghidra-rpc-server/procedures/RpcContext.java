@@ -2,6 +2,7 @@ package procedures;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.locks.ReentrantLock;
@@ -67,11 +68,54 @@ public class RpcContext {
     private final Project project;
     private final TaskMonitor monitor;
 
-    /** Open programs by canonical project path. Guarded by {@link #lock}. */
-    private final Map<String, Program> open = new HashMap<>();
+    /**
+     * Max number of distinct programs kept open concurrently. LRU eviction past
+     * this threshold: the eldest clean (non-dirty) entry is released, freeing
+     * its {@code BufferMgr} + listing cache + analyzer state. The exclusive
+     * checkout lives on the {@link DomainFile} (server-side), not on the
+     * {@link Program}, so {@link Program#release release} during eviction does
+     * NOT orphan the checkout. Sized for a healthy multi-binary workflow
+     * (single project, dozens of binaries) while bounding long-running server
+     * heap — without this, the cache grew unboundedly across every distinct
+     * program the server had ever touched.
+     *
+     * <p>Dirty programs pin a slot rather than risk silent data loss: an
+     * evict-during-rename would dispose the BufferMgr holding the in-flight
+     * mutation, dropping the user's edit on the floor. The lock serializes
+     * requests, so the dirty-set is bounded in practice by failed-checkin
+     * churn, not by concurrent mutations.
+     */
+    private static final int MAX_OPEN_PROGRAMS = 50;
 
-    /** Programs WE opened (and must release on shutdown). Guarded by {@link #lock}. */
-    private final List<Program> owned = new ArrayList<>();
+    /**
+     * Open programs by canonical project path, access-ordered (LRU). Guarded by
+     * {@link #lock}. On insert past {@link #MAX_OPEN_PROGRAMS} the eldest
+     * clean entry is released and dropped — see the {@link
+     * LinkedHashMap#removeEldestEntry} override below for the dirty-program
+     * guard.
+     */
+    private final Map<String, Program> open = new LinkedHashMap<>(16, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, Program> eldest) {
+            if (size() <= MAX_OPEN_PROGRAMS) {
+                return false;
+            }
+            // Pin dirty programs (see MAX_OPEN_PROGRAMS Javadoc). Re-checked
+            // on every eviction — once the program saves+checkins cleanly,
+            // isChanged() flips false and the next eviction wave releases it.
+            Program p = eldest.getValue();
+            if (p.isChanged()) {
+                return false;
+            }
+            try {
+                p.release(RpcContext.this);
+            } catch (Exception ignored) {
+                // best-effort; release is idempotent and the server-side
+                // checkout is unaffected (the DomainFile, not the Program, owns it).
+            }
+            return true;
+        }
+    };
 
     /** The program selected for the in-flight request; set/cleared by {@link #dispatch} under {@link #lock}. */
     private Program active;
@@ -317,8 +361,7 @@ public class RpcContext {
         // okToUpgrade=true (open older DB versions). okToRecover is parameterized — see
         // the Javadoc above.
         Program p = (Program) df.getDomainObject(this, true, okToRecover, monitor);
-        open.put(key, p);
-        owned.add(p);
+        open.put(key, p); // removeEldestEntry fires here; eldest clean entry is released
         return p;
     }
 
@@ -354,7 +397,6 @@ public class RpcContext {
                 // best-effort; a failed release is part of the corruption we're recovering from
             }
             open.remove(key);
-            owned.remove(old);
         }
         return openProgram(path, true);
     }
@@ -498,14 +540,13 @@ public class RpcContext {
     public void closeAll() {
         lock.lock();
         try {
-            for (Program p : owned) {
+            for (Program p : open.values()) {
                 try {
                     p.release(this);
                 } catch (Exception ignored) {
                     // best-effort teardown
                 }
             }
-            owned.clear();
             open.clear();
         } finally {
             lock.unlock();
