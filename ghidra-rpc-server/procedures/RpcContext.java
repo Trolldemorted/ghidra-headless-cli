@@ -357,30 +357,39 @@ public class RpcContext {
                     }
                     response = procedure.execute(request, this);
                 }
-                if (response != null && response.success && procedure.mutates() && program != null) {
-                    RpcResponse checkinError = checkin(program, procedureOf(request));
-                    if (checkinError != null) {
-                        // Push failed -> roll back the dispatch-owned tx so the
-                        // in-memory state reverts (the next request on this
-                        // program must not see the change). checkin() has
-                        // already recorded the dirty flag for the local-file
-                        // divergence; the JVM will pick it up at shutdown or
-                        // on next startup.
-                        if (dispatchOwnsTx && !txFinalized) {
-                            program.endTransaction(dispatchTxId, false);
-                            txFinalized = true;
-                        }
-                        response = checkinError;
-                    }
-                }
-                // Commit on the success path. Reaching here with dispatchOwnsTx
-                // and an unfinalized tx means: execute succeeded, checkin
-                // succeeded (or wasn't needed). Either way the change is now
-                // visible (or wasn't really there) — commit so the change-set
-                // clears and subsequent operations don't see a stale open tx.
+                // Commit the dispatch-owned tx BEFORE checkin(). save() (called
+                // from df.checkin via DomainObjectAdapterDB.save) requires no
+                // open tx — DomainObjectAdapterDB.lock("save") throws
+                // IOException("Unable to lock due to active transaction") if
+                // any tx is open on the same DB handle (verified in
+                // Framework/Project/data/DomainObjectAdapterDB.save).
+                //
+                // Trade-off: a failed checkin now leaves the change committed
+                // in-memory, so the next request on this JVM sees it. The
+                // cross-JVM divergence is caught by Phase 2 (checkin's catch
+                // block already calls markDirty) + Phase 3 (revertDirtyLocalFiles
+                // on the next JVM startup undoes the checkout). The in-JVM
+                // rollback is sacrificed — acceptable because the same tx
+                // already applied to the cached Program's buffer data is
+                // visually benign until that Program is closed.
                 if (response != null && response.success && dispatchOwnsTx && !txFinalized) {
                     program.endTransaction(dispatchTxId, true);
                     txFinalized = true;
+                }
+                if (response != null && response.success && procedure.mutates() && program != null) {
+                    RpcResponse checkinError = checkin(program, procedureOf(request));
+                    if (checkinError != null) {
+                        // Push failed. The change is already committed
+                        // in-memory above (commit-before-checkin). save()
+                        // may have landed partial bytes before checkin threw;
+                        // checkin()'s catch path calls markDirty(program),
+                        // and revertDirtyLocalFiles() at next JVM startup
+                        // will undoCheckout the divergent local file. We do
+                        // NOT roll back the in-memory state here — the
+                        // cached Program keeps the change visible to
+                        // subsequent RPC calls until that Program is closed.
+                        response = checkinError;
+                    }
                 }
                 return response;
             } catch (Exception e) {
@@ -480,6 +489,35 @@ public class RpcContext {
         }
         String key = normalize(df.getPathname());
         Program cached = open.get(key);
+        // Lazy reset: this file is dirty from a previous failed checkin
+        // (markDirty was called in checkin's catch block). The cached
+        // Program's in-memory state is the post-mutation that didn't land
+        // server-side, and the local file is the same. We can't reuse
+        // either; force a reset to the server's pre-mutation state by
+        // releasing the cached Program, calling df.undoCheckout() to
+        // release the checkout AND revert the local file, then proceeding
+        // to the normal re-open path which re-checks-out from server.
+        //
+        // This is the "reset to server state before next successful RPC"
+        // guarantee. undoCheckout requires the server connection; if the
+        // connection is still down the call throws and this openProgram
+        // fails — the caller sees the error, retries when the connection
+        // is back, and the reset then succeeds.
+        if (dirtyLocalFiles.contains(df)) {
+            if (cached != null) {
+                try {
+                    cached.release(this);
+                } catch (Exception ignored) {
+                    // best-effort; we drop the cache entry regardless
+                }
+                open.remove(key);
+                cached = null;
+            }
+            if (df.isVersioned() && df.isCheckedOut()) {
+                df.undoCheckout(false, false);
+            }
+            dirtyLocalFiles.remove(df);
+        }
         if (cached != null) {
             return cached;
         }
@@ -935,9 +973,19 @@ public class RpcContext {
                     }
                 }
             }
-            // Save may have landed bytes before checkin failed — mark dirty so
-            // the next shutdown or startup attempt reverts the local file.
-            // Idempotent; safe to call repeatedly for the same file.
+            // Deferred cleanup. Don't try to revert in-place: program.undo()
+            // is a no-op here because save() above cleared the undo stack
+            // (DomainObjectAdapterDB.save -> setChanged(false) -> clearUndo;
+            // verified via javap), and df.undoCheckout() requires the server
+            // connection — which is exactly what's failing right now. Trying
+            // either under outage would just throw and waste effort. Instead,
+            // mark the file dirty and let the next successful dispatch reset
+            // it lazily in openProgram: evict + undoCheckout (reverts the
+            // local file to the server's version) + re-checkout (re-reads
+            // from server). If undoCheckout itself fails because the
+            // connection is still down, the next request fails too — the
+            // caller retries when the connection is back. Phase 2 + Phase 3
+            // remain the cross-JVM safety net.
             markDirty(program);
             return RpcResponse.error("Check-in/push failed: " + m);
         }
@@ -981,10 +1029,14 @@ public class RpcContext {
      * <p>If {@link #dispatch} already opened a transaction for the current
      * request (i.e. a mutating procedure is mid-flight), this just runs the
      * body inside that outer transaction — no nested tx is opened. The outer
-     * tx is committed by dispatch after a successful checkin, or rolled back
-     * if the checkin fails. Callers outside {@link #dispatch} (tests, internal
-     * helpers invoked without the request lifecycle) hit the legacy path and
-     * get their own self-contained transaction.
+     * tx is committed by dispatch BEFORE the checkin attempt
+     * (commit-before-checkin; see dispatch's comment block). The rationale
+     * is that {@code df.save(...)} requires no open tx on the same DB
+     * handle, so holding the dispatch tx open across checkin would fail
+     * with "Unable to lock due to active transaction". Callers outside
+     * {@link #dispatch} (tests, internal helpers invoked without the
+     * request lifecycle) hit the legacy path and get their own self-contained
+     * transaction.
      */
     public void runWrite(String description, Write body) throws Exception {
         Program program = active();
