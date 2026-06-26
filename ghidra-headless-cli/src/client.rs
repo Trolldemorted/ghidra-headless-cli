@@ -9,12 +9,31 @@ use std::net::TcpStream;
 
 use crate::json::Json;
 
-/// Holds the resolved server endpoint for the duration of one CLI run.
+/// Holds the resolved server endpoint and write-gate secret for the duration
+/// of one CLI run. `write_password` mirrors the `RPC_WRITE_PASSWORD`
+/// environment variable: when `Some`, every outgoing request gets the secret
+/// injected as a top-level `password` field so the server can authenticate the
+/// mutation; when `None`, the field is omitted and the server (if its own env
+/// var is unset) accepts the request anyway.
 pub struct Client {
     pub host: String,
+    pub write_password: Option<String>,
 }
 
 impl Client {
+    /// Build a request with the write-gate password injected when configured.
+    /// Returns the original request unchanged when `write_password` is None or
+    /// the request isn't a JSON object (the wire protocol only sends objects,
+    /// so the no-op is defensive rather than expected).
+    fn stamp_password(&self, mut request: Json) -> Json {
+        if let Some(pw) = &self.write_password
+            && !pw.is_empty()
+        {
+            request.set("password", Json::Str(pw.clone()));
+        }
+        request
+    }
+
     /// Send a request and return the parsed response, or a transport/parse error.
     fn call(&self, request: &Json) -> Result<Json, String> {
         let line = request.to_string();
@@ -47,9 +66,11 @@ impl Client {
     }
 
     /// Send a request, log transport and server-side errors at the error level,
-    /// and return the response only when `success` is true.
+    /// and return the response only when `success` is true. Stamps the
+    /// configured write-gate password onto the request before sending.
     pub fn invoke(&self, request: Json) -> Result<Json, ()> {
-        match self.call(&request) {
+        let stamped = self.stamp_password(request);
+        match self.call(&stamped) {
             Err(transport) => {
                 log::error!("{}", transport);
                 Err(())
@@ -76,7 +97,8 @@ impl Client {
     }
 
     /// Invoke a request whose only meaningful result is success, logging a
-    /// confirmation line for the procedure on success.
+    /// confirmation line for the procedure on success. Stamps the
+    /// configured write-gate password onto the request before sending.
     pub fn run_simple(&self, request: Json) -> Result<(), ()> {
         let name = request
             .get("procedure")

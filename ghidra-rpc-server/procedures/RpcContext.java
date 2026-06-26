@@ -193,6 +193,22 @@ public class RpcContext {
     private final ReentrantLock lock = new ReentrantLock();
 
     /**
+     * Shared secret required on every mutating request when non-null. Set from
+     * the {@code RPC_WRITE_PASSWORD} environment variable at server startup via
+     * {@link #setWritePassword}. When null (the default), the gate is off and
+     * every request is accepted — including those carrying a {@code password}
+     * field, since the server is telling the client "I don't care". When
+     * non-null, only mutating requests ({@link RpcProcedure#mutates()} == true)
+     * are gated: the request's {@code password} field must equal this value
+     * exactly. Read-only requests bypass the gate in both modes.
+     *
+     * <p>Read &amp; written only at startup and inside {@link #dispatch}, which
+     * holds {@link #lock} across the whole request lifecycle; no extra
+     * synchronization needed.
+     */
+    private volatile String writePassword;
+
+    /**
      * Create a context bound to {@code project} with ZERO open programs. The server starts
      * empty: every program is opened on demand by {@link #openProgram} when a request names
      * it. The program analyzeHeadless processed to invoke this script is only a trigger and
@@ -201,6 +217,15 @@ public class RpcContext {
     public RpcContext(Project project, TaskMonitor monitor) {
         this.project = project;
         this.monitor = monitor;
+    }
+
+    /**
+     * Enable the mutating-request password gate. Pass null (the default state)
+     * to disable it. See {@link #writePassword} for the exact policy. Called
+     * once at server startup from {@code RpcServer.run}.
+     */
+    public void setWritePassword(String password) {
+        this.writePassword = (password == null || password.isEmpty()) ? null : password;
     }
 
     /** The program selected for the current request; throws if none is active. */
@@ -272,6 +297,19 @@ public class RpcContext {
     public RpcResponse dispatch(RpcProcedure procedure, JsonObject request) throws Exception {
         lock.lock();
         try {
+            // Write-password gate (RPC_WRITE_PASSWORD on the server). When set,
+            // every mutating call must carry a matching "password" field;
+            // read-only calls bypass the gate in both modes. Checked first so
+            // a rejected request never touches the project tree, the program
+            // cache, or an open transaction.
+            String required = writePassword;
+            if (required != null && procedure.mutates()) {
+                String supplied = optStr(request, "password");
+                if (supplied == null || !required.equals(supplied)) {
+                    return RpcResponse.error("Missing or invalid 'password' field; "
+                        + "mutating requests require RPC_WRITE_PASSWORD.");
+                }
+            }
             // Capture path up front so the corruption-recovery retry (below) can re-resolve
             // the DomainFile. Only set when the procedure targets a program.
             String path = procedure.needsProgram() ? optStr(request, "file") : null;
@@ -1624,10 +1662,12 @@ public class RpcContext {
      * content. {@code bytes} is base64 of a whole binary on ProgramLoader and
      * a raw read on ReadBytes — the contents are unreadable in the log, take
      * hundreds of lines to dump, and risk leaking the input binary into log
-     * aggregation. Add more here as we find them.
+     * aggregation. {@code password} is the write-gate secret set by the
+     * client to authenticate mutating requests — never echo it. Add more here
+     * as we find them.
      */
     private static final java.util.Set<String> OPAQUE_FIELDS =
-        java.util.Set.of("bytes");
+        java.util.Set.of("bytes", "password");
 
     /**
      * Length-only summary for a value we treat as opaque (no content in the

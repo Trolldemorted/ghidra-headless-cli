@@ -106,6 +106,25 @@ impl Json {
         }
     }
 
+    /// Set or replace `key` on an object value. Returns true if `self` is an
+    /// object (so the field was applied); false for non-object values, where
+    /// the call is a no-op. Used by `Client::invoke` to inject the
+    /// `RPC_WRITE_PASSWORD` shared secret into every outgoing request without
+    /// having to plumb it through every command's `Req` builder.
+    pub fn set(&mut self, key: impl Into<String>, value: Json) -> bool {
+        if let Json::Obj(fields) = self {
+            let k = key.into();
+            if let Some(slot) = fields.iter_mut().find(|(k2, _)| k2 == &k) {
+                slot.1 = value;
+            } else {
+                fields.push((k, value));
+            }
+            true
+        } else {
+            false
+        }
+    }
+
     /// Parse a JSON document from text.
     pub fn parse(text: &str) -> Result<Json, String> {
         let mut parser = Parser {

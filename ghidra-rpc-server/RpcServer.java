@@ -23,8 +23,20 @@
 // atomically). See RpcContext.
 //
 // Configuration (environment variables):
-//   RPC_BIND   interface to bind   (default 0.0.0.0)
-//   RPC_PORT   TCP port to listen  (default 18000)
+//   RPC_BIND            interface to bind   (default 0.0.0.0)
+//   RPC_PORT            TCP port to listen  (default 18000)
+//   RPC_WRITE_PASSWORD  shared secret for mutating requests (default unset).
+//                       When set, every procedure that returns true from
+//                       RpcProcedure.mutates() must carry a matching "password"
+//                       field in its request body; a wrong/missing password
+//                       returns an error before any program resolution or
+//                       transaction is opened. Read-only procedures (mutates()
+//                       == false) bypass the gate in both modes. When unset,
+//                       the gate is off entirely — every request is accepted,
+//                       including those that carry an arbitrary "password"
+//                       field. Logged on startup as either "RPC_WRITE_PASSWORD
+//                       is set (mutating requests are gated)" or "...unset
+//                       (no password gate)"; the value itself is never logged.
 //
 //@category RPC
 import java.io.BufferedReader;
@@ -91,6 +103,19 @@ public class RpcServer extends GhidraScript {
         // is only a trigger — we use it solely to close the enclosing transaction (below)
         // and otherwise ignore it, so the initial state is genuinely empty.
         context = new RpcContext(state.getProject(), monitor);
+        // Install the write-gate shared secret. When RPC_WRITE_PASSWORD is set,
+        // every mutating request must carry a matching "password" field;
+        // when unset, the gate is off entirely (read-only requests bypass
+        // either way). Logged here once at startup so operators can confirm
+        // the configured mode without grepping logs for gate rejections.
+        String writePw = env("RPC_WRITE_PASSWORD", null);
+        context.setWritePassword(writePw);
+        if (writePw != null) {
+            Msg.info(this, "RPC_WRITE_PASSWORD is set (mutating requests are gated).");
+        }
+        else {
+            Msg.info(this, "RPC_WRITE_PASSWORD is unset (no password gate).");
+        }
         // Detect mid-session Ghidra Server connection loss in RpcContext.checkin
         // and exit through the same graceful path the SIGTERM shutdown hook uses,
         // so compose / k8s / systemd can restart us with a fresh RMI connection.
