@@ -29,4 +29,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.DOWNSTREAM_PAT }}
         run: |
-          gh workflow run ci.yml --repo Trolldemorted/claude-reversing
+          gh workflow run nightly.yml --repo Trolldemorted/claude-reversing
