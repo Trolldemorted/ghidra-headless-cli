@@ -46,4 +46,16 @@ public interface RpcProcedure {
     default boolean mutates() {
         return true;
     }
+
+    /**
+     * Whether this procedure requires the admin gate (RPC_ADMIN_PASSWORD on the
+     * server). When true and RPC_ADMIN_PASSWORD is set, the dispatcher rejects any
+     * request that does not carry a matching "adminPassword" field BEFORE
+     * touching the project tree, the program cache, or any open transaction.
+     * Read-only procedures ({@link #mutates()} == false) bypass both gates.
+     * Default false so existing handlers are unaffected; opt in per procedure.
+     */
+    default boolean requiresAdmin() {
+        return false;
+    }
 }

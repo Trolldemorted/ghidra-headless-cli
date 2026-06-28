@@ -209,6 +209,24 @@ public class RpcContext {
     private volatile String writePassword;
 
     /**
+     * Shared secret required on every admin-only request when non-null. Set
+     * from the {@code RPC_ADMIN_PASSWORD} environment variable at server
+     * startup via {@link #setAdminPassword}. Independent from
+     * {@link #writePassword}: a leaked write password does NOT grant admin
+     * rights. When null (the default), the admin gate is off and every
+     * admin-flagged procedure is accepted. When non-null, only procedures
+     * whose {@link RpcProcedure#requiresAdmin()} returns true are gated: the
+     * request's {@code adminPassword} field must equal this value exactly.
+     * Other procedures bypass the admin gate in both modes (a write request
+     * still needs the write password; a read-only request needs nothing).
+     *
+     * <p>Read &amp; written only at startup and inside {@link #dispatch},
+     * which holds {@link #lock} across the whole request lifecycle; no extra
+     * synchronization needed.
+     */
+    private volatile String adminPassword;
+
+    /**
      * Create a context bound to {@code project} with ZERO open programs. The server starts
      * empty: every program is opened on demand by {@link #openProgram} when a request names
      * it. The program analyzeHeadless processed to invoke this script is only a trigger and
@@ -226,6 +244,15 @@ public class RpcContext {
      */
     public void setWritePassword(String password) {
         this.writePassword = (password == null || password.isEmpty()) ? null : password;
+    }
+
+    /**
+     * Enable the admin-request password gate. Pass null (the default state) to
+     * disable it. See {@link #adminPassword} for the exact policy. Called once
+     * at server startup from {@code RpcServer.run}.
+     */
+    public void setAdminPassword(String password) {
+        this.adminPassword = (password == null || password.isEmpty()) ? null : password;
     }
 
     /** The program selected for the current request; throws if none is active. */
@@ -308,6 +335,20 @@ public class RpcContext {
                 if (supplied == null || !required.equals(supplied)) {
                     return RpcResponse.error("Missing or invalid 'password' field; "
                         + "mutating requests require RPC_WRITE_PASSWORD.");
+                }
+            }
+            // Admin-password gate (RPC_ADMIN_PASSWORD on the server). When set,
+            // every procedure whose requiresAdmin() is true must carry a matching
+            // "adminPassword" field; a wrong/missing value returns an error
+            // BEFORE any project tree or repository access. Independent from the
+            // write-password gate above: a leaked RPC_WRITE_PASSWORD does NOT
+            // grant admin rights. Read & non-admin procedures bypass this gate.
+            String adminRequired = adminPassword;
+            if (adminRequired != null && procedure.requiresAdmin()) {
+                String supplied = optStr(request, "adminPassword");
+                if (supplied == null || !adminRequired.equals(supplied)) {
+                    return RpcResponse.error("Missing or invalid 'adminPassword' field; "
+                        + "this request requires RPC_ADMIN_PASSWORD.");
                 }
             }
             // Capture path up front so the corruption-recovery retry (below) can re-resolve
@@ -1663,11 +1704,12 @@ public class RpcContext {
      * a raw read on ReadBytes — the contents are unreadable in the log, take
      * hundreds of lines to dump, and risk leaking the input binary into log
      * aggregation. {@code password} is the write-gate secret set by the
-     * client to authenticate mutating requests — never echo it. Add more here
-     * as we find them.
+     * client to authenticate mutating requests — never echo it.
+     * {@code adminPassword} is the separate admin-gate secret; same policy.
+     * Add more here as we find them.
      */
     private static final java.util.Set<String> OPAQUE_FIELDS =
-        java.util.Set.of("bytes", "password");
+        java.util.Set.of("bytes", "password", "adminPassword");
 
     /**
      * Length-only summary for a value we treat as opaque (no content in the

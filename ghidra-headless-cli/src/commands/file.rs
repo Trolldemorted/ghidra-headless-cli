@@ -64,6 +64,22 @@ pub enum Cmd {
         #[arg(long)]
         file: String,
     },
+    /// Delete old revisions of a file, keeping the most recent N. Matches the
+    /// Ghidra GUI's "Delete Version" action in the Version History dialog;
+    /// required because the GUI cannot cope with files that accumulate hundreds
+    /// of revisions. Gated by the server's RPC_ADMIN_PASSWORD — the matching
+    /// value must be passed via --admin-password.
+    DeleteVersion {
+        /// Target file project path (e.g. /foo.exe)
+        #[arg(long)]
+        file: String,
+        /// Number of most-recent versions to keep [default: 1]
+        #[arg(long, default_value_t = 1)]
+        keep: i64,
+        /// Admin password (must match the server's RPC_ADMIN_PASSWORD); required
+        #[arg(long)]
+        admin_password: String,
+    },
 }
 
 pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
@@ -148,6 +164,32 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             let name = response.get("name").and_then(Json::as_str).unwrap_or("?");
             let path = response.get("path").and_then(Json::as_str).unwrap_or("?");
             log::info!("deleted {} (was {})", name, path);
+            Ok(())
+        }
+        Cmd::DeleteVersion {
+            file,
+            keep,
+            admin_password,
+        } => {
+            let response = client.invoke(
+                Req::new("PurgeVersions")
+                    .str("file", file.clone())
+                    .int("keep", keep) // explicit; server REQUIRES 'keep'
+                    .str("adminPassword", admin_password)
+                    .build(),
+            )?;
+            let before = field_int(&response, "before");
+            let after = field_int(&response, "after");
+            let deleted = field_int(&response, "deleted");
+            let file_deleted = field_bool(&response, "fileDeleted");
+            log::info!(
+                "purged {} version(s) of {} ({} -> {} version(s){})",
+                deleted,
+                file,
+                before,
+                after,
+                if file_deleted { ", file removed" } else { "" }
+            );
             Ok(())
         }
     }

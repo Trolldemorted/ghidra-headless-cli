@@ -37,6 +37,19 @@
 //                       field. Logged on startup as either "RPC_WRITE_PASSWORD
 //                       is set (mutating requests are gated)" or "...unset
 //                       (no password gate)"; the value itself is never logged.
+//   RPC_ADMIN_PASSWORD  shared secret for admin-only procedures (default unset).
+//                       Independent from RPC_WRITE_PASSWORD: a leaked write
+//                       secret does NOT grant admin rights. When set, every
+//                       procedure whose RpcProcedure.requiresAdmin() returns
+//                       true must carry a matching "adminPassword" field;
+//                       a wrong/missing value returns an error before any
+//                       project tree or repository access. When unset, the
+//                       gate is off and admin-flagged procedures accept any
+//                       request (they still need the write password if they
+//                       also mutate). Logged on startup as either
+//                       "RPC_ADMIN_PASSWORD is set (admin-only procedures are
+//                       gated)" or "...unset (no admin gate)"; the value itself
+//                       is never logged.
 //
 //@category RPC
 import java.io.BufferedReader;
@@ -115,6 +128,21 @@ public class RpcServer extends GhidraScript {
         }
         else {
             Msg.info(this, "RPC_WRITE_PASSWORD is unset (no password gate).");
+        }
+        // Admin gate (RPC_ADMIN_PASSWORD). Independent from RPC_WRITE_PASSWORD:
+        // a leaked write secret does not grant admin rights. When set, every
+        // procedure whose requiresAdmin() is true must carry a matching
+        // "adminPassword" field; the dispatcher rejects a wrong/missing value
+        // BEFORE touching the project tree or the repository. Logged here once
+        // at startup so operators can confirm the configured mode without
+        // grepping logs for gate rejections.
+        String adminPw = env("RPC_ADMIN_PASSWORD", null);
+        context.setAdminPassword(adminPw);
+        if (adminPw != null) {
+            Msg.info(this, "RPC_ADMIN_PASSWORD is set (admin-only procedures are gated).");
+        }
+        else {
+            Msg.info(this, "RPC_ADMIN_PASSWORD is unset (no admin gate).");
         }
         // Detect mid-session Ghidra Server connection loss in RpcContext.checkin
         // and exit through the same graceful path the SIGTERM shutdown hook uses,
@@ -534,6 +562,12 @@ public class RpcServer extends GhidraScript {
         register("ListFiles", new procedures.ghidra.framework.model.ListFilesHandler());
         register("FileMetadata", new procedures.ghidra.framework.model.FileMetadataHandler());
         register("DeleteFile", new procedures.ghidra.framework.model.DeleteFileHandler());
+        // PurgeVersions deletes old revisions of a single file, keeping the
+        // most recent N. Gated by RPC_ADMIN_PASSWORD (handler overrides
+        // requiresAdmin()=true). Project-level: no program open, no checkout,
+        // no dispatcher transaction; mutates()=true so the dispatcher rejects
+        // the call if RPC_WRITE_PASSWORD is also set without a matching value.
+        register("PurgeVersions", new procedures.ghidra.framework.model.PurgeVersionsHandler());
 
         // Data-type management: list / show / create / replace / edit / delete / apply.
         // Built-ins (path "/" + BuiltIns/ANSI_C/windows_vs archive) are rejected by
