@@ -24,3 +24,9 @@ jobs:
           echo "pushing to ghcr.io/${{ github.repository }}"
           docker image push ghcr.io/trolldemorted/ghidra-headless-cli/ghidra-server
           docker image push ghcr.io/trolldemorted/ghidra-headless-cli/ghidra-rpc
+
+      - name: Trigger downstream CI
+        env:
+          GH_TOKEN: ${{ secrets.DOWNSTREAM_PAT }}
+        run: |
+          gh workflow run ci.yml --repo Trolldemorted/claude-reversing
