@@ -109,7 +109,7 @@ impl Json {
     /// Set or replace `key` on an object value. Returns true if `self` is an
     /// object (so the field was applied); false for non-object values, where
     /// the call is a no-op. Used by `Client::invoke` to inject the
-    /// `RPC_WRITE_PASSWORD` shared secret into every outgoing request without
+    /// `GHIDRA_RPC_WRITE_PASSWORD` shared secret into every outgoing request without
     /// having to plumb it through every command's `Req` builder.
     pub fn set(&mut self, key: impl Into<String>, value: Json) -> bool {
         if let Json::Obj(fields) = self {

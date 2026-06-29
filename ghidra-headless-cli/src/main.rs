@@ -29,12 +29,12 @@ fn default_host() -> String {
         .unwrap_or_else(|| DEFAULT_HOST.to_string())
 }
 
-/// Resolve the optional write-gate password from $RPC_WRITE_PASSWORD. Returned
-/// as `None` when the variable is unset or empty so the Client knows to skip
-/// stamping the `password` field on outgoing requests (the server's own env
-/// var being unset then accepts the request anyway).
+/// Resolve the optional write-gate password from $GHIDRA_RPC_WRITE_PASSWORD.
+/// Returned as `None` when the variable is unset or empty so the Client
+/// knows to skip stamping the `password` field on outgoing requests (the
+/// server's own env var being unset then accepts the request anyway).
 fn write_password() -> Option<String> {
-    env::var("RPC_WRITE_PASSWORD")
+    env::var("GHIDRA_RPC_WRITE_PASSWORD")
         .ok()
         .filter(|s| !s.is_empty())
 }

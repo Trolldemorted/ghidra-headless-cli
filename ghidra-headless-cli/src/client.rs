@@ -10,7 +10,7 @@ use std::net::TcpStream;
 use crate::json::Json;
 
 /// Holds the resolved server endpoint and write-gate secret for the duration
-/// of one CLI run. `write_password` mirrors the `RPC_WRITE_PASSWORD`
+/// of one CLI run. `write_password` mirrors the `GHIDRA_RPC_WRITE_PASSWORD`
 /// environment variable: when `Some`, every outgoing request gets the secret
 /// injected as a top-level `password` field so the server can authenticate the
 /// mutation; when `None`, the field is omitted and the server (if its own env

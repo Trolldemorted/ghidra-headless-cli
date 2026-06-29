@@ -25,7 +25,7 @@
 // Configuration (environment variables):
 //   RPC_BIND            interface to bind   (default 0.0.0.0)
 //   RPC_PORT            TCP port to listen  (default 18000)
-//   RPC_WRITE_PASSWORD  shared secret for mutating requests (default unset).
+//   GHIDRA_RPC_WRITE_PASSWORD  shared secret for mutating requests (default unset).
 //                       When set, every procedure that returns true from
 //                       RpcProcedure.mutates() must carry a matching "password"
 //                       field in its request body; a wrong/missing password
@@ -34,11 +34,12 @@
 //                       == false) bypass the gate in both modes. When unset,
 //                       the gate is off entirely — every request is accepted,
 //                       including those that carry an arbitrary "password"
-//                       field. Logged on startup as either "RPC_WRITE_PASSWORD
-//                       is set (mutating requests are gated)" or "...unset
-//                       (no password gate)"; the value itself is never logged.
+//                       field. Logged on startup as either
+//                       "GHIDRA_RPC_WRITE_PASSWORD is set (mutating requests
+//                       are gated)" or "...unset (no password gate)"; the
+//                       value itself is never logged.
 //   RPC_ADMIN_PASSWORD  shared secret for admin-only procedures (default unset).
-//                       Independent from RPC_WRITE_PASSWORD: a leaked write
+//                       Independent from GHIDRA_RPC_WRITE_PASSWORD: a leaked write
 //                       secret does NOT grant admin rights. When set, every
 //                       procedure whose RpcProcedure.requiresAdmin() returns
 //                       true must carry a matching "adminPassword" field;
@@ -116,19 +117,19 @@ public class RpcServer extends GhidraScript {
         // is only a trigger — we use it solely to close the enclosing transaction (below)
         // and otherwise ignore it, so the initial state is genuinely empty.
         context = new RpcContext(state.getProject(), monitor);
-        // Install the write-gate shared secret. When RPC_WRITE_PASSWORD is set,
+        // Install the write-gate shared secret. When GHIDRA_RPC_WRITE_PASSWORD is set,
         // every mutating request must carry a matching "password" field;
         // when unset, the gate is off entirely (read-only requests bypass
         // either way). Logged here once at startup so operators can confirm
         // the configured mode without grepping logs for gate rejections.
-        String writePw = env("RPC_WRITE_PASSWORD", null);
+        String writePw = env("GHIDRA_RPC_WRITE_PASSWORD", null);
         context.setWritePassword(writePw);
         if (writePw != null) {
-            Msg.info(this, "RPC_WRITE_PASSWORD is set (mutating requests are gated).");
+            Msg.info(this, "GHIDRA_RPC_WRITE_PASSWORD is set (mutating requests are gated).");
         } else {
-            Msg.info(this, "RPC_WRITE_PASSWORD is unset (no password gate).");
+            Msg.info(this, "GHIDRA_RPC_WRITE_PASSWORD is unset (no password gate).");
         }
-        // Admin gate (RPC_ADMIN_PASSWORD). Independent from RPC_WRITE_PASSWORD:
+        // Admin gate (RPC_ADMIN_PASSWORD). Independent from GHIDRA_RPC_WRITE_PASSWORD:
         // a leaked write secret does not grant admin rights. When set, every
         // procedure whose requiresAdmin() is true must carry a matching
         // "adminPassword" field; the dispatcher rejects a wrong/missing value
@@ -564,7 +565,7 @@ public class RpcServer extends GhidraScript {
         // most recent N. Gated by RPC_ADMIN_PASSWORD (handler overrides
         // requiresAdmin()=true). Project-level: no program open, no checkout,
         // no dispatcher transaction; mutates()=true so the dispatcher rejects
-        // the call if RPC_WRITE_PASSWORD is also set without a matching value.
+        // the call if GHIDRA_RPC_WRITE_PASSWORD is also set without a matching value.
         register("PurgeVersions", new procedures.ghidra.framework.model.PurgeVersionsHandler());
 
         // Data-type management: list / show / create / replace / edit / delete / apply.
@@ -586,7 +587,8 @@ public class RpcServer extends GhidraScript {
         // UnsupportedOperationException, which the handler turns into a clear
         // "edit the underlying type instead" error.
         register("SetDataTypeFieldComment", new procedures.ghidra.program.model.data.SetDataTypeFieldCommentHandler());
-        register("SetDataTypeVariantComment", new procedures.ghidra.program.model.data.SetDataTypeVariantCommentHandler());
+        register("SetDataTypeVariantComment",
+            new procedures.ghidra.program.model.data.SetDataTypeVariantCommentHandler());
         register("SetDataTypeFieldType", new procedures.ghidra.program.model.data.SetDataTypeFieldTypeHandler());
         register("SetDataTypeFieldName", new procedures.ghidra.program.model.data.SetDataTypeFieldNameHandler());
 

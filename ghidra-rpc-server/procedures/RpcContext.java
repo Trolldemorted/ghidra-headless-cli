@@ -193,7 +193,7 @@ public class RpcContext {
 
     /**
      * Shared secret required on every mutating request when non-null. Set from
-     * the {@code RPC_WRITE_PASSWORD} environment variable at server startup via
+     * the {@code GHIDRA_RPC_WRITE_PASSWORD} environment variable at server startup via
      * {@link #setWritePassword}. When null (the default), the gate is off and
      * every request is accepted — including those carrying a {@code password}
      * field, since the server is telling the client "I don't care". When
@@ -323,7 +323,7 @@ public class RpcContext {
     public RpcResponse dispatch(RpcProcedure procedure, JsonObject request) throws Exception {
         lock.lock();
         try {
-            // Write-password gate (RPC_WRITE_PASSWORD on the server). When set,
+            // Write-password gate (GHIDRA_RPC_WRITE_PASSWORD on the server). When set,
             // every mutating call must carry a matching "password" field;
             // read-only calls bypass the gate in both modes. Checked first so
             // a rejected request never touches the project tree, the program
@@ -333,14 +333,14 @@ public class RpcContext {
                 String supplied = optStr(request, "password");
                 if (supplied == null || !required.equals(supplied)) {
                     return RpcResponse.error("Missing or invalid 'password' field; "
-                        + "mutating requests require RPC_WRITE_PASSWORD.");
+                        + "mutating requests require GHIDRA_RPC_WRITE_PASSWORD.");
                 }
             }
             // Admin-password gate (RPC_ADMIN_PASSWORD on the server). When set,
             // every procedure whose requiresAdmin() is true must carry a matching
             // "adminPassword" field; a wrong/missing value returns an error
             // BEFORE any project tree or repository access. Independent from the
-            // write-password gate above: a leaked RPC_WRITE_PASSWORD does NOT
+            // write-password gate above: a leaked GHIDRA_RPC_WRITE_PASSWORD does NOT
             // grant admin rights. Read & non-admin procedures bypass this gate.
             String adminRequired = adminPassword;
             if (adminRequired != null && procedure.requiresAdmin()) {
