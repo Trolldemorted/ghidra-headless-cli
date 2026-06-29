@@ -55,14 +55,16 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
     common::require_address_or_set(&cmd.address, &cmd.address_set).map_err(common::log_arg_err)?;
 
     if cmd.address.is_some() && !cmd.address_set.is_empty() {
-        return Err(common::log_arg_err(
+        common::log_arg_err(
             "--address and --address-set are mutually exclusive; pick one".to_string(),
-        ));
+        );
+        return Err(());
     }
     if cmd.address_set.len() > 1 {
-        return Err(common::log_arg_err(
+        common::log_arg_err(
             "--address-set may be specified at most once; use --address-set START:END for one range"
-                .to_string()));
+                .to_string());
+        return Err(());
     }
 
     let set = common::address_set(&cmd.address_set).map_err(common::log_arg_err)?;

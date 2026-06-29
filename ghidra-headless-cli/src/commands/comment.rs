@@ -205,12 +205,11 @@ fn print_response(procedure: &str, response: &Json, show_previous: bool) {
     // terminal, the header and the previous-state line are always
     // adjacent in the log stream. The new comment then lands on
     // stdout, which is what scripts and pipelines consume.
-    if show_previous {
-        if let Some(prev) = response.get("previous").and_then(Json::as_str) {
-            if !prev.is_empty() {
-                log::info!("previous: {}", prev);
-            }
-        }
+    if show_previous
+        && let Some(prev) = response.get("previous").and_then(Json::as_str)
+        && !prev.is_empty()
+    {
+        log::info!("previous: {}", prev);
     }
     println!("{}", comment);
 }

@@ -419,11 +419,12 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             // Re-check here for the "neither" case so a `--path ""` slips through
             // clap but still gets caught.
             if path.is_none() && name.is_none() {
-                return Err(common::log_arg_err(
+                common::log_arg_err(
                     "Pass either --path (e.g. /Category/Name) or --name (with \
                      optional --archive / --category); not neither."
                         .to_string(),
-                ));
+                );
+                return Err(());
             }
             let mut req = Req::new("ShowDataType").str("file", program);
             if let Some(p) = path {
@@ -612,23 +613,23 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             // the referrer, or delete + create of the referrer). The server
             // returns the list under `referrers`; surface it on stderr so
             // the user knows what to heal.
-            if let Some(arr) = response.get("referrers").and_then(Json::as_array) {
-                if !arr.is_empty() {
-                    log::info!(
-                        "note: {} type(s) referenced this and now show '-BAD-'; \
-                         run `datatype replace` on each to heal:",
-                        arr.len()
-                    );
-                    for r in arr {
-                        // `arr` is `&[Json]`; each element is `&Json`. as_str
-                        // borrows from the Json so we keep the lifetime
-                        // straight by matching rather than unwrapping.
-                        let p = match r {
-                            Json::Str(s) => s.as_str(),
-                            _ => "?",
-                        };
-                        log::info!("  {}", p);
-                    }
+            if let Some(arr) = response.get("referrers").and_then(Json::as_array)
+                && !arr.is_empty()
+            {
+                log::info!(
+                    "note: {} type(s) referenced this and now show '-BAD-'; \
+                     run `datatype replace` on each to heal:",
+                    arr.len()
+                );
+                for r in arr {
+                    // `arr` is `&[Json]`; each element is `&Json`. as_str
+                    // borrows from the Json so we keep the lifetime
+                    // straight by matching rather than unwrapping.
+                    let p = match r {
+                        Json::Str(s) => s.as_str(),
+                        _ => "?",
+                    };
+                    log::info!("  {}", p);
                 }
             }
             Ok(())
@@ -638,6 +639,11 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
 
 /// Parse a user-supplied JSON literal (or None) and emit a clear error on
 /// malformed input. Used for the `--fields` and `--entries` arrays.
+// The clap-subcommand fields forward verbatim to the wire builder — keeping
+// them as positional args (rather than a bag struct) keeps the construction
+// site and the call site line up, which matters for `git blame` when a field
+// is renamed on the wire. Suppress the arg-count warning for that reason.
+#[allow(clippy::too_many_arguments)]
 fn run_create_or_replace(
     procedure: &'static str,
     program: String,
@@ -701,6 +707,8 @@ fn run_create_or_replace(
 /// as with archive stubs). On the path form, `--name` and `--category`
 /// are derived from the path and conflicts_with blocks them; the user
 /// still supplies `--kind` (or `--definition`).
+// See `run_create_or_replace` for the arg-count rationale.
+#[allow(clippy::too_many_arguments)]
 fn run_replace(
     program: String,
     path: Option<String>,
@@ -808,7 +816,8 @@ fn print_list(
             // No `types` key on error responses — surface the error so
             // the script doesn't silently get empty output.
             if let Some(err) = response.get("error").and_then(Json::as_str) {
-                return Err(common::log_arg_err(err.to_string()));
+                common::log_arg_err(err.to_string());
+                return Err(());
             }
             println!("[]");
         }
@@ -1247,12 +1256,15 @@ fn print_show_full(
             }
             Ok(())
         }
-        _ => Err(common::log_arg_err(format!(
-            "server returned no C declaration for '{}' (path={}, kind={}). \
-             The C writer did not produce output for this type. \
-             Retry with --json to see the structured view.",
-            name, path, kind
-        ))),
+        _ => {
+            common::log_arg_err(format!(
+                "server returned no C declaration for '{}' (path={}, kind={}). \
+                 The C writer did not produce output for this type. \
+                 Retry with --json to see the structured view.",
+                name, path, kind
+            ));
+            Err(())
+        }
     }
 }
 
@@ -1436,10 +1448,10 @@ fn print_field_renamed(response: &Json) -> Result<(), ()> {
     println!("was:    {}", previous);
     println!("now:    {}", field);
     println!("type:   {}", type_);
-    if let Some(c) = comment {
-        if !c.is_empty() {
-            println!("comment: {}", c);
-        }
+    if let Some(c) = comment
+        && !c.is_empty()
+    {
+        println!("comment: {}", c);
     }
     Ok(())
 }

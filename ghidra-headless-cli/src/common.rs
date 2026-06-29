@@ -60,15 +60,14 @@ pub fn address_set(ranges: &[String]) -> Result<Option<Json>, String> {
                 if let (Ok(s), Ok(e)) = (
                     u64::from_str_radix(start.trim_start_matches("0x"), 16),
                     u64::from_str_radix(end.trim_start_matches("0x"), 16),
-                ) {
-                    if e <= s {
-                        return Err(format!(
-                            "invalid range '{}': END must be strictly greater than START \
-                             (use bare START for a single-byte range, or START:START+1 \
-                              for an explicit one-byte range)",
-                            raw
-                        ));
-                    }
+                ) && e <= s
+                {
+                    return Err(format!(
+                        "invalid range '{}': END must be strictly greater than START \
+                         (use bare START for a single-byte range, or START:START+1 \
+                          for an explicit one-byte range)",
+                        raw
+                    ));
                 }
                 fields.push(("start".to_string(), Json::Str(start.to_string())));
                 fields.push(("end".to_string(), Json::Str(end.to_string())));

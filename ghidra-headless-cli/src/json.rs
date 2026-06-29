@@ -414,14 +414,6 @@ impl Req {
         self
     }
 
-    /// Optional boolean field.
-    pub fn opt_bool(mut self, key: &str, value: Option<bool>) -> Req {
-        if let Some(v) = value {
-            self.0.push((key.to_string(), Json::Bool(v)));
-        }
-        self
-    }
-
     /// Required boolean field. Always emits the value — callers must
     /// supply the field's documented default when the user did not pass
     /// an explicit flag, so the wire carries the resolved value.

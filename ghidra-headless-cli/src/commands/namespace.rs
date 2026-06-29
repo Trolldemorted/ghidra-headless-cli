@@ -24,6 +24,7 @@ use crate::common::Source;
 use crate::json::{Json, Req};
 
 #[derive(Subcommand, Debug)]
+#[allow(clippy::enum_variant_names)] // clap derives the CLI subcommand names from the variants; the `Class` postfix is intentional.
 pub enum Cmd {
     /// Create a new class namespace, or convert an existing plain
     /// namespace into a class

@@ -243,14 +243,14 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             .str("file", a.program.clone())
             .str("address", a.address.clone())
             .str("name", a.name.clone())
-            .opt_str("source", Source::opt(a.source.clone()))
+            .opt_str("source", Source::opt(a.source))
             .build(),
         Cmd::RenameLabel(a) => Req::new("RenameLabel")
             .str("file", a.program.clone())
             .str("query", a.query.clone())
             .opt_str("address", a.address.clone())
             .str("newName", a.name.clone())
-            .opt_str("source", Source::opt(a.source.clone()))
+            .opt_str("source", Source::opt(a.source))
             .build(),
         Cmd::DeleteLabel(a) => Req::new("DeleteLabel")
             .str("file", a.program.clone())
@@ -473,20 +473,20 @@ fn print_response(cmd: &Cmd, response: &Json) {
             // over a 32-byte range leaves 24 bytes uncovered). The user
             // can decide whether to widen the type, narrow the range, or
             // pass more --address-set entries to fill the gap.
-            if let Some(arr) = response.get("warnings").and_then(Json::as_array) {
-                if !arr.is_empty() {
-                    log::info!(
-                        "note: {} range(s) had uncovered bytes; the type's \
-                         length was shorter than the range end-to-start:",
-                        arr.len()
-                    );
-                    for w in arr {
-                        let s = match w {
-                            Json::Str(s) => s.as_str(),
-                            _ => "?",
-                        };
-                        log::info!("  {}", s);
-                    }
+            if let Some(arr) = response.get("warnings").and_then(Json::as_array)
+                && !arr.is_empty()
+            {
+                log::info!(
+                    "note: {} range(s) had uncovered bytes; the type's \
+                     length was shorter than the range end-to-start:",
+                    arr.len()
+                );
+                for w in arr {
+                    let s = match w {
+                        Json::Str(s) => s.as_str(),
+                        _ => "?",
+                    };
+                    log::info!("  {}", s);
                 }
             }
         }
