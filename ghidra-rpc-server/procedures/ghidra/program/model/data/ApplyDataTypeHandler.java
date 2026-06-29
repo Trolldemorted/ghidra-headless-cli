@@ -231,7 +231,10 @@ public final class ApplyDataTypeHandler implements RpcProcedure {
     private static final class AddressRange {
         final Address start;
         final Address end;
-        AddressRange(Address start, Address end) { this.start = start; this.end = end; }
+        AddressRange(Address start, Address end) {
+            this.start = start;
+            this.end = end;
+        }
     }
 
     /**
@@ -259,8 +262,7 @@ public final class ApplyDataTypeHandler implements RpcProcedure {
                             + "range, or start:start+1 for an explicit one-byte range).");
                     }
                     out.add(new AddressRange(start, wireEnd.previous()));
-                }
-                else {
+                } else {
                     out.add(new AddressRange(start, start));
                 }
             }

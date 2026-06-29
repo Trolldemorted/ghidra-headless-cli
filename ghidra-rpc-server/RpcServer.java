@@ -125,8 +125,7 @@ public class RpcServer extends GhidraScript {
         context.setWritePassword(writePw);
         if (writePw != null) {
             Msg.info(this, "RPC_WRITE_PASSWORD is set (mutating requests are gated).");
-        }
-        else {
+        } else {
             Msg.info(this, "RPC_WRITE_PASSWORD is unset (no password gate).");
         }
         // Admin gate (RPC_ADMIN_PASSWORD). Independent from RPC_WRITE_PASSWORD:
@@ -140,8 +139,7 @@ public class RpcServer extends GhidraScript {
         context.setAdminPassword(adminPw);
         if (adminPw != null) {
             Msg.info(this, "RPC_ADMIN_PASSWORD is set (admin-only procedures are gated).");
-        }
-        else {
+        } else {
             Msg.info(this, "RPC_ADMIN_PASSWORD is unset (no admin gate).");
         }
         // Detect mid-session Ghidra Server connection loss in RpcContext.checkin

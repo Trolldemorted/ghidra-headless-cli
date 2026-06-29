@@ -11,7 +11,6 @@ import ghidra.program.model.listing.FunctionManager;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolIterator;
 import ghidra.program.model.symbol.SymbolTable;
-import ghidra.program.model.symbol.SymbolType;
 
 import procedures.RpcContext;
 import procedures.RpcProcedure;

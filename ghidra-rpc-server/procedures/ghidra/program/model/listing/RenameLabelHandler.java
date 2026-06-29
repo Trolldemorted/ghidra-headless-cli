@@ -72,8 +72,7 @@ public final class RenameLabelHandler implements RpcProcedure {
                 }
                 sb.append("\nUse `memory get-label --address ").append(addr)
                   .append("` to see the exact stored names.");
-            }
-            else if (lookup.suggestions != null && !lookup.suggestions.isEmpty()) {
+            } else if (lookup.suggestions != null && !lookup.suggestions.isEmpty()) {
                 sb.append("\nDid you mean one of these?");
                 for (Symbol s : lookup.suggestions) {
                     sb.append("\n  ").append(LabelLookup.formatSymbol(s));

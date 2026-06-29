@@ -50,8 +50,7 @@ public final class DeleteLabelHandler implements RpcProcedure {
                 }
                 sb.append("\nUse `memory get-label --address ").append(addr)
                   .append("` to see the exact stored names.");
-            }
-            else if (lookup.suggestions != null && !lookup.suggestions.isEmpty()) {
+            } else if (lookup.suggestions != null && !lookup.suggestions.isEmpty()) {
                 sb.append("\nDid you mean one of these?");
                 for (Symbol s : lookup.suggestions) {
                     sb.append("\n  ").append(LabelLookup.formatSymbol(s));
@@ -66,14 +65,14 @@ public final class DeleteLabelHandler implements RpcProcedure {
             return RpcResponse.error("'" + name + "' is a function entry-point label; use "
                 + "'function delete' to remove the function itself.");
         }
-        if (sym.getParentNamespace().isGlobal() == false
+        if (!sym.getParentNamespace().isGlobal()
             && sym.getSymbolType() != SymbolType.LABEL) {
             // Defensive: only top-level labels and function labels live in
             // the global namespace; if the symbol is not in the global
             // namespace AND is not a function, it's a parameter/local we
             // don't want to expose via this verb.
             return RpcResponse.error("Refusing to delete non-label symbol '"
-                + name + "' (type=" + sym.getSymbolType() + ").");
+      + name + "' (type=" + sym.getSymbolType() + ").");
         }
 
         final String deletedName = sym.getName();

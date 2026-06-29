@@ -158,13 +158,11 @@ public final class SetVariableNameCmdHandler implements RpcProcedure {
                 f, DECOMPILER_TIMEOUT_SECS, ctx.monitor());
             if (results == null || !results.decompileCompleted()) {
                 decompError = "decompiler did not complete";
-            }
-            else {
+            } else {
                 HighFunction hfunc = results.getHighFunction();
                 if (hfunc == null) {
                     decompError = "no high function in decompiler results";
-                }
-                else {
+                } else {
                     LocalSymbolMap localMap = hfunc.getLocalSymbolMap();
                     Map<String, HighSymbol> nameMap = localMap.getNameToSymbolMap();
                     HighSymbol hs = nameMap.get(oldName);
@@ -173,8 +171,7 @@ public final class SetVariableNameCmdHandler implements RpcProcedure {
                         // could be a stale display name from a prior
                         // analysis, or a typo by the user.
                         decompError = "decompiler display name not in high-function symbol map";
-                    }
-                    else {
+                    } else {
                         // Only the direct backing-symbol path is safe.
                         // A HighSymbol with no backing symbol is a
                         // decompiler invention (e.g. puVar1 for a
@@ -186,8 +183,7 @@ public final class SetVariableNameCmdHandler implements RpcProcedure {
                         Symbol sym = hs.getSymbol();
                         if (sym != null) {
                             storedName = sym.getName();
-                        }
-                        else {
+                        } else {
                             // Display-only: no stored symbol to rename.
                             // Build a hint that tells the user which
                             // register/stack slot to claim via
@@ -203,11 +199,9 @@ public final class SetVariableNameCmdHandler implements RpcProcedure {
                     }
                 }
             }
-        }
-        catch (Exception e) {
+        } catch (Exception e) {
             decompError = "decompiler error: " + e.getMessage();
-        }
-        finally {
+        } finally {
             di.dispose();
         }
 
@@ -228,8 +222,7 @@ public final class SetVariableNameCmdHandler implements RpcProcedure {
             msg = "Variable not found: '" + oldName
                 + "' (decompiler mapped to '" + storedName
                 + "' but rename failed). ";
-        }
-        else {
+        } else {
             // Either the decompile itself failed, the display name is
             // not in the symbol map, or it has no backing symbol.
             msg = "Variable not found: '" + oldName + "' (" + decompError + "). ";
@@ -334,8 +327,7 @@ public final class SetVariableNameCmdHandler implements RpcProcedure {
                 }
             }
             return sb.toString();
-        }
-        catch (Exception e) {
+        } catch (Exception e) {
             return "(could not list variables: " + e.getMessage() + ")";
         }
     }

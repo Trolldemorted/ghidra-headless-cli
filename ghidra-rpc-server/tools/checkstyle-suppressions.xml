@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<!--
+  Checkstyle suppressions for ghidra-rpc-server.
+
+  Each <suppress> lists the file(s) / check(s) it silences and the
+  comment explains why. Lines/columns use the literal `lines=` syntax
+  supported by SuppressionFilter (commas + dashes; no regex).
+-->
+<!DOCTYPE suppressions PUBLIC
+  "-//Checkstyle//DTD SuppressionFilter Configuration 1.2//EN"
+  "https://checkstyle.org/dtds/suppressions_1_2.dtd">
+<suppressions>
+
+  <!-- RpcServer.java keeps a table of handler registrations — long
+       qualified-name columns per row. Reformatting the table to wrap
+       would defeat its grep-by-name purpose. -->
+  <suppress checks="LineLength"
+            files="RpcServer\.java"
+            lines="487-524,589,591"/>
+
+  <!-- RpcContext.java line 1364: a 140-char user-facing instruction
+       in an error builder. Hand-wrapped copy is awkward; allow. -->
+  <suppress checks="LineLength"
+            files="RpcContext\.java"
+            lines="1364"/>
+
+  <!-- Error-message builders in these handlers intentionally keep the
+       hint string concatenated onto the cause for grep-ability. -->
+  <suppress checks="LineLength"
+            files="(DeleteLabelHandler|RenameLabelHandler)\.java"
+            lines="38,55"/>
+  <suppress checks="LineLength"
+            files="SetDataTypeFieldTypeHandler\.java"
+            lines="68"/>
+  <suppress checks="LineLength"
+            files="SetDataTypeFieldCommentHandler\.java"
+            lines="57"/>
+  <suppress checks="LineLength"
+            files="SetDataTypeFieldNameHandler\.java"
+            lines="52"/>
+  <suppress checks="LineLength"
+            files="SetDataTypeVariantCommentHandler\.java"
+            lines="59"/>
+
+</suppressions>

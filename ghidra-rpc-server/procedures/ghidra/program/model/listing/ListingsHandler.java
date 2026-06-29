@@ -360,8 +360,7 @@ public final class ListingsHandler implements RpcProcedure {
             if (label == null || label.isEmpty()) {
                 label = cu.getLabel();
             }
-        }
-        else {
+        } else {
             label = cu.getLabel();
         }
         String bytes = null;
@@ -374,8 +373,7 @@ public final class ListingsHandler implements RpcProcedure {
                     if (got > 0) {
                         bytes = toHex(java.util.Arrays.copyOf(buf, got));
                     }
-                }
-                else {
+                } else {
                     bytes = toHex(cu.getBytes());
                 }
             } catch (MemoryAccessException e) {

@@ -1,7 +1,5 @@
 package procedures.ghidra.program.model.listing;
 
-import java.util.List;
-
 import procedures.RpcResponse;
 
 /**

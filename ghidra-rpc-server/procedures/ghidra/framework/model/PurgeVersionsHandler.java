@@ -83,8 +83,7 @@ public final class PurgeVersionsHandler implements RpcProcedure {
         Version[] before;
         try {
             before = repo.getVersions(parentPath, itemName);
-        }
-        catch (IOException e) {
+        } catch (IOException e) {
             return RpcResponse.error("getVersions('" + parentPath + "', '" + itemName + "'): "
                 + e.getMessage());
         }
@@ -99,8 +98,7 @@ public final class PurgeVersionsHandler implements RpcProcedure {
         User me;
         try {
             me = repo.getUser();
-        }
-        catch (IOException e) {
+        } catch (IOException e) {
             me = null;
         }
         boolean isAdmin = (me != null) && me.isAdmin();
@@ -145,8 +143,7 @@ public final class PurgeVersionsHandler implements RpcProcedure {
 
             try {
                 repo.deleteItem(parentPath, itemName, targetVersion);
-            }
-            catch (IOException e) {
+            } catch (IOException e) {
                 return RpcResponse.error(
                     "deleteItem('" + parentPath + "', '" + itemName + "', " + targetVersion
                     + "): " + e.getMessage()
@@ -171,8 +168,7 @@ public final class PurgeVersionsHandler implements RpcProcedure {
         Version[] after;
         try {
             after = repo.getVersions(parentPath, itemName);
-        }
-        catch (IOException e) {
+        } catch (IOException e) {
             // Repo unreachable after the deletes? report what we know.
             after = new Version[0];
         }

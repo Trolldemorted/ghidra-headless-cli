@@ -1,14 +1,11 @@
 package procedures.ghidra.app.cmd.comments;
 
-import com.google.gson.JsonObject;
-
 import ghidra.app.cmd.comments.AppendCommentCmd;
 import ghidra.app.cmd.comments.SetCommentCmd;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.CodeUnit;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Function;
-import ghidra.program.model.listing.Program;
 
 import procedures.RpcContext;
 import procedures.RpcResponse;

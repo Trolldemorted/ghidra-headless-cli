@@ -1,0 +1,147 @@
+<?xml version="1.0"?>
+<!--
+  Checkstyle config tuned to the ghidra-rpc-server codebase.
+
+  Mirrors the style established in /workdir/notes/java-linter-evaluation.md:
+    * 4-space soft indentation, no tabs
+    * one statement per line
+    * imports non-star, no duplicates, no unused
+    * public APIs documented
+    * 120-column cap (overlong lines re-wrapped in 2026-06-29 sweep;
+      see tools/CHANGELOG.md if you bump this).
+    * License header is NOT enforced — the project intentionally ships
+      without the Apache header that Ghidra upstream uses; do not add
+      InlineHeaderPattern or similar without a separate vote.
+
+  Run with:
+    checkstyle -c tools/checkstyle.xml $(find . -name '*.java')
+  Suppressions live in tools/checkstyle-suppressions.xml.
+-->
+<!DOCTYPE module PUBLIC
+  "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+  "https://checkstyle.org/dtds/configuration_1_3.dtd">
+<module name="Checker">
+  <property name="severity" value="warning"/>
+  <property name="charset" value="UTF-8"/>
+
+  <!-- Suppressions are not loaded via -p=; they go through the
+       SuppressionFilter module below.  Point the filter at the sibling
+       XML so we can keep all suppressions auditable in git. -->
+  <module name="SuppressionFilter">
+    <property name="file" value="tools/checkstyle-suppressions.xml"/>
+  </module>
+
+  <!-- File-level checks. -->
+  <module name="FileTabCharacter">
+    <property name="eachLine" value="true"/>
+  </module>
+  <module name="LineLength">
+    <property name="max" value="120"/>
+    <property name="ignorePattern"
+              value="^.*\b(import|package)\b.*$|^.*\* .*https?://.*$"/>
+  </module>
+
+  <module name="TreeWalker">
+
+    <module name="Indentation">
+      <property name="basicOffset" value="4"/>
+      <property name="braceAdjustment" value="0"/>
+      <property name="caseIndent" value="4"/>
+      <property name="throwsIndent" value="4"/>
+      <property name="lineWrappingIndentation" value="4"/>
+      <property name="arrayInitIndent" value="4"/>
+    </module>
+
+    <!-- Imports. -->
+    <module name="AvoidStarImport"/>
+    <module name="RedundantImport"/>
+    <module name="UnusedImports">
+      <property name="processJavadoc" value="true"/>
+    </module>
+
+    <!-- Javadoc on every public class.
+         (JavadocMethod would fire on every unpacked-field helper and
+         is too noisy for handler-class data members — left out until
+         we add accessor boilterplate to every field, if ever.) -->
+    <module name="JavadocType">
+      <property name="scope" value="public"/>
+    </module>
+
+    <!-- Whitespace + bracing. -->
+    <module name="WhitespaceAfter"/>
+    <module name="WhitespaceAround"/>
+    <module name="NoWhitespaceBefore">
+      <property name="allowLineBreaks" value="false"/>
+      <property name="tokens" value="COMMA,SEMI,POST_INC,POST_DEC"/>
+    </module>
+    <!-- `RightCurly` is the brace rule that bites us; `LeftCurly` would
+         require `{` on its own line for every compact one-liner method
+         the handlers use (e.g. `@Override public boolean mutates() { return false; }`).
+         That's a deliberate style choice — leave LeftCurly off so future
+         edits don't have to un-compact them. -->
+    <module name="RightCurly">
+      <property name="option" value="same"/>
+    </module>
+
+    <!-- One statement / one decl per line. -->
+    <module name="OneStatementPerLine"/>
+    <module name="MultipleVariableDeclarations"/>
+
+    <!-- Naming. Allow the ghidra.api.* Ghidra types to be lowercase-
+         short but enforce local conventions. -->
+    <module name="LocalFinalVariableName"/>
+    <module name="LocalVariableName"/>
+    <module name="MemberName"/>
+    <module name="MethodName"/>
+    <module name="PackageName"/>
+    <module name="ParameterName"/>
+    <module name="StaticVariableName">
+      <property name="format" value="^[A-Z][A-Z0-9_]*$|^[a-z][a-zA-Z0-9]*$"/>
+    </module>
+    <module name="TypeName"/>
+    <module name="AbbreviationAsWordInName">
+      <property name="ignoreStatic" value="true"/>
+      <property name="ignoreFinal" value="true"/>
+      <property name="allowedAbbreviations" value="API,AST,DTM,JSON,RMIRPC,URL"/>
+    </module>
+
+    <!-- @Override is mandatory. -->
+    <module name="MissingOverride"/>
+    <module name="AnnotationLocation"/>
+
+    <!-- Method length cap to catch rising complexity. -->
+    <module name="MethodLength">
+      <property name="max" value="200"/>
+    </module>
+
+    <!-- Avoid obviously broken constructs. -->
+    <module name="EmptyStatement"/>
+    <module name="EqualsHashCode"/>
+    <module name="SimplifyBooleanExpression"/>
+    <module name="SimplifyBooleanReturn"/>
+    <module name="StringLiteralEquality"/>
+    <module name="UnnecessaryParentheses"/>
+    <module name="CovariantEquals"/>
+    <module name="FallThrough"/>
+    <module name="UpperEll"/>
+    <module name="ArrayTypeStyle"/>
+
+    <!-- Visibility tuning. -->
+    <module name="RedundantModifier"/>
+    <!-- (VisibilityModifier disabled for now: every handler field is a
+         parsed-request POJO member; the "must have accessors" rule
+         would be all noise. Re-enable if/when we adopt a bean-style
+         protocol for the response payloads.) -->
+
+  </module>
+
+  <!-- Outside the tree-walker: regex rules on whole file. -->
+  <module name="RegexpSingleline">
+    <property name="format" value="(?i)\b(System\.out\.print|System\.err\.print|printStackTrace)\("/>
+    <property name="message" value="Avoid print()/printStackTrace() — use Msg.error or log."/>
+  </module>
+  <module name="RegexpSingleline">
+    <property name="format" value="\s+$"/>
+    <property name="message" value="Trailing whitespace."/>
+  </module>
+</module>

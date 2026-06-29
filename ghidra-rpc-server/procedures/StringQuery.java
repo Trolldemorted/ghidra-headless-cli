@@ -18,7 +18,7 @@ import com.google.gson.JsonObject;
  */
 public final class StringQuery {
 
-    private StringQuery() {}
+    private StringQuery() { }
 
     /** Substring match (or regex when {@code regex} is true). */
     public static Predicate<String> contains(JsonObject req) {

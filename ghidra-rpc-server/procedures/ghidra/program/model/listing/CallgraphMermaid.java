@@ -13,7 +13,7 @@ import java.util.Map;
  */
 final class CallgraphMermaid {
 
-    private CallgraphMermaid() {}
+    private CallgraphMermaid() { }
 
     static String render(List<CallgraphNode> nodes, List<CallgraphEdge> edges, String direction) {
         String header = direction.equals("calling") ? "graph BT" : "graph TD";

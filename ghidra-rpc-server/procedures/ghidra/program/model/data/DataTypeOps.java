@@ -584,7 +584,10 @@ public final class DataTypeOps {
     static final class EnumEntry {
         final String name;
         final long value;
-        EnumEntry(String name, long value) { this.name = name; this.value = value; }
+        EnumEntry(String name, long value) {
+            this.name = name;
+            this.value = value;
+        }
     }
 
     static List<EnumEntry> enumEntries(JsonArray arr) {
@@ -774,6 +777,9 @@ public final class DataTypeOps {
     static final class FieldPair {
         final String name;
         final String type;
-        FieldPair(String name, String type) { this.name = name; this.type = type; }
+        FieldPair(String name, String type) {
+            this.name = name;
+            this.type = type;
+        }
     }
 }

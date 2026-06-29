@@ -38,7 +38,7 @@ final class NamespaceResolve {
     /** Cap on the number of "did you mean" candidates surfaced. */
     private static final int MAX_CANDIDATES = 5;
 
-    private NamespaceResolve() {}
+    private NamespaceResolve() { }
 
     /**
      * Resolve a namespace by its project path. The bare path "/" (or null /

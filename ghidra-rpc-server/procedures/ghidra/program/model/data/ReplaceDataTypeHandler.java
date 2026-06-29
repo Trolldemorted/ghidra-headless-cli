@@ -148,12 +148,21 @@ public final class ReplaceDataTypeHandler implements RpcProcedure {
                 }
                 DataType dt;
                 switch (kind) {
-                    case "struct":  dt = createStruct(req, name, cp, dtm, ctx); break;
-                    case "union":   dt = createUnion(req, name, cp, dtm, ctx); break;
-                    case "enum":    dt = createEnum(req, name, cp); break;
-                    case "typedef": dt = createTypedef(req, name, cp, dtm, ctx); break;
-                    default: throw new IllegalArgumentException("Unknown kind '" + kind
-                        + "' (use struct|union|enum|typedef).");
+                    case "struct":
+                        dt = createStruct(req, name, cp, dtm, ctx);
+                        break;
+                    case "union":
+                        dt = createUnion(req, name, cp, dtm, ctx);
+                        break;
+                    case "enum":
+                        dt = createEnum(req, name, cp);
+                        break;
+                    case "typedef":
+                        dt = createTypedef(req, name, cp, dtm, ctx);
+                        break;
+                    default:
+                        throw new IllegalArgumentException("Unknown kind '" + kind
+                            + "' (use struct|union|enum|typedef).");
                 }
                 result[0] = category.addDataType(dt, DataTypeConflictHandler.REPLACE_HANDLER);
             } catch (Throwable t) {

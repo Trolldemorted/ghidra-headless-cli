@@ -15,7 +15,7 @@ public class RpcResponse {
     public boolean success;
     public String error;
 
-    public RpcResponse() {}
+    public RpcResponse() { }
 
     public static RpcResponse ok() {
         RpcResponse r = new RpcResponse();

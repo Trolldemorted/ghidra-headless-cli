@@ -1,7 +1,6 @@
 package procedures;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -1224,8 +1223,7 @@ public class RpcContext {
                             + "range, or start:start+1 for an explicit one-byte range).");
                     }
                     set.addRange(start, wireEnd.previous());
-                }
-                else {
+                } else {
                     set.addRange(start, start);
                 }
             }
@@ -1338,15 +1336,12 @@ public class RpcContext {
         CodeUnit cu = active().getListing().getCodeUnitContaining(addr);
         if (cu == null) {
             sb.append(" No code unit covers the address either — the bytes are unmapped.");
-        }
-        else if (cu instanceof Instruction) {
+        } else if (cu instanceof Instruction) {
             sb.append(" An Instruction is disassembled at that address but no Function wraps it "
                 + "(Ghidra's decompiler requires a Function with an entry point to produce C).");
-        }
-        else if (cu instanceof ghidra.program.model.listing.Data) {
+        } else if (cu instanceof ghidra.program.model.listing.Data) {
             sb.append(" A Data unit (not code) is defined at that address.");
-        }
-        else {
+        } else {
             // Undefined bytes — bytes exist but never disassembled. Tell the
             // user how to get instructions here first.
             sb.append(" The bytes at that address are undefined (not yet disassembled).");
@@ -1361,9 +1356,10 @@ public class RpcContext {
               .append(" --name <descriptive_name>");
         }
         if (cu == null) {
-            sb.append("\nIf the bytes are unmapped, add a memory block first (memory create), then disassemble, then create the function.");
-        }
-        else if (!(cu instanceof Instruction)) {
+            sb.append(
+                "\nIf the bytes are unmapped, add a memory block first (memory create), then "
+                + "disassemble, then create the function.");
+        } else if (!(cu instanceof Instruction)) {
             // Undefined or Data — needs disassembly first so CreateFunctionCmd
             // can compute a body.
             sb.append("\nIf the bytes are not yet instructions, disassemble first:");

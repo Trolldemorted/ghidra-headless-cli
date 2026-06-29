@@ -1,6 +1,5 @@
 package procedures.ghidra.program.model.data;
 
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -54,7 +53,7 @@ import java.util.regex.Pattern;
  */
 public final class CDeclarationFilter {
 
-    private CDeclarationFilter() {}
+    private CDeclarationFilter() { }
 
     /**
      * @param raw  the full output of {@code DataTypeWriter.write(...)}.

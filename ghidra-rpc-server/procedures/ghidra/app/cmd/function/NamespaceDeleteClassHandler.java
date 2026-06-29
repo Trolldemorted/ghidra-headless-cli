@@ -115,8 +115,7 @@ public final class NamespaceDeleteClassHandler implements RpcProcedure {
             Object obj = child.getObject();
             if (obj instanceof Function) {
                 ((Function) obj).setParentNamespace(reparentTo);
-            }
-            else if (obj instanceof Namespace) {
+            } else if (obj instanceof Namespace) {
                 // Recurse into both plain sub-namespaces and sub-classes.
                 // Function members found deeper are still re-parented to
                 // the TOP-level `reparentTo` (e.g. the root namespace) —

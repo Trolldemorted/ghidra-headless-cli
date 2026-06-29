@@ -28,7 +28,7 @@ import procedures.StringQuery;
  */
 final class DefinedStringScan {
 
-    private DefinedStringScan() {}
+    private DefinedStringScan() { }
 
     static RpcResponse execute(RpcContext ctx, JsonObject req) throws Exception {
         Predicate<String> matches = StringQuery.containsOptional(req);

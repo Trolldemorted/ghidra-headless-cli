@@ -5,7 +5,6 @@ import java.util.Comparator;
 import java.util.List;
 
 import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 import ghidra.program.model.data.Category;
