@@ -91,6 +91,19 @@ public class RpcServer extends GhidraScript {
     /** How long the shutdown hook waits for the main thread's normal teardown to finish. */
     private static final long SHUTDOWN_WAIT_MS = 20_000;
 
+    /**
+     * Grace period after the connection-lost handler closes the ServerSocket,
+     * before we force {@link System#exit(int) System.exit(0)}. Long enough
+     * for the accept loop to unwind and the run() finally block
+     * ({@code clientPool.shutdownNow + context.closeAll + "Stopped."} log)
+     * to finish; short enough that the orchestrator sees the JVM exit
+     * promptly and starts a replacement with a fresh RMI connection. If
+     * analyzeHeadless DOES unwind on its own before this expires, the
+     * JVM exits naturally and the System.exit is harmless (no-op on an
+     * already-exited process).
+     */
+    private static final long CONNECTION_LOST_EXIT_GRACE_MS = 2_000;
+
     private final Gson gson = new GsonBuilder().disableHtmlEscaping().create();
     private final Map<String, RpcProcedure> handlers = new ConcurrentHashMap<>();
     private final AtomicLong clientIds = new AtomicLong();
@@ -143,27 +156,53 @@ public class RpcServer extends GhidraScript {
         } else {
             Msg.info(this, "RPC_ADMIN_PASSWORD is unset (no admin gate).");
         }
-        // Detect mid-session Ghidra Server connection loss in RpcContext.checkin
-        // and exit through the same graceful path the SIGTERM shutdown hook uses,
+        // Detect mid-session Ghidra Server connection loss in RpcContext and
+        // exit through the same graceful path the SIGTERM shutdown hook uses,
         // so compose / k8s / systemd can restart us with a fresh RMI connection.
         // (Reconnecting a parked JVM to a live Ghidra Server is non-trivial; a
         // clean restart is the simplest correct recovery until we build proper
         // reconnection. RpcContext surfaces the detection as "Not connected to
         // repository server"; without this callback every subsequent request
         // would loop on the same error forever.)
+        //
+        // The handler closes the ServerSocket to unblock accept() and let the
+        // run() finally (clientPool.shutdownNow + context.closeAll + "Stopped."
+        // log) run. analyzeHeadless may keep the JVM alive after run() returns,
+        // though — so we also schedule a forced System.exit on a daemon thread
+        // after a brief grace period. The grace window (2s) is long enough for
+        // in-flight requests to finish and the teardown log to land, short
+        // enough that an orchestrator (compose / k8s / systemd) sees the
+        // process exit promptly and starts a replacement with a fresh RMI
+        // connection. monitor.cancel() is intentionally NOT called: the
+        // in-script TaskMonitor is a no-op for this purpose and cancelling it
+        // would not propagate to HeadlessAnalyzer's outer loop.
         context.onConnectionLost(() -> {
             Msg.error(this, "Ghidra Server connection lost (RpcContext detected "
-                + "'Not connected to repository server' on checkin); exiting so "
-                + "the orchestrator can restart the RPC server.");
-            stopping = true; // drive the accept loop to exit (monitor.cancel is a no-op)
+                + "'Not connected to repository server'); exiting so the "
+                + "orchestrator can restart the RPC server.");
+            stopping = true;
             ServerSocket s = serverSocket;
             if (s != null) {
                 try {
-                    s.close(); // interrupt accept() and let the run() finally run
+                    s.close();
                 } catch (IOException ignored) {
                     // already closed
                 }
             }
+            Thread exitTimer = new Thread(() -> {
+                try {
+                    Thread.sleep(CONNECTION_LOST_EXIT_GRACE_MS);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                Msg.error(this, "Forcing JVM exit after "
+                    + CONNECTION_LOST_EXIT_GRACE_MS + "ms grace period "
+                    + "(analyzeHeadless did not unwind on its own).");
+                System.exit(0);
+            }, "rpc-connection-lost-exit");
+            exitTimer.setDaemon(true);
+            exitTimer.start();
         });
         registerHandlers();
 

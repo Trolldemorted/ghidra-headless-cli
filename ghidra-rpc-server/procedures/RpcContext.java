@@ -361,6 +361,19 @@ public class RpcContext {
                 try {
                     program = openProgram(path); // checks the file out before opening it
                 } catch (Exception e) {
+                    // openProgram's RMI-touching paths (df.checkout on a fresh
+                    // file; df.undoCheckout in the dirty-reset block) throw
+                    // "Not connected to repository server" when the Ghidra
+                    // Server RMI socket is dead. Count those too — without
+                    // this, the first failed checkin increments the counter
+                    // once, then every retry dies here before reaching
+                    // checkin again, leaving the counter stuck at 1 and the
+                    // threshold never reached (silent half-state). The site
+                    // itself is also covered by noteConnectionLost calls
+                    // inside openProgram for finer-grained logging; this
+                    // catch is the backstop in case a new RMI call site is
+                    // ever added without updating both.
+                    noteConnectionLost(message(e), "dispatch.openProgram(" + procedureOf(request) + ")");
                     return RpcResponse.error(message(e));
                 }
             }
@@ -592,7 +605,22 @@ public class RpcContext {
                 cached = null;
             }
             if (df.isVersioned() && df.isCheckedOut()) {
-                df.undoCheckout(false, false);
+                // df.undoCheckout is an RMI call to the Ghidra Server. When
+                // the connection has died, it throws
+                // "Not connected to repository server" — exactly the same
+                // signature checkin uses. Without this note, the
+                // connection-lost counter plateaus at 1 forever because
+                // every retry dies here before reaching checkin (the
+                // dispatch catch also notes the same error as a backstop,
+                // but the message here tells the operator the lazy-reset
+                // path is the one firing, not a fresh checkout).
+                try {
+                    df.undoCheckout(false, false);
+                } catch (Exception undoEx) {
+                    noteConnectionLost(message(undoEx),
+                        "openProgram.lazy-reset(" + df.getPathname() + ")");
+                    throw undoEx;
+                }
             }
             dirtyLocalFiles.remove(df);
         }
@@ -606,9 +634,20 @@ public class RpcContext {
         // read-only in-memory instance whose check-in would fail. On a read-only session we
         // skip checkout — read-only procedures still work; mutating ones fail later at check-in.
         if (df.isVersioned() && !df.isCheckedOut() && !df.isReadOnly()) {
-            if (!df.checkout(true, monitor)) { // exclusive
-                throw new IllegalArgumentException(
-                    "Failed to check out '" + df.getPathname() + "' (held by another user?).");
+            try {
+                if (!df.checkout(true, monitor)) { // exclusive
+                    throw new IllegalArgumentException(
+                        "Failed to check out '" + df.getPathname() + "' (held by another user?).");
+                }
+            } catch (Exception coEx) {
+                // df.checkout throws IOException when the RMI socket is dead
+                // (the boolean-false path is for "held by another user", a
+                // distinct failure mode). Count the RMI loss and let the
+                // exception propagate; the dispatch catch notes it too as a
+                // backstop but this site is the actual thrower.
+                noteConnectionLost(message(coEx),
+                    "openProgram.checkout(" + df.getPathname() + ")");
+                throw coEx;
             }
         }
         // okToUpgrade=true (open older DB versions). okToRecover is parameterized — see
@@ -1038,19 +1077,7 @@ public class RpcContext {
             // we hit the threshold and exit. Other failure modes (version
             // conflicts, save errors, ...) don't touch the counter — they're
             // not connection-health signals.
-            if (isConnectionLost(m)) {
-                connectionLostFailures++;
-                if (connectionLostFailures >= CONNECTION_LOST_THRESHOLD) {
-                    Runnable h = onConnectionLost;
-                    if (h != null) {
-                        try {
-                            h.run();
-                        } catch (Exception ignored) {
-                            // best-effort; advisory callback
-                        }
-                    }
-                }
-            }
+            noteConnectionLost(m, "checkin(" + procedure + ")");
             // Deferred cleanup. Don't try to revert in-place: program.undo()
             // is a no-op here because save() above cleared the undo stack
             // (DomainObjectAdapterDB.save -> setChanged(false) -> clearUndo;
@@ -1088,6 +1115,51 @@ public class RpcContext {
      */
     static boolean isConnectionLost(String message) {
         return message != null && message.startsWith("Not connected to repository server");
+    }
+
+    /**
+     * Increment the connection-lost failure counter and, on the
+     * {@link #CONNECTION_LOST_THRESHOLD}-th consecutive miss, fire the
+     * registered {@link #onConnectionLost} handler. Callers run inside
+     * {@link #lock} (dispatch holds it across checkin/openProgram), so the
+     * counter access needs no extra synchronization.
+     *
+     * <p>Called from EVERY code path that surfaces a
+     * {@link #isConnectionLost(String) "Not connected to repository server"}
+     * message — historically only {@link #checkin}, but that misses the
+     * {@link #openProgram} lazy-reset (its {@code df.undoCheckout} is an RMI
+     * call too) and the initial {@code df.checkout} on the first request
+     * after the connection dies. Without coverage at those sites the
+     * counter plateaus at 1 forever (the first checkin increments, then
+     * every retry dies in openProgram before reaching checkin again) and
+     * the JVM stays alive serving reads from cached state while writes
+     * loop on the same error — the silent half-state the threshold was
+     * meant to escape.
+     *
+     * <p>{@code where} is a short tag for log lines so operators can tell
+     * which call site detected the loss when triaging. We log on every
+     * call (not just the first) because the sites fire on different
+     * request paths and seeing "openProgram(lazy-reset)" vs
+     * "checkin(SetVariableDataTypeCmd)" is the difference between "first
+     * time" and "every subsequent retry" in the user's eyes.
+     */
+    private void noteConnectionLost(String message, String where) {
+        if (!isConnectionLost(message)) {
+            return;
+        }
+        int n = ++connectionLostFailures;
+        Msg.warn(this, "Connection-lost #" + n + "/" + CONNECTION_LOST_THRESHOLD
+            + " detected at " + where + ": " + message);
+        if (n >= CONNECTION_LOST_THRESHOLD) {
+            Runnable h = onConnectionLost;
+            if (h != null) {
+                try {
+                    h.run();
+                } catch (Exception ignored) {
+                    // best-effort; advisory callback
+                }
+            }
+        }
     }
 
     // ---------------------------------------------------------------------------
