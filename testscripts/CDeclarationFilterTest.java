@@ -25,6 +25,9 @@ public final class CDeclarationFilterTest {
         testLeafStruct();
         testPreambleStripped();
         testMultipleReferencedFwdDecls();
+        testStructBodyWithDescription();
+        testStructBodyWithCppDescription();
+        testUnionBodyWithDescription();
 
         if (failures == 0) {
             System.out.println("ALL PASS");
@@ -130,6 +133,87 @@ public final class CDeclarationFilterTest {
         check("multi keeps all fwd decls",
             out.contains("*PA;") && out.contains("*PB;") && out.contains("*PC;"), out);
         check("multi reaches body", out.contains("struct Host {") && out.contains("PC pc;"), out);
+    }
+
+    /**
+     * Struct body header carries an inline {@code /* description *&#47;}
+     * comment because the GUI's Data Type Manager "Edit Description"
+     * field is non-empty (DataTypeWriter.writeCompositeBody appends
+     * {@code comment(getDescription())} to the opening line). Earlier
+     * versions of the filter anchored bodyStart on {@code \{\s*$}
+     * (whitespace-only after {@code \{}); they missed this and dropped
+     * the entire body. Reproduces the live "GameWorld, Town, the screen
+     * classes" audit loss.
+     */
+    private static void testStructBodyWithDescription() {
+        String raw = String.join("\n",
+            "typedef unsigned char byte;",
+            "typedef unsigned int dword;",
+            "typedef struct GameWorld GameWorld, *PGameWorld;",
+            "",
+            "typedef struct Town Town, *PTown;",
+            "typedef struct GameWorldTailRec GameWorldTailRec, *PGameWorldTailRec;",
+            "typedef struct TownStorage TownStorage, *PTownStorage;",
+            "",
+            "struct GameWorld { /* The full state of the world */",
+            "    PTown townSortIndexByTown;",
+            "    int merchantsBase;",
+            "};");
+        String out = CDeclarationFilter.filter(raw, "struct", "GameWorld");
+        check("desc keeps requested fwd decl",
+            out.contains("typedef struct GameWorld GameWorld, *PGameWorld;"), out);
+        check("desc keeps referenced fwd decls",
+            out.contains("typedef struct Town Town, *PTown;")
+                && out.contains("typedef struct TownStorage TownStorage"), out);
+        check("desc emits body header (with inline comment)",
+            out.contains("struct GameWorld { /* The full state of the world */"), out);
+        check("desc emits fields",
+            out.contains("PTown townSortIndexByTown;") && out.contains("int merchantsBase;"), out);
+        check("desc emits body close", out.contains("};"), out);
+        check("desc drops builtins preamble", !out.contains("typedef unsigned char byte;"), out);
+    }
+
+    /**
+     * Same shape as {@link #testStructBodyWithDescription()} but with
+     * the writer's C++ style comment delimiter ({@code // description}).
+     * Triggered when cppStyleComments is true. Same fix should cover
+     * both — the bodyStart regex intentionally doesn't constrain what
+     * follows the {@code \{} on the opening line.
+     */
+    private static void testStructBodyWithCppDescription() {
+        String raw = String.join("\n",
+            "typedef struct Outer Outer, *POuter;",
+            "typedef struct Inner Inner, *PInner;",
+            "",
+            "struct Outer { // wraps an Inner by value",
+            "    Inner embedded;",
+            "};");
+        String out = CDeclarationFilter.filter(raw, "struct", "Outer");
+        check("cpp-desc keeps requested fwd decl",
+            out.contains("typedef struct Outer Outer, *POuter;"), out);
+        check("cpp-desc keeps referenced fwd decl",
+            out.contains("typedef struct Inner Inner, *PInner;"), out);
+        check("cpp-desc emits body header with cpp comment",
+            out.contains("struct Outer { // wraps an Inner by value"), out);
+        check("cpp-desc emits fields", out.contains("Inner embedded;"), out);
+    }
+
+    /**
+     * Union variant of the description-on-header shape — same bug
+     * because both share {@code writeCompositeBody} in DataTypeWriter.
+     */
+    private static void testUnionBodyWithDescription() {
+        String raw = String.join("\n",
+            "typedef union Variant Variant, *PVariant;",
+            "",
+            "union Variant { /* mutually-exclusive payload */",
+            "    int i;",
+            "    float f;",
+            "};");
+        String out = CDeclarationFilter.filter(raw, "union", "Variant");
+        check("union-desc emits body header",
+            out.contains("union Variant { /* mutually-exclusive payload */"), out);
+        check("union-desc emits fields", out.contains("float f;"), out);
     }
 
     private static void check(String label, boolean cond, String ctx) {

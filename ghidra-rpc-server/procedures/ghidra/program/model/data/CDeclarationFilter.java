@@ -118,16 +118,30 @@ public final class CDeclarationFilter {
      *       header until the matching {@code };} (depth back to 0).</li>
      * </ul>
      *
-     * <p>The prior implementation broke on the first {@code ;}-terminated
-     * line at depth 0 after the forward decl — which, for a struct that
-     * references another user struct, is that referenced type's
-     * forward-decl typedef — so it stopped before ever reaching the body.
+     * <p>History note on the body header regex: {@code DataTypeWriter}
+     * writes the body header as {@code "struct " + name + " {"} and
+     * APPENDS the composite's GUI description as an inline comment
+     * before the EOL — i.e. a struct with a description comes out as
+     * {@code struct NAME { /* description *&#47;}. An earlier version of
+     * this filter anchored {@code \{\s*$} (whitespace-only between
+     * {@code \{} and end-of-line), so it missed any struct carrying a
+     * description. That triggered bug #15 (2026-07-20): the "large
+     * aggregates" audit couldn't render {@code GameWorld},
+     * {@code Town}, the screen classes — exactly the structs that
+     * tend to have descriptions set. The fix loosens the anchor to
+     * "starts with {@code <kind> <NAME> \{}" and lets brace tracking
+     * find the matching close; a one-line body (no description, no
+     * fields) still works because depth returns to 0 on the same line.
      */
     private static String filterComposite(String raw, String kind, String name) {
         String[] lines = raw.split("\n", -1);
         StringBuilder out = new StringBuilder();
+        // Body opener: "struct NAME {" with anything after on the line
+        // (the writer commonly appends an inline /* description */).
+        // Anchored at start-of-line, then a literal '{' anywhere later
+        // on that line — the brace tracker is what finds the close.
         Pattern bodyStart = Pattern.compile(
-            "^\\s*" + kind + "\\s+\\Q" + name + "\\E\\s*\\{\\s*$");
+            "^\\s*" + kind + "\\s+\\Q" + name + "\\E\\s*\\{");
         // A single-line forward-declaration typedef, e.g.
         //   typedef struct Town Town, *PTown;
         //   typedef union U U, *PU;
@@ -142,7 +156,7 @@ public final class CDeclarationFilter {
                 if (depth == 0) break;             // matching `};` of requested body
                 continue;
             }
-            if (depth == 0 && bodyStart.matcher(line).matches()) {
+            if (depth == 0 && bodyStart.matcher(line).find()) {
                 capturing = true;
                 out.append(line).append('\n');
                 depth += braceDelta(line);
