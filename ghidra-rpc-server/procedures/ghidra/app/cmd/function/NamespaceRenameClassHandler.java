@@ -45,7 +45,12 @@ public final class NamespaceRenameClassHandler implements RpcProcedure {
         }
         SourceType source = ctx.sourceType(RpcContext.optStr(req, "source"));
 
-        Namespace resolved = NamespaceResolve.resolve(ctx, classPath);
+        Namespace resolved;
+        try {
+            resolved = NamespaceResolve.resolve(ctx, classPath, true);
+        } catch (IllegalArgumentException e) {
+            return RpcResponse.error(e.getMessage());
+        }
         if (!(resolved instanceof GhidraClass)) {
             return RpcResponse.error("'" + classPath + "' is not a class (it's a plain namespace); "
                 + "use namespace create-class --from-namespace to convert it first.");
@@ -74,10 +79,12 @@ public final class NamespaceRenameClassHandler implements RpcProcedure {
         }
         // After rename, the GhidraClass wrapper around the symbol may still
         // hold the old name. Re-resolve by path to get the post-rename view.
+        // (Re-resolution normally succeeds because the rename just ran;
+        // verbIsClass=true keeps the error hint consistent if it doesn't.)
         String newPath = newName + (classPath.contains("/")
             ? classPath.substring(0, classPath.lastIndexOf('/'))
             : "");
-        Namespace after = NamespaceResolve.resolve(ctx, newPath);
+        Namespace after = NamespaceResolve.resolve(ctx, newPath, true);
         return new NamespaceRenameClassResponse(
             after.getName(true),
             after.getParentNamespace().getName(true));

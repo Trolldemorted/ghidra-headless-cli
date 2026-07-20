@@ -46,8 +46,17 @@ final class NamespaceResolve {
      * from {@link NamespaceUtils#getNamespaceByPath}, throws with a
      * "did you mean ..." hint built from leaf-name candidates. On multiple
      * matches, throws (ambiguous).
+     *
+     * <p>{@code verbIsClass} signals whether the caller is a class-oriented
+     * verb (e.g. {@code NamespaceGetClass}, {@code FunctionSetClassAssociation}).
+     * When set, the no-match error appends a hint pointing the user at
+     * {@code namespace create-class} — without it, the bare "No namespace
+     * found for 'X'" leaves the user guessing how to create the missing
+     * class. Plain-namespace callers (e.g. {@code FunctionSetNamespace},
+     * {@code NamespaceCreateClass}'s {@code parent} argument) leave it
+     * {@code false} because there's no class-creation contract to suggest.
      */
-    static Namespace resolve(RpcContext ctx, String path) {
+    static Namespace resolve(RpcContext ctx, String path, boolean verbIsClass) {
         Namespace root = ctx.program().getGlobalNamespace();
         // Short-circuit the global namespace: NamespaceUtils.getNamespaceByPath
         // can't resolve "/" because SymbolPath("/") is non-empty.
@@ -79,7 +88,7 @@ final class NamespaceResolve {
             : path;
         List<String> candidates = new ArrayList<>();
         collectNameCandidates(ctx, root, simpleName, candidates, MAX_CANDIDATES);
-        throw new IllegalArgumentException(noMatchMessage(path, simpleName, candidates));
+        throw new IllegalArgumentException(noMatchMessage(path, simpleName, candidates, verbIsClass));
     }
 
     /**
@@ -131,19 +140,35 @@ final class NamespaceResolve {
         return sb.toString();
     }
 
-    private static String noMatchMessage(String path, String simpleName, List<String> candidates) {
-        if (candidates.isEmpty()) {
-            return "No namespace found for '" + path + "'.";
-        }
+    private static String noMatchMessage(String path, String simpleName, List<String> candidates,
+            boolean verbIsClass) {
         StringBuilder sb = new StringBuilder("No namespace found for '");
-        sb.append(path).append("'. Did you mean ");
-        for (int i = 0; i < candidates.size(); i++) {
-            if (i > 0) {
-                sb.append(i == candidates.size() - 1 ? " or " : ", ");
+        sb.append(path).append("'");
+        if (candidates.isEmpty()) {
+            // No leaf-name guesses — close with a period so the message
+            // doesn't run-on into the class-creation hint below.
+            sb.append('.');
+        } else {
+            sb.append(". Did you mean ");
+            for (int i = 0; i < candidates.size(); i++) {
+                if (i > 0) {
+                    sb.append(i == candidates.size() - 1 ? " or " : ", ");
+                }
+                sb.append('\'').append(candidates.get(i)).append('\'');
             }
-            sb.append('\'').append(candidates.get(i)).append('\'');
+            sb.append('?');
         }
-        sb.append("?");
+        // Class-oriented callers get a follow-up hint so the user knows
+        // how to create the missing class. The "slash-prefixed" detail
+        // matters because --class requires "/Foo" (not bare "Foo"), and
+        // a freshly-created top-level class is at "/<ClassName>".
+        if (verbIsClass) {
+            sb.append(" Create it with ");
+            String leafHint = (simpleName == null || simpleName.isEmpty()) ? "<Name>" : simpleName;
+            sb.append("`namespace create-class --parent / --name ").append(leafHint).append("`, ");
+            sb.append("then re-run with `--class /").append(leafHint).append("` ");
+            sb.append("(the path is slash-prefixed).");
+        }
         return sb.toString();
     }
 }

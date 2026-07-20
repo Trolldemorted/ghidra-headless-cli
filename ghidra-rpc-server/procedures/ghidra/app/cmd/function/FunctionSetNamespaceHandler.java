@@ -54,7 +54,7 @@ public final class FunctionSetNamespaceHandler implements RpcProcedure {
 
         Namespace target;
         try {
-            target = NamespaceResolve.resolve(ctx, rawNs);
+            target = NamespaceResolve.resolve(ctx, rawNs, false);
         } catch (Exception e) {
             return RpcResponse.error(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
         }

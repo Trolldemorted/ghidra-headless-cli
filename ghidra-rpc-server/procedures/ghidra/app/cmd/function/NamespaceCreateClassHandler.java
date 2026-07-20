@@ -64,10 +64,10 @@ public final class NamespaceCreateClassHandler implements RpcProcedure {
             ctx.runWrite("namespace create-class " + (hasParent ? name : fromNamespace), () -> {
                 try {
                     if (hasParent) {
-                        Namespace parent = NamespaceResolve.resolve(ctx, parentPath);
+                        Namespace parent = NamespaceResolve.resolve(ctx, parentPath, false);
                         result[0] = st.createClass(parent, name, source);
                     } else {
-                        Namespace existing = NamespaceResolve.resolve(ctx, fromNamespace);
+                        Namespace existing = NamespaceResolve.resolve(ctx, fromNamespace, false);
                         if (existing instanceof GhidraClass) {
                             error[0] = "'" + fromNamespace
                                 + "' is already a class; use rename-class to change its name.";

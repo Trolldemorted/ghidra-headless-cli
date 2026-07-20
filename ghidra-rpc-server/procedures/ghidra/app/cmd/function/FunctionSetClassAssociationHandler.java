@@ -50,7 +50,7 @@ public final class FunctionSetClassAssociationHandler implements RpcProcedure {
         Function function = ctx.requireFunctionAt(entry);
         Namespace resolved;
         try {
-            resolved = NamespaceResolve.resolve(ctx, classPath);
+            resolved = NamespaceResolve.resolve(ctx, classPath, true);
         } catch (IllegalArgumentException e) {
             // The user wanted to associate with a class. If a DTM
             // struct of the same leaf name exists, the common

@@ -47,7 +47,7 @@ public final class NamespaceListClassesHandler implements RpcProcedure {
 
         Namespace parent;
         try {
-            parent = NamespaceResolve.resolve(ctx, parentPath);
+            parent = NamespaceResolve.resolve(ctx, parentPath, false);
         } catch (IllegalArgumentException e) {
             return RpcResponse.error(e.getMessage());
         }

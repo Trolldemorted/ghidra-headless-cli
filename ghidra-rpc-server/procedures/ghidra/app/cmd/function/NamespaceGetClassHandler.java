@@ -41,7 +41,7 @@ public final class NamespaceGetClassHandler implements RpcProcedure {
 
         Namespace ns;
         try {
-            ns = NamespaceResolve.resolve(ctx, classPath);
+            ns = NamespaceResolve.resolve(ctx, classPath, true);
         } catch (IllegalArgumentException e) {
             return RpcResponse.error(e.getMessage());
         }

@@ -60,7 +60,12 @@ public final class NamespaceDeleteClassHandler implements RpcProcedure {
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
         String classPath = RpcContext.reqStr(req, "class");
 
-        Namespace resolved = NamespaceResolve.resolve(ctx, classPath);
+        Namespace resolved;
+        try {
+            resolved = NamespaceResolve.resolve(ctx, classPath, true);
+        } catch (IllegalArgumentException e) {
+            return RpcResponse.error(e.getMessage());
+        }
         if (!(resolved instanceof GhidraClass)) {
             return RpcResponse.error("'" + classPath + "' is not a class (it's a plain namespace); "
                 + "this verb only deletes classes.");
