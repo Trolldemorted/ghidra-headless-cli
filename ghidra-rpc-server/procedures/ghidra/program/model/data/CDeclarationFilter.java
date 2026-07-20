@@ -95,63 +95,80 @@ public final class CDeclarationFilter {
     }
 
     /**
-     * For struct/union {@code Foo}: keep the {@code typedef struct Foo
-     * Foo, *PFoo;} line, the {@code struct Foo {};` body, and any
-     * typedefs that the writer emitted inline before the body for
-     * the struct's field types. After the body ends, stop.
+     * For struct/union {@code Foo}: keep every single-line forward-decl
+     * typedef ({@code typedef struct Bar Bar, *PBar;}) plus the
+     * requested type's own body ({@code struct Foo { ...fields... };}).
      *
-     * <p>Why include inline typedefs before the body: the writer's
-     * dependency-following emits typedefs for any typedefs the struct's
-     * fields reference. These appear in the output BEFORE the
-     * {@code struct Foo {` line (because that's how the writer
-     * orders things), not in the preamble. The user wants them
-     * because the struct won't compile without them.
+     * <p>Strategy: scan the writer output tracking brace depth.
+     * {@code DataTypeWriter} emits, in dependency order, the forward
+     * decls of the requested type and every type it references, then
+     * the referenced types' full bodies (only present for by-value
+     * members — a pointer needs only a forward decl), and finally the
+     * requested type's body LAST. So:
+     * <ul>
+     *   <li>At depth 0, single-line {@code typedef struct/union/enum
+     *       X ...;} lines are kept — they forward-declare the referenced
+     *       types (and the requested type itself). This lets a reader
+     *       see what {@code Foo}'s fields point at without pulling the
+     *       whole dependency graph (that's what {@code with_deps} is
+     *       for).</li>
+     *   <li>Other types' bodies (dependencies the writer inlined ahead
+     *       of ours) are stepped over via brace tracking — NOT emitted.</li>
+     *   <li>The requested body is captured from its {@code struct Foo {`
+     *       header until the matching {@code };} (depth back to 0).</li>
+     * </ul>
+     *
+     * <p>The prior implementation broke on the first {@code ;}-terminated
+     * line at depth 0 after the forward decl — which, for a struct that
+     * references another user struct, is that referenced type's
+     * forward-decl typedef — so it stopped before ever reaching the body.
      */
     private static String filterComposite(String raw, String kind, String name) {
         String[] lines = raw.split("\n", -1);
         StringBuilder out = new StringBuilder();
-        boolean inBlock = false;
-        int braceDepth = 0;
-        Pattern fwdDecl = Pattern.compile(
-            "^\\s*typedef\\s+" + kind + "\\s+\\Q" + name + "\\E\\s+\\Q" + name
-            + "\\E\\s*,\\s*\\*P?\\Q" + name + "\\E\\s*;\\s*$");
         Pattern bodyStart = Pattern.compile(
             "^\\s*" + kind + "\\s+\\Q" + name + "\\E\\s*\\{\\s*$");
+        // A single-line forward-declaration typedef, e.g.
+        //   typedef struct Town Town, *PTown;
+        //   typedef union U U, *PU;
+        Pattern fwdTypedef = Pattern.compile(
+            "^\\s*typedef\\s+(?:struct|union|enum)\\s+\\S.*;\\s*$");
+        int depth = 0;
+        boolean capturing = false;
         for (String line : lines) {
-            if (!inBlock) {
-                // Look for the forward decl OR the body start. The
-                // writer places the forward decl of the requested type
-                // AFTER the builtins preamble; field-referenced
-                // typedefs (e.g. for a field of type `uint`) appear
-                // AFTER the forward decl but BEFORE the body (see
-                // writeDeferredDeclarations in DataTypeWriter), so we
-                // do NOT need to scan pre-fwd-decl lines for "field
-                // typedefs" — those live in our output range.
-                if (fwdDecl.matcher(line).matches() || bodyStart.matcher(line).matches()) {
-                    inBlock = true;
-                    out.append(line).append('\n');
-                    if (bodyStart.matcher(line).matches()) {
-                        braceDepth = 1;
-                    }
-                }
-                // Drop everything before the fwd decl/body (preamble).
-            } else {
+            if (capturing) {
                 out.append(line).append('\n');
-                if (bodyStart.matcher(line).matches()) {
-                    braceDepth = 1;
-                } else {
-                    for (int i = 0; i < line.length(); i++) {
-                        char c = line.charAt(i);
-                        if (c == '{') braceDepth++;
-                        else if (c == '}') braceDepth--;
-                    }
-                    if (braceDepth == 0 && line.contains(";")) {
-                        break;
-                    }
-                }
+                depth += braceDelta(line);
+                if (depth == 0) break;             // matching `};` of requested body
+                continue;
             }
+            if (depth == 0 && bodyStart.matcher(line).matches()) {
+                capturing = true;
+                out.append(line).append('\n');
+                depth += braceDelta(line);
+                if (depth == 0) break;             // single-line body (defensive)
+                continue;
+            }
+            if (depth == 0 && !line.contains("{") && fwdTypedef.matcher(line).matches()) {
+                out.append(line).append('\n');     // keep referenced/own forward decls
+                continue;
+            }
+            // Step over other types' bodies (inlined deps) and drop the
+            // builtins preamble / blank lines.
+            depth += braceDelta(line);
         }
         return out.length() == 0 ? raw : stripTrailingBlank(out);
+    }
+
+    /** Net change in brace nesting contributed by one line. */
+    private static int braceDelta(String line) {
+        int d = 0;
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (c == '{') d++;
+            else if (c == '}') d--;
+        }
+        return d;
     }
 
     private static String filterEnum(String raw, String name) {
