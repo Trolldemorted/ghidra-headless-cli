@@ -1,10 +1,36 @@
 //! Function variable commands (`ghidra.app.cmd.function`).
 
 use clap::Subcommand;
+use clap::ValueEnum;
 
 use crate::client::Client;
 use crate::common::Source;
 use crate::json::Req;
+
+/// Whether `variable add-stack` should create a parameter (the
+/// historical Ghidra default when the offset is non-negative) or a
+/// function-local. The two paths route through different Ghidra APIs
+/// because `AddStackVarCmd` interprets positive offsets as parameter
+/// slots in the caller's frame and negative offsets as locals in the
+/// function's own frame — the convention the x86 `EBP`/`RBP`-relative
+/// frame layout uses. The explicit `--kind` flag lets the caller
+/// override the convention when an offset in the local-frame area is
+/// positive (rare, but happens with `SUB ESP, 0x34` frames that the
+/// Ghidra decompiler has not folded) or when the caller is sure
+/// about the intent.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum StackVarKind {
+    /// Insert as a formal parameter. Ghidra's `AddStackVarCmd` will
+    /// also auto-route to this for non-negative offsets. Matches the
+    /// pre-2026-07-20 default; kept for callers that depend on the
+    /// parameter-side behavior.
+    Param,
+    /// Insert as a function-local variable. Routes through
+    /// `Function.addLocalVariable(StorageType.STACK, ...)` so the
+    /// offset is always interpreted as local-frame-relative
+    /// regardless of sign.
+    Local,
+}
 
 #[derive(Subcommand, Debug)]
 pub enum Cmd {
@@ -16,9 +42,25 @@ pub enum Cmd {
         /// Function entry address (hex)
         #[arg(long)]
         address: String,
-        /// Stack frame offset [default: 0]
-        #[arg(long, default_value_t = 0i64)]
+        /// Stack frame offset. NEGATIVE for locals (in the function's
+        /// own frame), NON-NEGATIVE for parameters (in the caller's
+        /// frame) — the x86 `EBP`/`RBP`-relative convention that
+        /// Ghidra's `AddStackVarCmd` follows. For locals at positive
+        /// offsets in the local frame, pass `--kind local` to bypass
+        /// the convention. Use `=` form for negative values:
+        /// `--stack-offset=-4` (avoids clap's leading-dash ambiguity).
+        #[arg(long, default_value_t = 0i64, allow_hyphen_values = true)]
         stack_offset: i64,
+        /// Insert as a `param` (default) or a `local` [default: param]
+        ///
+        /// `param` mirrors Ghidra's `AddStackVarCmd` behavior (positive
+        /// offset → caller-frame parameter slot). `local` always inserts
+        /// a function-local via `Function.addLocalVariable`, regardless
+        /// of the offset's sign — use this when the decompiler's
+        /// synthetics (e.g. `iStack_30`) need a backing local at a
+        /// positive offset in the local frame.
+        #[arg(long, value_enum, default_value_t = StackVarKind::Param)]
+        kind: StackVarKind,
         /// Variable name [default: auto-generated]
         #[arg(long)]
         name: Option<String>,
@@ -174,6 +216,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             program,
             address,
             stack_offset,
+            kind,
             name,
             data_type,
             source,
@@ -182,6 +225,13 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                 .str("file", program)
                 .str("address", address)
                 .int("stackOffset", stack_offset)
+                .str(
+                    "kind",
+                    match kind {
+                        StackVarKind::Param => "param",
+                        StackVarKind::Local => "local",
+                    },
+                )
                 .opt_str("name", name)
                 .opt_str("dataType", data_type)
                 .opt_str("source", Source::opt(source))

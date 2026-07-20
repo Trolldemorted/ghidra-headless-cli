@@ -267,11 +267,20 @@ public final class SetVariableNameCmdHandler implements RpcProcedure {
                 + "because this HighSymbol has no database backing.";
         }
         if (storage.hasStackStorage()) {
+            // The user asked specifically to include the actual stack
+            // offset (and not the decompiler's "Stack[-0x4]" print form)
+            // so they can copy-paste the add-stack command directly.
+            // `getStackOffset()` throws on non-stack storage; we
+            // already gated on `hasStackStorage()`.
+            int offset = storage.getStackOffset();
             return "To rename this stack temporary: 1) create a "
                 + "stored stack variable: `function variable "
-                + "add-stack --stack-offset <OFFSET> --name <NAME>`; "
+                + "add-stack --stack-offset=" + offset + " --name <NAME>`; "
                 + "2) rename it by its stored name: `function variable "
-                + "set-name --old-name <NAME> --new-name <NEW>`.";
+                + "set-name --old-name <NAME> --new-name <NEW>`. "
+                + "(The offset is signed: pass it as a negative value for "
+                + "function-locals via `--kind local` if `add-stack` "
+                + "interprets your offset as a caller-frame parameter slot.)";
         }
         return null;
     }
