@@ -1621,12 +1621,74 @@ public class RpcContext {
         if (text == null || text.trim().isEmpty()) {
             throw new IllegalArgumentException("Missing required signature text.");
         }
+        // Calling-convention keywords in --signature are a common mistake:
+        // the FunctionSignatureParser folds `int __thiscall` into the
+        // return-type token and fails with a misleading
+        // "Can't resolve return type: int __thiscall" — no hint about the
+        // convention keyword, no pointer to the right command. Detect and
+        // surface a specific, actionable error so the user doesn't have to
+        // guess. (Companion issue: this is the *error-message* half of
+        // bug #14; the *apply-convention* half is `function update
+        // --calling-convention`, which already exists.)
+        String convention = leadingConventionKeyword(text);
+        if (convention != null) {
+            StringBuilder msg = new StringBuilder();
+            msg.append("Calling-convention keyword '").append(convention)
+                .append("' is not accepted in --signature; ")
+                .append("FunctionSignatureParser folds it into the return-type token ")
+                .append("and the error it produces is uninformative. ")
+                .append("Set the calling convention via ")
+                .append("`function update --calling-convention ").append(convention)
+                .append("` (accepted values are the compiler-spec's conventions ")
+                .append("plus `default` and `unknown`), ")
+                .append("and pass the signature without the convention keyword.");
+            if ("__thiscall".equals(convention)) {
+                msg.append(" For __thiscall, the signature must ALSO omit the ")
+                    .append("implicit `this` parameter (carried in ECX on x86, ")
+                    .append("RCX on x64) — `function apply-signature` cannot retype ")
+                    .append("it. Type `this` via ")
+                    .append("`namespace create-class` + `function set-class-association`.");
+            }
+            throw new IllegalArgumentException(msg.toString());
+        }
         FunctionSignature sig =
             new FunctionSignatureParser(active().getDataTypeManager(), null).parse(null, text);
         if (sig == null) {
             throw new IllegalArgumentException("Could not parse signature: " + text);
         }
         return sig;
+    }
+
+    /**
+     * Scan the head of a signature string (everything before the parameter
+     * list's opening paren) for a standalone Windows x86 calling-convention
+     * keyword ({@code __thiscall}, {@code __stdcall}, {@code __cdecl},
+     * {@code __fastcall}, {@code __vectorcall}). Returns the matched
+     * keyword, or {@code null} if none is present. The keyword must be a
+     * standalone token (not embedded in a type name like
+     * {@code x__stdcall}) and must be one of the well-known set to avoid
+     * false positives on exotic type names that begin with {@code __}.
+     */
+    private static final java.util.regex.Pattern HEAD_TOKEN =
+        java.util.regex.Pattern.compile("(?<![A-Za-z0-9_])__\\w+");
+
+    private static String leadingConventionKeyword(String text) {
+        int paren = text.indexOf('(');
+        String head = paren < 0 ? text : text.substring(0, paren);
+        java.util.regex.Matcher m = HEAD_TOKEN.matcher(head);
+        if (!m.find()) {
+            return null;
+        }
+        switch (m.group()) {
+            case "__thiscall":
+            case "__stdcall":
+            case "__cdecl":
+            case "__fastcall":
+            case "__vectorcall":
+                return m.group();
+            default:
+                return null;
+        }
     }
 
     /** A best-effort ServiceProvider for commands that need one (headless = no GUI services). */
