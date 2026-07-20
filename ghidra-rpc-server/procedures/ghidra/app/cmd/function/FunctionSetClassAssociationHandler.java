@@ -7,6 +7,7 @@ import procedures.RpcProcedure;
 import procedures.RpcResponse;
 
 import ghidra.program.model.address.Address;
+import ghidra.program.model.data.DataType;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.GhidraClass;
 import ghidra.program.model.symbol.Namespace;
@@ -47,7 +48,32 @@ public final class FunctionSetClassAssociationHandler implements RpcProcedure {
         String classPath = RpcContext.reqStr(req, "class");
 
         Function function = ctx.requireFunctionAt(entry);
-        Namespace resolved = NamespaceResolve.resolve(ctx, classPath);
+        Namespace resolved;
+        try {
+            resolved = NamespaceResolve.resolve(ctx, classPath);
+        } catch (IllegalArgumentException e) {
+            // The user wanted to associate with a class. If a DTM
+            // struct of the same leaf name exists, the common
+            // mistake is forgetting `namespace create-class` first
+            // (the struct and the class are coupled by name only;
+            // we need the class namespace BEFORE we can associate).
+            // Surface that directly — the generic
+            // "No namespace found for 'X'" leaves the user guessing.
+            String leaf = classPath.contains("/")
+                ? classPath.substring(classPath.lastIndexOf('/') + 1) : classPath;
+            if (!leaf.isEmpty() && dtmHasTypeNamed(ctx, leaf)) {
+                return RpcResponse.error(
+                    "No class namespace found for '" + classPath
+                    + "' (a struct/type named '" + leaf + "' exists in the program's DTM, "
+                    + "but a class is a different symbol-table object). "
+                    + "Create the class first via "
+                    + "`namespace create-class --parent / --name " + leaf + "`, "
+                    + "then re-run `function set-class-association --class /" + leaf + "`. "
+                    + "The class's DTM struct is coupled to the class by name "
+                    + "(the decompiler retypes the implicit `this` from it).");
+            }
+            return RpcResponse.error(e.getMessage());
+        }
         if (!(resolved instanceof GhidraClass)) {
             return RpcResponse.error("'" + classPath + "' is not a class (it's a plain namespace); "
                 + "create the class first via namespace create-class.");
@@ -96,5 +122,25 @@ public final class FunctionSetClassAssociationHandler implements RpcProcedure {
             this.functionName = functionName;
             this.classPath = classPath;
         }
+    }
+
+    /**
+     * Check whether any data type in the program's DTM (across all
+     * categories) has the given leaf name. Used by the
+     * "no class namespace, but a struct of that name exists" hint —
+     * the common mistake is conflating the DTM struct (which
+     * describes layout) with the class namespace (which is the
+     * symbol-table object the function gets associated with).
+     * The two are coupled by name only.
+     */
+    private static boolean dtmHasTypeNamed(RpcContext ctx, String leafName) {
+        java.util.Iterator<DataType> it =
+            ctx.program().getDataTypeManager().getAllDataTypes();
+        while (it.hasNext()) {
+            if (leafName.equals(it.next().getName())) {
+                return true;
+            }
+        }
+        return false;
     }
 }

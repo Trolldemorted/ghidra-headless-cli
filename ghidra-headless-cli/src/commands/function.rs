@@ -139,9 +139,22 @@ pub enum Cmd {
         address: String,
         /// C signature, e.g. "int foo(char *s, int n)"
         ///
-        /// `__thiscall` carries an IMPLICIT `this` in ECX (RCX on x64)
-        /// that this API cannot retype. To type `this`, use
-        /// `function set-class-association` (see its `--help`).
+        /// Calling-convention keywords (`__thiscall`, `__stdcall`, `__cdecl`,
+        /// `__fastcall`, `__vectorcall`) are NOT accepted here — the parser
+        /// folds them into the return-type token and fails opaquely. Set the
+        /// convention via `function update --calling-convention <cc>` instead.
+        ///
+        /// For `__thiscall` member functions: the signature MUST omit the
+        /// implicit `this` parameter (it is carried in ECX/RCX, not on the
+        /// stack). `this` is retyped at decompile time from the function's
+        /// associated class's DTM struct — to set that, the function must be
+        /// associated via `function set-class-association --class /<Class>`,
+        /// which requires a class namespace (create one first with
+        /// `namespace create-class --parent / --name <Class>` if it doesn't
+        /// exist; a DTM struct of the same name is NOT sufficient). Neither
+        /// `function update --parameter "this=..."` nor
+        /// `function variable set-type --name this` will retype the
+        /// auto-generated `this`.
         #[arg(long)]
         signature: String,
         /// Symbol source type [default: user-defined]
@@ -189,9 +202,15 @@ pub enum Cmd {
         update_type: UpdateType,
         /// Calling convention, e.g. "__stdcall" [default: unchanged]
         ///
-        /// `__thiscall` carries an IMPLICIT `this` in ECX (RCX on x64)
-        /// that this API cannot retype. To type `this`, use
-        /// `function set-class-association` (see its `--help`).
+        /// For `__thiscall` member functions: the function must be associated
+        /// with a class via `function set-class-association --class /<Class>`
+        /// for the decompiler to type the implicit `this` (it carries in
+        /// ECX/RCX). The class must exist as a namespace — create one first
+        /// with `namespace create-class --parent / --name <Class>` if it
+        /// doesn't (a DTM struct of the same name is NOT sufficient).
+        /// `--parameter "this=..."` will NOT retype the auto-generated `this`
+        /// (its storage is locked); the type is derived from the class's
+        /// DTM struct at decompile time.
         #[arg(long)]
         calling_convention: Option<String>,
         /// Return data type name [default: unchanged]
