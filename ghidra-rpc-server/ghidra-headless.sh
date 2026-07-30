@@ -141,5 +141,21 @@ if [ "${GHIDRA_REFRESH_PW:-1}" = "1" ]; then
   export GHIDRA_JAVA_OPTIONS
 fi
 
+# Disable CDS for the Ghidra JVM. Temurin 21.0.11+10 LTS (which is what
+# `eclipse-temurin:21-jdk-jammy` resolves to on pulls from ~April 2026 onward)
+# ships an AOT cache that, combined with `java.system.class.loader` set by
+# support/launch.properties, races at initPhase3: Class.forName for
+# `ghidra.GhidraClassLoader` returns ClassNotFoundException even though
+# Utility.jar is on -cp with the class present. Same JDK build from Ubuntu
+# (21.0.11+10-1-26.04.2-Ubuntu) handles this fine. The JDK-side fix landed in
+# Temurin 21.0.12+ — until then `-Xshare:off` routes around the bad CDS path.
+# Verified locally: same 21.0.11+10 JDK against the same Utility.jar boots
+# fine without this flag on Ubuntu's openjdk build; re-enabling CDS on
+# Temurin-LTS reproduces the user-reported failure. Pass it via
+# GHIDRA_JAVA_OPTIONS so it lands on the Ghidra JVM through analyzeHeadless's
+# VMARG_LIST (not on the LaunchSupport probes, which don't need it).
+GHIDRA_JAVA_OPTIONS="${GHIDRA_JAVA_OPTIONS:-} -Xshare:off"
+export GHIDRA_JAVA_OPTIONS
+
 # user.name override is the critical piece; password goes to -p via stdin.
 printf '%s\n' "$GHIDRA_PASSWORD" | _JAVA_OPTIONS="-Duser.name=${GHIDRA_USER}" "$HEADLESS" "${args[@]}"
