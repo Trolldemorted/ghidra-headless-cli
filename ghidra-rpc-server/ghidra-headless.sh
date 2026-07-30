@@ -157,5 +157,15 @@ fi
 GHIDRA_JAVA_OPTIONS="${GHIDRA_JAVA_OPTIONS:-} -Xshare:off"
 export GHIDRA_JAVA_OPTIONS
 
+# Log the effective GHIDRA_JAVA_OPTIONS the wrapper just exported so debugging
+# classloader / VM-init issues (e.g. Temurin-LTS CDS race with
+# java.system.class.loader) doesn't require re-running with bash -x. This
+# env var is what analyzeHeadless forwards into launch.sh's VMARG_LIST, which
+# is what java actually sees on its cmdline — the trace line above (">>
+# headless: ...") only shows our args, not the JVM flags. Pair with the
+# "openjdk version" / "Picked up _JAVA_OPTIONS" lines the JVM echoes under
+# -showversion for the full picture.
+echo ">> java vmargs: ${GHIDRA_JAVA_OPTIONS:-<unset>}" >&2
+
 # user.name override is the critical piece; password goes to -p via stdin.
 printf '%s\n' "$GHIDRA_PASSWORD" | _JAVA_OPTIONS="-Duser.name=${GHIDRA_USER}" "$HEADLESS" "${args[@]}"
