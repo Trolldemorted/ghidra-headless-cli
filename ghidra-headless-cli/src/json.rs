@@ -422,6 +422,18 @@ impl Req {
         self
     }
 
+    /// Optional boolean field. Emits the key only when the caller passes
+    /// {@code Some(_)}; {@code None} omits the key entirely. Use for
+    /// presence-sensitive edits where the server treats omitted fields as
+    /// "leave unchanged" — sending {@code false} would silently overwrite
+    /// existing {@code true} state.
+    pub fn opt_bool(mut self, key: &str, value: Option<bool>) -> Req {
+        if let Some(v) = value {
+            self.0.push((key.to_string(), Json::Bool(v)));
+        }
+        self
+    }
+
     /// Optional raw JSON field.
     pub fn opt_json(mut self, key: &str, value: Option<Json>) -> Req {
         if let Some(v) = value {

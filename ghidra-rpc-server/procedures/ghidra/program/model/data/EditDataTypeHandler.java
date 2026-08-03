@@ -1,12 +1,19 @@
 package procedures.ghidra.program.model.data;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 import ghidra.program.model.data.Composite;
 import ghidra.program.model.data.DataType;
 import ghidra.program.model.data.DataTypeConflictHandler;
 import ghidra.program.model.data.Enum;
+import ghidra.program.model.data.FunctionDefinition;
+import ghidra.program.model.data.ParameterDefinition;
+import ghidra.program.model.data.ParameterDefinitionImpl;
 import ghidra.program.model.data.TypeDef;
 
 import procedures.RpcContext;
@@ -84,6 +91,7 @@ public final class EditDataTypeHandler implements RpcProcedure {
         if (a instanceof Composite) return b instanceof Composite;
         if (a instanceof Enum) return b instanceof Enum;
         if (a instanceof TypeDef) return b instanceof TypeDef;
+        if (a instanceof FunctionDefinition) return b instanceof FunctionDefinition;
         return a.getClass().equals(b.getClass());
     }
 
@@ -93,6 +101,7 @@ public final class EditDataTypeHandler implements RpcProcedure {
         }
         if (dt instanceof Enum) return "enum";
         if (dt instanceof TypeDef) return "typedef";
+        if (dt instanceof FunctionDefinition) return "functiondef";
         return dt.getClass().getSimpleName();
     }
 
@@ -157,6 +166,71 @@ public final class EditDataTypeHandler implements RpcProcedure {
                 throw new IllegalArgumentException(
                     "Typedef 'base' change requires delete + recreate; not yet supported.");
             }
+        } else if (dt instanceof FunctionDefinition) {
+            applyFunctionDefinitionEdits(req, (FunctionDefinition) dt, ctx);
+        }
+    }
+
+    /**
+     * Mutate a {@link FunctionDefinition} in place. Every field is
+     * presence-sensitive: omitting a key leaves the corresponding state
+     * untouched. Use {@code parameters: []} (empty array, key present) to
+     * CLEAR the argument list — distinct from omitting the key.
+     *
+     * <p>All setters run inside the dispatcher-owned transaction (the
+     * {@code runWrite} wrapper at the top of {@link #execute}), so any
+     * throw — including {@link ghidra.util.exception.InvalidInputException}
+     * from {@code setCallingConvention} for a name the program's
+     * {@code CompilerSpec} doesn't recognize — rolls back every prior
+     * setter in the same request. Callers see {@code success:false} with
+     * the underlying Ghidra message.
+     *
+     * <p>The C {@code definition} snippet path at the top of
+     * {@link #execute} does NOT route through this branch: funcdef snippets
+     * would need a separate parser path that bypasses
+     * {@link RpcContext#parseSignature}'s convention-keyword rejection
+     * (see memory
+     * {@code apply_signature_convention_keyword_fix.md}). Deferred.
+     */
+    private void applyFunctionDefinitionEdits(JsonObject req,
+            FunctionDefinition fd, RpcContext ctx) throws Exception {
+        if (req.has("returnType") && !req.get("returnType").isJsonNull()) {
+            fd.setReturnType(ctx.requireDataType(
+                RpcContext.reqStr(req, "returnType")));
+        }
+        if (req.has("parameters") && !req.get("parameters").isJsonNull()) {
+            JsonElement pel = req.get("parameters");
+            if (!pel.isJsonArray()) {
+                throw new IllegalArgumentException(
+                    "'parameters' must be a JSON array of {name, type} objects.");
+            }
+            List<ParameterDefinition> params = new ArrayList<>();
+            for (JsonElement element : pel.getAsJsonArray()) {
+                if (!element.isJsonObject()) {
+                    throw new IllegalArgumentException(
+                        "Each parameter must be a {name, type} object.");
+                }
+                JsonObject p = element.getAsJsonObject();
+                String name = (p.has("name") && !p.get("name").isJsonNull())
+                    ? p.get("name").getAsString()
+                    : "";
+                String type = RpcContext.reqStr(p, "type");
+                params.add(new ParameterDefinitionImpl(
+                    name, ctx.requireDataType(type), null));
+            }
+            // Empty array clears the argument list. Distinct from "field
+            // omitted" because the key is present and an empty list.
+            fd.setArguments(params.toArray(new ParameterDefinition[0]));
+        }
+        if (req.has("callingConvention")
+                && !req.get("callingConvention").isJsonNull()) {
+            fd.setCallingConvention(RpcContext.reqStr(req, "callingConvention"));
+        }
+        if (req.has("varArgs") && !req.get("varArgs").isJsonNull()) {
+            fd.setVarArgs(req.get("varArgs").getAsBoolean());
+        }
+        if (req.has("noReturn") && !req.get("noReturn").isJsonNull()) {
+            fd.setNoReturn(req.get("noReturn").getAsBoolean());
         }
     }
 }

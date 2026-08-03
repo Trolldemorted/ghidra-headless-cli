@@ -5,7 +5,7 @@ use clap::Subcommand;
 use crate::client::Client;
 use crate::commands::{decompile, disassemble, find, tag, variable};
 use crate::common::{self, Source};
-use crate::json::Req;
+use crate::json::{Json, Req};
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
 pub enum UpdateType {
@@ -399,12 +399,30 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                 .opt_str("source", Source::opt(source))
                 .build(),
         ),
-        Cmd::CreateDefinition { program, address } => client.run_simple(
-            Req::new("CreateFunctionDefinitionCmd")
-                .str("file", program)
-                .str("address", address)
-                .build(),
-        ),
+        Cmd::CreateDefinition { program, address } => {
+            // Server returns a ShowDataTypeHandler.ConfirmResponse
+            // (path/kind/name/size/source/...) so operators can see the
+            // resolved funcdef's project path — including the .conflict
+            // suffix on repeated names, and the convention-preserving
+            // output of CreateFunctionDefinitionFromSourceCmd. Print the
+            // path (so the .conflict suffix is visible) plus the kind
+            // confirmation. print_show lives in datatype.rs and is private;
+            // this is the single funcdef-side printer — keep it small.
+            let response = client.invoke(
+                Req::new("CreateFunctionDefinitionCmd")
+                    .str("file", program)
+                    .str("address", address)
+                    .build(),
+            )?;
+            let verb = response
+                .get("verb")
+                .and_then(Json::as_str)
+                .unwrap_or("created");
+            let path = response.get("path").and_then(Json::as_str).unwrap_or("?");
+            let name = response.get("name").and_then(Json::as_str).unwrap_or("?");
+            println!("{} {} ({})", verb, path, name);
+            Ok(())
+        }
         Cmd::Delete { program, address } => client.run_simple(
             Req::new("DeleteFunctionCmd")
                 .str("file", program)

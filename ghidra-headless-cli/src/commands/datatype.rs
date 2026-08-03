@@ -233,7 +233,8 @@ pub enum Cmd {
         #[arg(long, default_value_t = 4i64)]
         enum_size: i64,
     },
-    /// Edit an existing data type (batched: rename/move/description/addFields/replaceFields/addEntries)
+    /// Edit an existing data type (batched: rename/move/description/addFields/replaceFields/addEntries,
+    /// and — for FunctionDefinition targets — returnType/parameters/callingConvention/varArgs/noReturn)
     Edit {
         /// Target file project path
         #[arg(long = "file", value_name = "FILE")]
@@ -265,6 +266,13 @@ pub enum Cmd {
         /// The target type's name is auto-injected for anonymous snippets. The
         /// snippet's kind must match the target (struct/union/enum); mismatch
         /// returns an error before commit.
+        ///
+        /// NOT routed for FunctionDefinition targets — the C parser
+        /// (CDefinitionParser) only handles struct/union/enum, and the
+        /// FuncDefSnippet path that bypasses parseSignature's
+        /// convention-keyword pre-check is deferred. Combine --definition
+        /// with any of --return-type/--parameters/--calling-convention is
+        /// rejected client-side.
         #[arg(long)]
         definition: Option<String>,
         /// Fields to append (JSON array, struct/union)
@@ -273,6 +281,35 @@ pub enum Cmd {
         /// Entries to append (JSON array, enum)
         #[arg(long)]
         add_entries: Option<String>,
+        /// FunctionDefinition: new return type (C-syntax like "int" or a
+        /// full path like "/Cat/Type"). [default: unchanged]
+        #[arg(long, value_name = "TYPE")]
+        return_type: Option<String>,
+        /// FunctionDefinition: parameter list as a JSON array of
+        /// {"name": "...", "type": "..."} objects. Empty array clears all
+        /// parameters. `name` is optional; pass `""` or omit for unnamed
+        /// params. [default: unchanged]
+        ///
+        /// Note: this shape is distinct from `function update --parameters`
+        /// (which uses {name, dataType}). Different procedures, different
+        /// keys — the server routes accordingly.
+        #[arg(long, value_name = "JSON")]
+        parameters: Option<String>,
+        /// FunctionDefinition: calling convention name (e.g. "__thiscall",
+        /// "__stdcall", "default", "unknown"). [default: unchanged]
+        #[arg(long, value_name = "CONVENTION")]
+        calling_convention: Option<String>,
+        /// FunctionDefinition: mark var-args. [default: unchanged]
+        #[arg(long, conflicts_with = "no_var_args")]
+        var_args: bool,
+        /// FunctionDefinition: clear var-args. [default: unchanged]
+        #[arg(long = "no-var-args", conflicts_with = "var_args")]
+        no_var_args: bool,
+        /// FunctionDefinition: mark no-return. [default: unchanged].
+        /// There is no `--no-no-return` flag; pass `--no-return false` via
+        /// the API or leave omitted to keep existing state.
+        #[arg(long)]
+        no_return: bool,
     },
     /// Set the comment on a single struct/union field (by name, @offset, or
     /// index). Pass --comment "" to clear. Not supported on enums, typedefs,
@@ -496,6 +533,12 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             definition,
             add_fields,
             add_entries,
+            return_type,
+            parameters,
+            calling_convention,
+            var_args,
+            no_var_args,
+            no_return,
         } => {
             let add_fields_json = parse_opt_json("addFields", add_fields)?;
             let add_entries_json = parse_opt_json("addEntries", add_entries)?;
@@ -505,6 +548,62 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             } else {
                 (add_fields_json, add_entries_json)
             };
+            // --definition is NOT routed for FunctionDefinition targets —
+            // the C snippet path is Composite/Enum/TypeDef only. Reject
+            // client-side if combined with any of the funcdef structured
+            // flags; the server would have to validate this anyway, and
+            // a clear error beats silent precedence.
+            let has_funcdef_structured = return_type.is_some()
+                || parameters.is_some()
+                || calling_convention.is_some()
+                || var_args
+                || no_var_args
+                || no_return;
+            if definition.is_some() && has_funcdef_structured {
+                common::log_arg_err(
+                    "--definition cannot be combined with FunctionDefinition \
+                     structured flags (--return-type, --parameters, \
+                     --calling-convention, --var-args/--no-var-args, \
+                     --no-return). Drop --definition for funcdef targets; \
+                     the C-snippet path is struct/union/enum only."
+                        .to_string(),
+                );
+                return Err(());
+            }
+            // --parameters must parse as a JSON array (server-side
+            // validation enforces it but client-side gives a clearer error
+            // before the round-trip).
+            let parameters_json = match parameters.as_deref() {
+                None => None,
+                Some(text) => {
+                    let parsed = parse_opt_json("parameters", Some(text.to_string()))?;
+                    match parsed {
+                        None => None,
+                        Some(Json::Arr(_)) => Some(parsed.unwrap()),
+                        Some(_) => {
+                            common::log_arg_err(
+                                "--parameters must be a JSON array of \
+                                 {\"name\": \"...\", \"type\": \"...\"} objects."
+                                    .to_string(),
+                            );
+                            return Err(());
+                        }
+                    }
+                }
+            };
+            // Map --var-args / --no-var-args presence flags to an
+            // Option<bool>: clap rejects using both (conflicts_with), so
+            // exactly one of var_args / no_var_args / neither is true.
+            let opt_var_args = if var_args {
+                Some(true)
+            } else if no_var_args {
+                Some(false)
+            } else {
+                None
+            };
+            // --no-return is a presence flag (no clearing counterpart —
+            // see the doc comment).
+            let opt_no_return = if no_return { Some(true) } else { None };
             let response = client.invoke(
                 Req::new("EditDataType")
                     .str("file", program)
@@ -516,6 +615,11 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                     .opt_str("definition", definition)
                     .opt_json("addFields", add_fields_json)
                     .opt_json("addEntries", add_entries_json)
+                    .opt_str("returnType", return_type)
+                    .opt_json("parameters", parameters_json)
+                    .opt_str("callingConvention", calling_convention)
+                    .opt_bool("varArgs", opt_var_args)
+                    .opt_bool("noReturn", opt_no_return)
                     .build(),
             )?;
             print_show(&response, false)?;
