@@ -22,7 +22,7 @@ import procedures.RpcResponse;
  * are mandatory; the server does NOT default {@code keep} (per policy "default
  * values defined in the client; server requires explicit values") so a missing
  * {@code keep} becomes a clear error. Caller must additionally carry an
- * {@code adminPassword} field matching the server's {@code RPC_ADMIN_PASSWORD}
+ * {@code adminPassword} field matching the server's {@code GHIDRA_RPC_ADMIN_PASSWORD}
  * — see {@link #requiresAdmin()}.
  *
  * <p>Implementation: Ghidra's {@link RepositoryAdapter#deleteItem} accepts only
@@ -37,7 +37,7 @@ import procedures.RpcResponse;
  * version (mirrors {@code VersionHistoryPanel.delete()}), the loop aborts with
  * a descriptive error rather than failing deep inside the server.
  *
- * <p>Admin note: the RPC server's {@code RPC_ADMIN_PASSWORD} gate is one
+ * <p>Admin note: the RPC server's {@code GHIDRA_RPC_ADMIN_PASSWORD} gate is one
  * layer; the Ghidra Server's per-version ownership check (admin can delete
  * anyone's versions; non-admin only their own — {@code RepositoryFile.delete:
  * 257-281}) is another. Non-admin callers that hit the ownership rule see the
@@ -188,7 +188,7 @@ public final class PurgeVersionsHandler implements RpcProcedure {
 
     @Override
     public boolean requiresAdmin() {
-        return true; // gated by RPC_ADMIN_PASSWORD
+        return true; // gated by GHIDRA_RPC_ADMIN_PASSWORD
     }
 
     /** Summary of one purge pass. */

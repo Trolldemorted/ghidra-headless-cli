@@ -67,7 +67,7 @@ pub enum Cmd {
     /// Delete old revisions of a file, keeping the most recent N. Matches the
     /// Ghidra GUI's "Delete Version" action in the Version History dialog;
     /// required because the GUI cannot cope with files that accumulate hundreds
-    /// of revisions. Gated by the server's RPC_ADMIN_PASSWORD — the matching
+    /// of revisions. Gated by the server's GHIDRA_RPC_ADMIN_PASSWORD — the matching
     /// value must be passed via --admin-password.
     DeleteVersion {
         /// Target file project path (e.g. /foo.exe)
@@ -76,7 +76,7 @@ pub enum Cmd {
         /// Number of most-recent versions to keep [default: 1]
         #[arg(long, default_value_t = 1)]
         keep: i64,
-        /// Admin password (must match the server's RPC_ADMIN_PASSWORD); required
+        /// Admin password (must match the server's GHIDRA_RPC_ADMIN_PASSWORD); required
         #[arg(long)]
         admin_password: String,
     },

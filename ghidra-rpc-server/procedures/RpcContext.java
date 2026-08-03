@@ -235,7 +235,7 @@ public class RpcContext {
 
     /**
      * Shared secret required on every admin-only request when non-null. Set
-     * from the {@code RPC_ADMIN_PASSWORD} environment variable at server
+     * from the {@code GHIDRA_RPC_ADMIN_PASSWORD} environment variable at server
      * startup via {@link #setAdminPassword}. Independent from
      * {@link #writePassword}: a leaked write password does NOT grant admin
      * rights. When null (the default), the admin gate is off and every
@@ -362,7 +362,7 @@ public class RpcContext {
                         + "mutating requests require GHIDRA_RPC_WRITE_PASSWORD.");
                 }
             }
-            // Admin-password gate (RPC_ADMIN_PASSWORD on the server). When set,
+            // Admin-password gate (GHIDRA_RPC_ADMIN_PASSWORD on the server). When set,
             // every procedure whose requiresAdmin() is true must carry a matching
             // "adminPassword" field; a wrong/missing value returns an error
             // BEFORE any project tree or repository access. Independent from the
@@ -373,7 +373,7 @@ public class RpcContext {
                 String supplied = optStr(request, "adminPassword");
                 if (supplied == null || !adminRequired.equals(supplied)) {
                     return RpcResponse.error("Missing or invalid 'adminPassword' field; "
-                        + "this request requires RPC_ADMIN_PASSWORD.");
+                        + "this request requires GHIDRA_RPC_ADMIN_PASSWORD.");
                 }
             }
             // Capture path up front so the corruption-recovery retry (below) can re-resolve
