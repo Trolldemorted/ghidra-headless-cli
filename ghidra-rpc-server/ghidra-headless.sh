@@ -41,12 +41,10 @@
 #   GHIDRA_SCRIPTPATH script search dir      (default: dir of this script)
 #   GHIDRA_READONLY  1 => open read-only     (default: 0 => writeable project)
 #   GHIDRA_COMMIT_MSG -commit comment        (default: empty; only relevant with GHIDRA_PROGRAM)
-#   GHIDRA_REFRESH_PW 1 => reset the user's password on connect (pushes out the
-#                        server-side expiry, default 24h on fresh accounts).
-#                        RpcServer.java calls RepositoryServerAdapter.setPassword
-#                        on connect with the same value. Set 0 to disable
-#                        (e.g. on auth modes that don't support self-password
-#                        changes like PKI).
+#   GHIDRA_REFRESH_PW removed 2026-07-30: password refresh on connect is now
+#                        always-on whenever GHIDRA_PASSWORD is exported to the
+#                        JVM (see comment near `export GHIDRA_PASSWORD` below).
+#                        To opt out, unset GHIDRA_PASSWORD before launching.
 #
 # Examples:
 #   # launch the RPC server (zero programs, writeable, opens targets on demand)
@@ -126,36 +124,23 @@ args+=( -preScript "$GHIDRA_SCRIPT" )
 echo ">> headless: $HEADLESS ${args[*]}" >&2
 echo ">> login user: $GHIDRA_USER  (mode: $mode, programs: ${GHIDRA_PROGRAM:-none})" >&2
 
-# Forward GHIDRA_PASSWORD into the JVM as -Dghidra.rpc.password so RpcServer.java
+# Forward GHIDRA_PASSWORD to the JVM as an environment variable so RpcServer.java
 # can call RepositoryServerAdapter.setPassword(...) on connect and push out the
 # server-side password expiry (default 24h on fresh accounts; setting the password
-# to itself resets the clock). opt out with GHIDRA_REFRESH_PW=0. The password lives
-# in a JVM system property (not _JAVA_OPTIONS) so it stays scoped to this
-# analyzeHeadless invocation and doesn't leak to other Java processes in the
-# container. GHIDRA_JAVA_OPTIONS is honored by analyzeHeadless (appended to its
-# VMARG_LIST) and passed through to the JVM; clear it after analyzeHeadless returns
-# so it doesn't persist into the next subprocess (e.g. on -commit). The JVM
-# re-parses the property on each access; the launcher shells out only once.
-#
-# WHITESPACE GUARD: GHIDRA_PASSWORD values that contain spaces cannot survive the
-# `-Dkey=value` syntax — bash word-splits launch.sh's `set -o noglob; ... ${VMARGS_FROM_CALLER}`
-# exec line on whitespace (launch.sh:238), so a password like "-d 9bd34d..." would
-# leak the hash out as its own JVM argument. Java's launcher then treats it as a
-# main-class candidate, which corrupts the classloader init for
-# ghidra.GhidraClassLoader and produces ClassNotFoundException at initPhase3 even
-# though `-Xshare:off` is set in launch.properties. Skip the refresh (and warn) for
-# passwords containing whitespace; set GHIDRA_REFRESH_PW=0 to silence. Structural
-# fix would be to read the password in RpcServer.java via System.getenv("GHIDRA_PASSWORD")
-# instead of System.getProperty("ghidra.rpc.password"), which removes the JVM-arg
-# parser from the path entirely.
-if [ "${GHIDRA_REFRESH_PW:-1}" = "1" ]; then
-  if [[ "${GHIDRA_PASSWORD}" == *" "* ]]; then
-    echo ">> WARN: GHIDRA_PASSWORD contains whitespace; skipping password-refresh property (set GHIDRA_REFRESH_PW=0 to silence)" >&2
-  else
-    GHIDRA_JAVA_OPTIONS="${GHIDRA_JAVA_OPTIONS:-} -Dghidra.rpc.password=${GHIDRA_PASSWORD}"
-    export GHIDRA_JAVA_OPTIONS
-  fi
-fi
+# to itself resets the clock). Previously this was injected as
+# `-Dghidra.rpc.password=${GHIDRA_PASSWORD}` via GHIDRA_JAVA_OPTIONS, but that
+# path is unsafe for passwords containing whitespace: bash word-splits
+# launch.sh's `set -o noglob; ... ${VMARGS_FROM_CALLER}` exec line on whitespace
+# (launch.sh:238), leaking the post-whitespace token into java's cmdline as a
+# separate unrecognized arg. Java's launcher treats that as a main-class
+# candidate, which corrupts the classloader init for ghidra.GhidraClassLoader
+# and reproduces the same ClassNotFoundException as the Temurin-LTS CDS bug.
+# Env vars are opaque to the JVM-arg parser and survive arbitrary content, so
+# the structural fix is to read the password via System.getenv("GHIDRA_PASSWORD")
+# in RpcServer.java (see feedback_password_whitespace_jvm_arg.md). The JVM
+# inherits this env var because we export it below before exec'ing
+# analyzeHeadless.
+export GHIDRA_PASSWORD
 
 # Disable CDS for the Ghidra JVM. Temurin 21.0.11+10 LTS (which is what
 # `eclipse-temurin:21-jdk-jammy` resolves to on pulls from ~April 2026 onward)

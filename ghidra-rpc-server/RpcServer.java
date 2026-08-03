@@ -296,9 +296,9 @@ public class RpcServer extends GhidraScript {
 
     /**
      * Push out the server-side password expiry by re-setting the password to its
-     * current value, if the launcher requested it. Reads {@code -Dghidra.rpc.password}
-     * (populated from {@code GHIDRA_PASSWORD} via {@code GHIDRA_JAVA_OPTIONS} in
-     * {@code ghidra-headless.sh}), grabs the live {@link RepositoryServerAdapter} for
+     * current value, if the launcher passed one. Reads {@code GHIDRA_PASSWORD}
+     * from the inherited environment (the wrapper exports it before exec'ing
+     * {@code analyzeHeadless}), grabs the live {@link RepositoryServerAdapter} for
      * the open project, and calls {@link RepositoryServerAdapter#setPassword}.
      *
      * <p>Best-effort: any failure (auth mode doesn't support self-password change
@@ -307,10 +307,18 @@ public class RpcServer extends GhidraScript {
      * existing password is still valid the user can keep working, and if it's
      * expired the auth failure will surface clearly on the first RPC call.
      *
-     * <p>Cleared-from-memory hygiene: the password is read from the system property
+     * <p>Cleared-from-memory hygiene: the password is read from the env var
      * into a local char[] and zeroed after the setPassword call returns, so it
      * doesn't linger on the heap. Ghidra's adapter API only takes char[], so we
-     * can't use the property's String form directly.
+     * can't use the env var's String form directly.
+     *
+     * <p>Env var over JVM system property: previously this read
+     * {@code -Dghidra.rpc.password} via {@code GHIDRA_JAVA_OPTIONS}. That path
+     * was unsafe for passwords containing whitespace (the wrapper's bash
+     * word-split leaks the post-whitespace token into java's cmdline as a
+     * separate unrecognized arg, which corrupts Ghidra's classloader init —
+     * see {@code feedback_password_whitespace_jvm_arg.md}). Env vars are
+     * opaque to the JVM-arg parser and survive arbitrary content.
      *
      * <p>Hash format: the server-side {@code UserManager.setPassword} validates
      * the incoming char[] as a SALTED-SHA-256 hash (4-char alphanumeric salt
@@ -323,9 +331,9 @@ public class RpcServer extends GhidraScript {
      * pass-through to the RMI call and does not hash for us.
      */
     private void refreshPasswordIfRequested() {
-        String pw = System.getProperty("ghidra.rpc.password");
-        if (pw == null || pw.isEmpty()) {
-            return; // launcher didn't pass it (e.g. GHIDRA_REFRESH_PW=0)
+        String pw = env("GHIDRA_PASSWORD", null);
+        if (pw == null) {
+            return; // wrapper didn't export it
         }
         char[] pwChars = pw.toCharArray();
         char[] pwHash = null;
