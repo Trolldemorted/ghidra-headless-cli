@@ -107,6 +107,12 @@ public class RpcServer extends GhidraScript {
     private final Gson gson = new GsonBuilder().disableHtmlEscaping().create();
     private final Map<String, RpcProcedure> handlers = new ConcurrentHashMap<>();
     private final AtomicLong clientIds = new AtomicLong();
+    // Monotonic per-request id used in the `Rpc #N call/done` log pair. The
+    // thread id is NOT suitable (JVM thread ids are recycled when a pool
+    // worker dies, so the same id can reappear from a totally different
+    // request, making the log unwound and confusing for long-running
+    // bursty workloads).
+    private final AtomicLong requestIds = new AtomicLong();
 
     private RpcContext context;
     private ExecutorService clientPool;
@@ -484,8 +490,12 @@ public class RpcServer extends GhidraScript {
         // Log the call (procedure + brief args) on entry, then the outcome on exit,
         // so every request shows up as a pair of lines in the server log. The args
         // summary is bounded (RpcContext.BRIEF_VALUE_MAX chars per value) so a giant
-        // comment or base64 blob can't blow up the log line.
-        Msg.info(this, "Rpc #" + Thread.currentThread().getId()
+        // comment or base64 blob can't blow up the log line. The id is from a
+        // monotonic counter (requestIds) — Thread.currentThread().getId() looks
+        // tempting but is recycled by the JVM, so a long-running bursty workload
+        // makes the log look like it's unwinding when pool workers churn.
+        long reqId = requestIds.incrementAndGet();
+        Msg.info(this, "Rpc #" + reqId
                 + " call " + procedure + " " + RpcContext.briefArgs(request));
         RpcResponse response;
         try {
@@ -495,7 +505,7 @@ public class RpcServer extends GhidraScript {
             response = RpcResponse.error(msg != null ? msg
                 : "Internal error: " + e.getClass().getSimpleName());
         }
-        Msg.info(this, "Rpc #" + Thread.currentThread().getId()
+        Msg.info(this, "Rpc #" + reqId
                 + " done " + procedure + " " + (response.success ? "ok" : "error")
                 + (response.success ? "" : ": " + briefError(response)));
         return response;
