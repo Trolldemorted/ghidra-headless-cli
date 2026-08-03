@@ -143,6 +143,32 @@ public class RpcContext {
      */
     private static final int CONNECTION_LOST_THRESHOLD = 5;
 
+    /**
+     * Number of retries on {@link #acquireCheckoutWithRetry} when the server
+     * says the file is held by another user. The most common cause is a prior
+     * JVM (us) that was OOM-killed mid-request: SIGKILL bypasses the SIGTERM
+     * shutdown hook and Ghidra's {@code TransientProjectManager} cleanup, so
+     * the dead session's checkout remains server-side until the RMI layer
+     * detects the broken TCP socket (typically within a few seconds — the
+     * kernel sends RST immediately on SIGKILL and the server's next read
+     * attempt fails). Retry-with-backoff gives that cleanup a window to run
+     * before the request fails permanently. See
+     * /workdir/notes/checkin-rollback.md "Known gaps — checkout-only files".
+     */
+    private static final int HELD_RETRY_MAX = 3;
+
+    /** Base backoff (ms) for {@link #acquireCheckoutWithRetry}; doubles each retry. */
+    private static final long HELD_RETRY_BASE_MS = 500;
+
+    /**
+     * Total wait across all {@link #HELD_RETRY_MAX} retries
+     * ({@code base + 2*base + 4*base = base * (2^MAX - 1) → 3500ms for the defaults}).
+     * Used for the final-error message; computed once to keep the throw site
+     * readable.
+     */
+    private static final long HELD_RETRY_TOTAL_MS =
+        HELD_RETRY_BASE_MS * ((1L << HELD_RETRY_MAX) - 1);
+
     /** Consecutive connection-lost checkin failures since the last successful checkin. */
     private int connectionLostFailures = 0;
 
@@ -633,21 +659,15 @@ public class RpcContext {
         // Check out BEFORE opening: a versioned file opened while not checked out yields a
         // read-only in-memory instance whose check-in would fail. On a read-only session we
         // skip checkout — read-only procedures still work; mutating ones fail later at check-in.
+        // The checkout itself goes through acquireCheckoutWithRetry, which retries on
+        // "held by another user" to ride out the typical OOM-kill recovery window (see
+        // the helper's Javadoc).
         if (df.isVersioned() && !df.isCheckedOut() && !df.isReadOnly()) {
-            try {
-                if (!df.checkout(true, monitor)) { // exclusive
-                    throw new IllegalArgumentException(
-                        "Failed to check out '" + df.getPathname() + "' (held by another user?).");
-                }
-            } catch (Exception coEx) {
-                // df.checkout throws IOException when the RMI socket is dead
-                // (the boolean-false path is for "held by another user", a
-                // distinct failure mode). Count the RMI loss and let the
-                // exception propagate; the dispatch catch notes it too as a
-                // backstop but this site is the actual thrower.
-                noteConnectionLost(message(coEx),
-                    "openProgram.checkout(" + df.getPathname() + ")");
-                throw coEx;
+            if (!acquireCheckoutWithRetry(df)) {
+                throw new IllegalArgumentException(
+                    "Failed to check out '" + df.getPathname()
+                    + "' (held by another user; waited " + HELD_RETRY_TOTAL_MS
+                    + "ms for stale session to release).");
             }
         }
         // okToUpgrade=true (open older DB versions). okToRecover is parameterized — see
@@ -655,6 +675,88 @@ public class RpcContext {
         Program p = (Program) df.getDomainObject(this, true, okToRecover, monitor);
         open.put(key, p); // removeEldestEntry fires here; eldest clean entry is released
         return p;
+    }
+
+    /**
+     * Acquire an exclusive checkout on {@code df}, retrying with exponential
+     * backoff on the "held by another user" failure mode. Returns {@code true}
+     * on success (initial attempt or any retry); {@code false} after all
+     * retries have been exhausted (the caller surfaces an error).
+     *
+     * <p>The retry exists because of the OOM-kill recovery gap: when this JVM
+     * is killed mid-request (SIGKILL — the kernel, not us), the SIGTERM
+     * shutdown hook and Ghidra's {@code TransientProjectManager} cleanup
+     * never run. The file's server-side checkout stays associated with the
+     * dead RMI session until the Ghidra Server's connection layer detects
+     * the broken TCP socket and releases the orphan. For SIGKILL the kernel
+     * sends RST immediately, so the server's cleanup typically completes in
+     * a couple of seconds — far shorter than {@link #HELD_RETRY_TOTAL_MS}.
+     *
+     * <p>Two distinct failure modes from {@link DomainFile#checkout}:
+     * <ul>
+     *   <li><b>Returns {@code false}</b>: the file is checked out by some
+     *       other session. For our single-user-per-JVM deployment this is
+     *       virtually always the dead-session cleanup race; retrying
+     *       usually clears it. For a multi-user shared deployment, a
+     *       legitimate cross-user checkout will retry and ultimately fail
+     *       with the same error message — no silent data loss.</li>
+     *   <li><b>Throws</b>: the RMI socket itself is dead (signaled via
+     *       {@link #noteConnectionLost}). This is NOT retried — the next
+     *       call would also fail the same way. The exception propagates
+     *       out of {@link #openProgram} and the dispatch catch handles it
+     *       (connection-lost counter, eventual JVM exit after threshold).</li>
+     * </ul>
+     *
+     * <p>Phase 3 of {@link #revertDirtyLocalFilesOnStartup} does NOT cover
+     * the OOM-kill case: it walks the project tree via
+     * {@code modifiedSinceCheckout()}, which is {@code false} for a file
+     * that was checked out but never mutated (the typical OOM moment is
+     * between {@code df.checkout} and any {@code df.save}/{@code df.checkin}).
+     * This helper is the recovery path for that gap.
+     */
+    private boolean acquireCheckoutWithRetry(DomainFile df) throws Exception {
+        // Initial attempt — short-circuit before any sleep so the normal
+        // path is unchanged.
+        try {
+            if (df.checkout(true, monitor)) {
+                return true;
+            }
+        } catch (Exception coEx) {
+            // IOException = RMI socket dead. Distinct from "held by another
+            // user"; do NOT retry, just count it and propagate.
+            noteConnectionLost(message(coEx),
+                "openProgram.checkout(" + df.getPathname() + ")");
+            throw coEx;
+        }
+        // Held by another session — retry with exponential backoff.
+        for (int attempt = 1; attempt <= HELD_RETRY_MAX; attempt++) {
+            long backoff = HELD_RETRY_BASE_MS << (attempt - 1); // 500, 1000, 2000
+            Msg.info(this, "Checkout of '" + df.getPathname()
+                + "' held by another user; retrying in " + backoff
+                + "ms (attempt " + attempt + "/" + HELD_RETRY_MAX + ")");
+            try {
+                Thread.sleep(backoff);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(
+                    "Interrupted while waiting for stale checkout on '"
+                        + df.getPathname() + "'", ie);
+            }
+            try {
+                if (df.checkout(true, monitor)) {
+                    Msg.info(this, "Acquired checkout for '" + df.getPathname()
+                        + "' on retry " + attempt
+                        + " (was held by another user; stale-session recovery)");
+                    return true;
+                }
+            } catch (Exception coEx) {
+                // Same as the initial attempt: RMI death is not retried.
+                noteConnectionLost(message(coEx),
+                    "openProgram.checkout-retry(" + df.getPathname() + ")");
+                throw coEx;
+            }
+        }
+        return false;
     }
 
     /**
