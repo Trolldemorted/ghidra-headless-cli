@@ -65,6 +65,7 @@ public final class FindFunctionHandler implements RpcProcedure {
         // No additional check needed beyond Field.parse below.
 
         int limit = RpcContext.reqInt(req, "limit");
+        boolean noThunks = RpcContext.optBool(req, "noThunks", false);
 
         List<FunctionMatch> results = new ArrayList<>();
         boolean truncated = false;
@@ -76,7 +77,8 @@ public final class FindFunctionHandler implements RpcProcedure {
                     ctx.monitor().checkCancelled();
                     String qualified = f.getName(true);
                     if (nameMatch.test(qualified)) {
-                        results.add(matchedWithTags(f));
+                        if (noThunks && f.isThunk()) continue;
+                        results.add(FunctionMatch.from(f, false));
                         if (limit > 0 && results.size() >= limit) {
                             truncated = true;
                             break;
@@ -95,8 +97,8 @@ public final class FindFunctionHandler implements RpcProcedure {
                     ctx.monitor().checkCancelled();
                     List<String> tags = tagsOf(f);
                     if (tags.stream().anyMatch(tagMatch)) {
-                        results.add(new FunctionMatch(f.getName(),
-                            f.getEntryPoint().toString(), tags));
+                        if (noThunks && f.isThunk()) continue;
+                        results.add(FunctionMatch.from(f, true));
                         if (limit > 0 && results.size() >= limit) {
                             truncated = true;
                             break;
@@ -114,8 +116,8 @@ public final class FindFunctionHandler implements RpcProcedure {
                 if (f == null) {
                     f = ctx.program().getFunctionManager().getFunctionAt(addr);
                 }
-                if (f != null) {
-                    results.add(matchedWithTags(f));
+                if (f != null && (!noThunks || !f.isThunk())) {
+                    results.add(FunctionMatch.from(f, false));
                 }
                 break;
             }
@@ -142,7 +144,8 @@ public final class FindFunctionHandler implements RpcProcedure {
                         || tagsOf(f).stream().anyMatch(tagMatch)
                         || (addrHit != null && addrHit.equals(f));
                     if (hit) {
-                        results.add(matchedWithTags(f));
+                        if (noThunks && f.isThunk()) continue;
+                        results.add(FunctionMatch.from(f, true));
                         if (limit > 0 && results.size() >= limit) {
                             truncated = true;
                             break;
@@ -169,10 +172,6 @@ public final class FindFunctionHandler implements RpcProcedure {
         }
         Collections.sort(tags);
         return tags;
-    }
-
-    private static FunctionMatch matchedWithTags(Function f) {
-        return new FunctionMatch(f.getName(), f.getEntryPoint().toString(), tagsOf(f));
     }
 
     /**
