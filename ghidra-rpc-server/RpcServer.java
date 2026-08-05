@@ -210,6 +210,18 @@ public class RpcServer extends GhidraScript {
             exitTimer.setDaemon(true);
             exitTimer.start();
         });
+        // Stuck-dispatch watchdog: fires onConnectionLost if a single dispatch
+        // holds the dispatch lock for more than STUCK_DISPATCH_SECONDS. The
+        // known trigger is df.save(monitor) / df.checkin(monitor) blocked on
+        // a Ghidra Server RMI response that died after the Server committed
+        // (verified 2026-08-05: server logged "version 31339 created" then
+        // "ERROR file block stream failed from /<host>: invalid block stream
+        // header"; headless JVM hung in df.save, every subsequent request
+        // piled up on the dispatch lock). RMI reads cannot be interrupted
+        // (DBHandle.save is not interrupt-aware — javap on 12.1.2), so the
+        // only recovery is process exit + orchestrator restart + local
+        // checkout release.
+        context.startStuckDispatchWatchdog();
         registerHandlers();
 
         // Phase 3 startup revert: if a previous JVM exited with dirty local

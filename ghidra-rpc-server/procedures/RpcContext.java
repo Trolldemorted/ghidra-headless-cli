@@ -173,6 +173,56 @@ public class RpcContext {
     private int connectionLostFailures = 0;
 
     /**
+     * Stuck-request watchdog: if a single dispatch holds the dispatch lock
+     * for more than this many seconds without completing, treat the JVM
+     * as wedged and fire the {@link #onConnectionLost} handler (which
+     * schedules a JVM exit). {@code df.save(monitor)} / {@code
+     * df.checkin(monitor)} over RMI to the Ghidra Server have no
+     * client-side timeout — if the Server commits but the response
+     * stream dies (e.g. {@code "file block stream failed from /<host>:
+     * invalid block stream header"}, confirmed 2026-08-05), the headless
+     * JVM blocks indefinitely. The watchdog is the only recovery: the
+     * JVM exits, the orchestrator restarts us, the shutdown hook releases
+     * the local checkout, and the next launch reopens from the server's
+     * committed version. Reads under {@link #lock}.
+     */
+    private static final long STUCK_DISPATCH_SECONDS = 60;
+
+    /**
+     * System time (ms) at which the currently-running dispatch started.
+     * {@code 0} if no dispatch is in flight. Updated under {@link #lock};
+     * read by the watchdog thread.
+     */
+    private volatile long dispatchStartMs = 0;
+
+    /**
+     * Deadline (seconds) for starting a single transaction. {@link
+     * DomainObjectAdapterDB#startTransaction} uses an unbounded retry loop on
+     * {@code DomainObjectLockedException} (its {@code lambda$new$0} sleeps
+     * 100 ms and returns true forever — verified via javap on
+     * {@code DomainObjectAdapterDB.class} in
+     * {@code Ghidra/Framework/Project/lib/Project.jar}, Ghidra 12.1.2).
+     *
+     * <p>The lock is the per-DBHandle transaction lock; it is held across
+     * {@code df.save(monitor)} / {@code df.checkin(...)} RMI round-trips. If
+     * the Ghidra Server commits the version but the response stream dies
+     * mid-flight (e.g. {@code "file block stream failed from /<host>:
+     * invalid block stream header"} — confirmed against prod logs 2026-08-05),
+     * the headless JVM waits forever for a response that will never arrive
+     * and the lock stays held. Every subsequent request hits the unbounded
+     * retry and piles up on the dispatch lock.
+     *
+     * <p>This bound restores the policy "if ghidra server refuses to checkin,
+     * revert local changes and respond with 'rpc failed' to the client":
+     * after the deadline we close the program (the only way to kill the
+     * inner retry — its {@code Thread.sleep} swallows {@code
+     * InterruptedException} and loops), evict the cached entry, mark the
+     * file dirty, and throw a clear error. The dispatch catch block then
+     * propagates the error to the client via {@code RpcResponse.error}.
+     */
+    private static final int TX_START_TIMEOUT_SECONDS = 30;
+
+    /**
      * Register a handler that fires when {@link #checkin} detects the underlying
      * Ghidra Server connection has been lost. Only one handler at a time;
      * passing a new one replaces the previous. Pass null to clear. Called from
@@ -183,8 +233,116 @@ public class RpcContext {
         this.onConnectionLost = handler;
     }
 
+    /**
+     * Start the stuck-dispatch watchdog. The watchdog polls
+     * {@link #dispatchStartMs} every second; if a single dispatch holds
+     * the lock for more than {@link #STUCK_DISPATCH_SECONDS}, it fires
+     * the registered {@link #onConnectionLost} handler (which schedules a
+     * JVM exit per the existing shutdown hook).
+     *
+     * <p>This is a recovery net for the unfixable case: a request that
+     * wedges inside {@code df.save(monitor)} / {@code df.checkin(monitor)}
+     * RMI. The RMI response read cannot be interrupted (Java's blocking
+     * {@code Socket} read doesn't honor {@code Thread.interrupt()}; Ghidra's
+     * {@code DBHandle.save} is not interrupt-aware — verified via javap on
+     * 12.1.2). The only escape is process exit; the shutdown hook releases
+     * the local checkout, and the orchestrator's restart reopens from the
+     * Server's committed version.
+     *
+     * <p>Idempotent: subsequent calls are no-ops while a watchdog thread
+     * is already running.
+     */
+    public synchronized void startStuckDispatchWatchdog() {
+        if (stuckWatchdogThread != null && stuckWatchdogThread.isAlive()) {
+            return;
+        }
+        stuckWatchdogFired = false;
+        stuckWatchdogThread = new Thread(this::watchdogLoop,
+            "rpc-stuck-dispatch-watchdog");
+        stuckWatchdogThread.setDaemon(true);
+        stuckWatchdogThread.start();
+    }
+
+    /** Test/teardown hook. */
+    synchronized void stopStuckDispatchWatchdog() {
+        if (stuckWatchdogThread != null) {
+            stuckWatchdogThread.interrupt();
+            stuckWatchdogThread = null;
+        }
+    }
+
+    /**
+     * True once the watchdog has fired and the JVM is on its way to exit.
+     * Set on the watchdog thread, read on any thread. Volatile suffices;
+     * a stale read just delays the next noteConnectionLost, not its
+     * semantics.
+     */
+    private volatile boolean stuckWatchdogFired;
+
+    /** Watchdog thread; null until {@link #startStuckDispatchWatchdog}. */
+    private Thread stuckWatchdogThread;
+
+    private void watchdogLoop() {
+        long thresholdMs = STUCK_DISPATCH_SECONDS * 1000L;
+        while (!Thread.currentThread().isInterrupted()) {
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            long start = dispatchStartMs;
+            if (start == 0) {
+                continue; // no dispatch in flight
+            }
+            long elapsed = System.currentTimeMillis() - start;
+            if (elapsed < thresholdMs) {
+                continue;
+            }
+            // Stuck. Fire onConnectionLost exactly once. The handler is
+            // expected to call System.exit (or schedule it on a daemon
+            // thread per the existing pattern); the watchdog loop exits
+            // either way to avoid double-firing.
+            if (stuckWatchdogFired) {
+                continue;
+            }
+            stuckWatchdogFired = true;
+            Runnable handler = onConnectionLost;
+            if (handler != null) {
+                Msg.error(this,
+                    "Dispatch stuck for " + (elapsed / 1000) + "s (threshold "
+                    + STUCK_DISPATCH_SECONDS + "s). Likely cause: df.save() / "
+                    + "df.checkin() blocked on a Ghidra Server RMI response "
+                    + "after the Server committed but the stream died. "
+                    + "Firing onConnectionLost to exit and let the orchestrator "
+                    + "restart us.");
+                try {
+                    handler.run();
+                } catch (Exception e) {
+                    Msg.error(this, "onConnectionLost handler threw; exiting anyway", e);
+                    System.exit(70);
+                }
+            } else {
+                Msg.error(this,
+                    "Dispatch stuck for " + (elapsed / 1000) + "s and no "
+                    + "onConnectionLost handler is registered; exiting to "
+                    + "break the deadlock (operator can restart manually).");
+                System.exit(70);
+            }
+            return;
+        }
+    }
+
     /** The program selected for the in-flight request; set/cleared by {@link #dispatch} under {@link #lock}. */
     private Program active;
+
+    /**
+     * The path of the program selected for the in-flight request, or null if
+     * no program is selected. Captured by {@link #dispatch} so the bounded
+     * {@link #startTransactionBounded} helper has a key for evicting from the
+     * open-program cache on timeout. Set/cleared under {@link #lock}.
+     */
+    private String path;
 
     /**
      * Transaction id of the dispatch-owned transaction on the active program,
@@ -348,6 +506,12 @@ public class RpcContext {
      */
     public RpcResponse dispatch(RpcProcedure procedure, JsonObject request) throws Exception {
         lock.lock();
+        // Record the dispatch start so the watchdog can detect a stuck
+        // request that holds this lock indefinitely (the only known cause:
+        // df.save(monitor) / df.checkin(monitor) blocked on an RMI
+        // round-trip to a Ghidra Server whose response stream died after
+        // committing the version).
+        dispatchStartMs = System.currentTimeMillis();
         try {
             // Write-password gate (GHIDRA_RPC_WRITE_PASSWORD on the server). When set,
             // every mutating call must carry a matching "password" field;
@@ -404,6 +568,10 @@ public class RpcContext {
                 }
             }
             active = program;
+            // Track path alongside active so startTransactionBounded can
+            // evict the program from the cache on tx-start timeout. Cleared
+            // by the finally block below.
+            this.path = (program != null) ? path : null;
             // For mutating procedures, dispatch owns the transaction and holds
             // it open across the checkin attempt so a failed push can roll
             // back the in-memory state — the CLI's contract is "non-zero exit
@@ -411,7 +579,11 @@ public class RpcContext {
             // a tx here (they don't need one and runWrite isn't on their path).
             boolean dispatchOwnsTx = procedure.mutates() && program != null;
             if (dispatchOwnsTx) {
-                dispatchTxId = program.startTransaction("RPC " + procedureOf(request));
+                // Bounded startTransaction: if the local DB lock is held by a
+                // hung df.save() / df.checkin() RMI call, the default retry
+                // loop is unbounded (lambda$new$0 sleeps 100ms forever). This
+                // bound restores the "revert local + return rpc failed" policy.
+                dispatchTxId = startTransactionBounded(program, "RPC " + procedureOf(request));
             }
             // Whether the dispatch-owned tx has been finalized (commit/rollback)
             // yet — drives the finally's defensive rollback if a throw bypassed
@@ -435,13 +607,14 @@ public class RpcContext {
                                 + "buffer-lock corruption: " + message(reopenEx));
                         }
                         active = program;
+                        this.path = (program != null) ? path : null;
                         recovered = true;
                         // The old program was released; Ghidra implicitly aborts
                         // its open transactions. Start a fresh dispatch tx on
                         // the new program so runWrite's dispatchOwnedTransaction
                         // check correctly sees the open tx.
                         if (dispatchOwnsTx) {
-                            dispatchTxId = program.startTransaction("RPC " + procedureOf(request));
+                            dispatchTxId = startTransactionBounded(program, "RPC " + procedureOf(request));
                         }
                         try {
                             response = procedure.execute(request, this);
@@ -468,9 +641,10 @@ public class RpcContext {
                             + "buffer-lock corruption: " + message(reopenEx));
                     }
                     active = program;
+                    this.path = (program != null) ? path : null;
                     recovered = true;
                     if (dispatchOwnsTx) {
-                        dispatchTxId = program.startTransaction("RPC " + procedureOf(request));
+                        dispatchTxId = startTransactionBounded(program, "RPC " + procedureOf(request));
                     }
                     response = procedure.execute(request, this);
                 }
@@ -537,8 +711,10 @@ public class RpcContext {
                 }
                 dispatchTxId = -1;
                 active = null;
+                path = null;
             }
         } finally {
+            dispatchStartMs = 0; // clear before unlock so the watchdog sees 0, not a stale start
             lock.unlock();
         }
     }
@@ -1299,13 +1475,100 @@ public class RpcContext {
             body.run();
             return;
         }
-        int txId = program.startTransaction(description);
+        int txId = startTransactionBounded(program, description);
         boolean committed = false;
         try {
             body.run();
             committed = true;
         } finally {
             program.endTransaction(txId, committed);
+        }
+    }
+
+    /**
+     * Bounded wrapper around {@link Program#startTransaction(String)}. The
+     * default implementation retries {@code DomainObjectLockedException}
+     * forever; this wrapper enforces a deadline and evicts the program on
+     * timeout so the next request reopens it from the server.
+     *
+     * <p>Why we can't just override the retry handler: the 3-arg overload
+     * ({@code startTransaction(String, AbortedTransactionListener,
+     * Function<DomainObjectLockedException, Boolean>)}) is package-private
+     * on {@code DomainObjectAdapterDB}. The 1- and 2-arg public overloads
+     * both delegate to it with {@code tryForeverExceptionHandler} (verified
+     * via javap on the upstream class). So the only escape is to wrap with
+     * our own deadline and force a clean state via eviction.
+     *
+     * <p>Why {@code Thread.interrupt} won't work: {@code lambda$new$0}
+     * catches {@code InterruptedException} from its {@code Thread.sleep(100)}
+     * and just returns true (the retry keeps running). The only way to
+     * unstick the loop is to close the underlying {@code DBHandle} — which
+     * surfaces as an {@code IOException} on the next call attempt. We use
+     * a {@link java.util.concurrent.FutureTask} with a deadline so the
+     * caller gets a timeout exception; the timeout handler closes the
+     * program and the stuck thread eventually fails with
+     * {@code IOException("Invalid DBHandle")}.
+     *
+     * <p>Eviction is keyed by the open-program cache key (the normalized
+     * path) — passed in as {@code path} because the dispatch path already
+     * has it. For internal helpers that don't have a path, the caller
+     * should hold the dispatch tx open instead (the dispatch path always
+     * takes {@code runWrite}'s dispatch-tx-open branch above for mutating
+     * procedures).
+     */
+    int startTransactionBounded(Program program, String description) {
+        if (path == null) {
+            // No path available — this is the runWrite path outside dispatch.
+            // Fall back to the unbounded default; the deadline loop needs a
+            // path to evict. Mutating procedures never hit this branch in
+            // production (dispatch owns the tx), so this is for tests /
+            // internal helpers only.
+            return program.startTransaction(description);
+        }
+        java.util.concurrent.FutureTask<Integer> task =
+            new java.util.concurrent.FutureTask<>(() -> program.startTransaction(description));
+        Thread t = new Thread(task, "rpc-tx-" + description);
+        t.setDaemon(true);
+        t.start();
+        try {
+            return task.get(TX_START_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (java.util.concurrent.TimeoutException te) {
+            // Inner loop is wedged. Close the program so the inner loop's
+            // next iteration throws on its closed DBHandle. Mark dirty so
+            // the next request reopens from the server (which has the
+            // committed version) instead of trusting the diverged local
+            // state. The task thread will exit once its DBHandle operations
+            // start failing; we wait briefly to surface a real exception
+            // rather than a generic timeout if it dies fast.
+            try {
+                program.release(RpcContext.this);
+            } catch (Exception ignored) {
+                // best-effort; a failed release is a symptom of the same
+                // corruption we're recovering from
+            }
+            open.remove(normalize(path));
+            markDirty(program);
+            try {
+                return task.get(1, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (Exception inner) {
+                throw new RuntimeException(
+                    "Transaction-start timed out after " + TX_START_TIMEOUT_SECONDS
+                    + "s for " + description + " on " + path + "; program closed and "
+                    + "evicted for clean reopen. Likely cause: a hung df.save() / "
+                    + "df.checkin() RMI call to the Ghidra Server left the local DB "
+                    + "lock held (the Server may have committed but the response "
+                    + "stream died before this client received it).",
+                    inner);
+            }
+        } catch (java.util.concurrent.ExecutionException ee) {
+            // The tx-start itself threw — bubble up the cause.
+            Throwable cause = ee.getCause();
+            if (cause instanceof RuntimeException) throw (RuntimeException) cause;
+            if (cause instanceof Error) throw (Error) cause;
+            throw new RuntimeException("startTransaction failed: " + cause, cause);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Interrupted while waiting for transaction start", ie);
         }
     }
 
