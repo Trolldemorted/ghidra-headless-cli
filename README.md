@@ -9,6 +9,7 @@
 ## Running
 
 - Set `GHIDRA_RPC_WRITE_PASSWORD` if you want only some clients to modify the database.
+- Set `GHIDRA_RPC_ADMIN_PASSWORD` to gate the `purge-versions` procedure (consolidating old revisions on the remote Ghidra Server). See `notes/rpc-server.md` for details.
 
 ## JVM tuning (`ghidra-headless.sh` → `java`)
 
