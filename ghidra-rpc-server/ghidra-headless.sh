@@ -5,7 +5,7 @@
 # RpcServer.java, which serves Ghidra operations over TCP and addresses every
 # program in the repository on demand by path.
 #
-# It does three non-obvious things that plain `analyzeHeadless ghidra://...` gets
+# It does four non-obvious things that plain `analyzeHeadless ghidra://...` gets
 # wrong in a container:
 #   1. Sets the login identity. Ghidra authenticates as the JVM `user.name`, NOT
 #      the value you pass to -connect or an authenticator. In a container that is
@@ -13,6 +13,15 @@
 #      _JAVA_OPTIONS. (Verified: without this you get "Authentication failed".)
 #   2. Feeds the password to -p over stdin (non-interactive).
 #   3. Targets the shared repo with a ghidra://host:port/repo[/folder] URL.
+#   4. BYPASSES upstream `support/analyzeHeadless` + `support/launch.sh` +
+#      `support/launch.properties` entirely. We resolve a Java binary, find
+#      Utility.jar, and exec `java -cp Utility.jar ghidra.Ghidra
+#      ghidra.app.util.headless.AnalyzeHeadless` directly. This project's
+#      contract with `/workdir/ghidra_12.1.2_PUBLIC/support/*` is zero
+#      dependencies — we never read those files. Updating Ghidra is always
+#      safe (the wrapper is upstream-agnostic). See
+#      /root/.claude/plans/glimmering-snuggling-flurry.md and the memory
+#      entry `launch-sh-env-var-migration` for the rationale.
 #
 # ZERO PROGRAMS BY DEFAULT: the RPC server is not bound to any program. It opens
 # each request's target on demand (with its own checkout/check-in), so it must
@@ -73,8 +82,24 @@ GHIDRA_COMMIT_MSG="${GHIDRA_COMMIT_MSG:-}"
 GHIDRA_HOST="${GHIDRA_ADDRESS%%:*}"
 if [ "$GHIDRA_ADDRESS" = "$GHIDRA_HOST" ]; then GHIDRA_PORT=13100; else GHIDRA_PORT="${GHIDRA_ADDRESS##*:}"; fi
 
-HEADLESS="$GHIDRA_INSTALL/support/analyzeHeadless"
-[ -x "$HEADLESS" ] || { echo "analyzeHeadless not found/executable at $HEADLESS" >&2; exit 1; }
+# Resolve a Java binary. Prefer $JAVA_HOME/bin/java (matches what upstream
+# support/launch.sh resolved when it called into LaunchSupport); fall back to
+# PATH via `command -v`. Fail with a clear message if neither is usable.
+# We do NOT route through upstream support/launch.sh, so we also do NOT call
+# LaunchSupport.jar's interactive JDK picker (no TTY expected in container).
+JAVA_BIN="${JAVA_HOME:+${JAVA_HOME}/bin/java}"
+if [ -z "${JAVA_BIN:-}" ] || [ ! -x "${JAVA_BIN}" ]; then
+    JAVA_BIN="$(command -v java || true)"
+fi
+[ -n "${JAVA_BIN:-}" ] && [ -x "${JAVA_BIN}" ] || {
+    echo "no java found; set JAVA_HOME or install java in PATH" >&2; exit 2
+}
+
+# Find Utility.jar. It carries ghidra.Ghidra/GhidraClassLoader, which loads the
+# rest of the framework jars via the bundling convention. Path follows the
+# production layout that upstream support/launch.sh assembled for callers.
+CPATH="${GHIDRA_INSTALL}/Ghidra/Framework/Utility/lib/Utility.jar"
+[ -f "${CPATH}" ] || { echo "cannot find ${CPATH}" >&2; exit 2; }
 
 # Normalise folder so we build ghidra://host:port/repo/folder cleanly.
 folder="/${GHIDRA_FOLDER#/}"; folder="${folder%/}"
@@ -121,7 +146,7 @@ fi
 # -postScript would not), which is exactly what the zero-program server needs.
 args+=( -preScript "$GHIDRA_SCRIPT" )
 
-echo ">> headless: $HEADLESS ${args[*]}" >&2
+echo ">> java: $JAVA_BIN -cp <Utility.jar> ghidra.Ghidra ghidra.app.util.headless.AnalyzeHeadless ${args[*]}" >&2
 echo ">> login user: $GHIDRA_USER  (mode: $mode, programs: ${GHIDRA_PROGRAM:-none})" >&2
 
 # Forward GHIDRA_PASSWORD to the JVM as an environment variable so RpcServer.java
@@ -142,31 +167,99 @@ echo ">> login user: $GHIDRA_USER  (mode: $mode, programs: ${GHIDRA_PROGRAM:-non
 # analyzeHeadless.
 export GHIDRA_PASSWORD
 
-# Disable CDS for the Ghidra JVM. Temurin 21.0.11+10 LTS (which is what
-# `eclipse-temurin:21-jdk-jammy` resolves to on pulls from ~April 2026 onward)
-# ships an AOT cache that, combined with `java.system.class.loader` set by
-# support/launch.properties, races at initPhase3: Class.forName for
-# `ghidra.GhidraClassLoader` returns ClassNotFoundException even though
-# Utility.jar is on -cp with the class present. Same JDK build from Ubuntu
-# (21.0.11+10-1-26.04.2-Ubuntu) handles this fine. The JDK-side fix landed in
-# Temurin 21.0.12+ — until then `-Xshare:off` routes around the bad CDS path.
-# Verified locally: same 21.0.11+10 JDK against the same Utility.jar boots
-# fine without this flag on Ubuntu's openjdk build; re-enabling CDS on
-# Temurin-LTS reproduces the user-reported failure. Pass it via
-# GHIDRA_JAVA_OPTIONS so it lands on the Ghidra JVM through analyzeHeadless's
-# VMARG_LIST (not on the LaunchSupport probes, which don't need it).
-GHIDRA_JAVA_OPTIONS="${GHIDRA_JAVA_OPTIONS:-} -Xshare:off"
-export GHIDRA_JAVA_OPTIONS
+# Single source of truth for JVM args. As of 2026-08-05 the wrapper bypasses
+# upstream `support/launch.sh` / `support/launch.properties` /
+# `support/analyzeHeadless` entirely — see the bypass note at the top of this
+# file. All JVM args live here in `JDK_JAVA_OPTIONS` (preferred) and
+# `_JAVA_OPTIONS` (JVM-init-phase flags only). The JVM launcher reads and
+# tokenizes both env vars itself (not bash), so values containing whitespace
+# survive intact and the launch.sh:238 `${VMARGS_FROM_CALLER}` word-split bug
+# is bypassed at its source (we never invoke that script). Flags below
+# originally came from upstream support/launch.properties + the
+# GHIDRA_JAVA_OPTIONS / GHIDRA_HEADLESS_MAXMEM escaping hatches that
+# analyzeHeadless used to expose.
+#
+# --enable-native-access=ALL-UNNAMED  — JDK 21+ JEP 413/414 module-init flag
+#                                       (required by FlatLaf).
+# -Djavax.xml.accessExternal{DTD,Schema,Stylesheet}=  — empty disables JAXP
+#                                       resolution to external resources
+#                                       (security hardening).
+# -Djdk.tls.client.protocols=TLSv1.2,TLSv1.3  — restrict TLS versions for
+#                                       SSL/Ghidra-Server connections.
+# -Dfile.encoding=UTF8  — Linux/macOS already default UTF-8, but the JVM
+#                          on Windows defaults to platform encoding; pin it
+#                          everywhere for deterministic C-source output.
+# -Dpython.console.encoding=UTF-8  — Jython reads at framework init.
+# -XX:ParallelGCThreads=2 / -XX:CICompilerCount=2  — headless instances
+#                                       scale on shared hosts (one parallel
+#                                       GC thread per core over-subscribes
+#                                       when many run concurrently).
+# -Djava.awt.headless=true  — explicit; JVM defaults true without DISPLAY
+#                              but a foreground DISPLAY would flip it.
+# -Xshare:off  — CDS off. Temurin 21.0.11+10-LTS races with
+#                                       java.system.class.loader at
+#                                       System.initPhase3 (Class.forName
+#                                       for ghidra.GhidraClassLoader throws
+#                                       ClassNotFoundException despite the
+#                                       class being on -cp). Same JDK from
+#                                       Ubuntu ships a clean CDS cache; the
+#                                       fix lands in Temurin 21.0.12+. Until
+#                                       then, route around it.
+JDK_JAVA_OPTIONS="${JDK_JAVA_OPTIONS:-} \
+  --enable-native-access=ALL-UNNAMED \
+  -Djavax.xml.accessExternalDTD= \
+  -Djavax.xml.accessExternalSchema= \
+  -Djavax.xml.accessExternalStylesheet= \
+  -Djdk.tls.client.protocols=TLSv1.2,TLSv1.3 \
+  -Dfile.encoding=UTF8 \
+  -Dpython.console.encoding=UTF-8 \
+  -XX:ParallelGCThreads=2 \
+  -XX:CICompilerCount=2 \
+  -Djava.awt.headless=true \
+  -Xshare:off \
+  ${GHIDRA_HEADLESS_MAXMEM:+-Xmx${GHIDRA_HEADLESS_MAXMEM}}"
+export JDK_JAVA_OPTIONS
 
-# Log the effective GHIDRA_JAVA_OPTIONS the wrapper just exported so debugging
+# En_US is the only locale Ghidra's resource bundles ship with. JVM reads
+# these from `user.country`/`user.language` at initPhase3 — JDK_JAVA_OPTIONS
+# is too late in some resource-bundle paths, so set both. Mirrors what
+# launch.properties used to set.
+_JAVA_OPTIONS="${_JAVA_OPTIONS:-} \
+  -Duser.name=${GHIDRA_USER} \
+  -Duser.country=US \
+  -Duser.language=en \
+  -Duser.variant= \
+  -Djava.system.class.loader=ghidra.GhidraClassLoader"
+export _JAVA_OPTIONS
+
+# Backward-compat: legacy GHIDRA_JAVA_OPTIONS is folded into JDK_JAVA_OPTIONS
+# so any caller that exported it under the old analyzeHeadless path still
+# works. New code should set JDK_JAVA_OPTIONS directly.
+if [ -n "${GHIDRA_JAVA_OPTIONS:-}" ]; then
+    JDK_JAVA_OPTIONS="${JDK_JAVA_OPTIONS} ${GHIDRA_JAVA_OPTIONS}"
+    export JDK_JAVA_OPTIONS
+fi
+
+# Log the effective JDK_JAVA_OPTIONS the wrapper just exported so debugging
 # classloader / VM-init issues (e.g. Temurin-LTS CDS race with
-# java.system.class.loader) doesn't require re-running with bash -x. This
-# env var is what analyzeHeadless forwards into launch.sh's VMARG_LIST, which
-# is what java actually sees on its cmdline — the trace line above (">>
-# headless: ...") only shows our args, not the JVM flags. Pair with the
-# "openjdk version" / "Picked up _JAVA_OPTIONS" lines the JVM echoes under
-# -showversion for the full picture.
-echo ">> java vmargs: ${GHIDRA_JAVA_OPTIONS:-<unset>}" >&2
+# java.system.class.loader) doesn't require re-running with bash -x. The
+# JVM echoes this exact string back under `Picked up JDK_JAVA_OPTIONS:` in
+# its startup banner (paired with the `openjdk version` line under
+# -showversion) — keep this wrapper-side log line AND the JVM-side echo
+# so the full picture is visible without bash -x.
+echo ">> java vmargs (JDK_JAVA_OPTIONS): ${JDK_JAVA_OPTIONS:-<unset>}" >&2
+echo ">> java vmargs (_JAVA_OPTIONS): ${_JAVA_OPTIONS:-<unset>}" >&2
 
-# user.name override is the critical piece; password goes to -p via stdin.
-printf '%s\n' "$GHIDRA_PASSWORD" | _JAVA_OPTIONS="-Duser.name=${GHIDRA_USER}" "$HEADLESS" "${args[@]}"
+# Direct java exec. Bypass upstream support/launch.sh + support/analyzeHeadless
+# entirely — those files are not read by this project (see header comment).
+# Password goes to -p via stdin; -Duser.name in _JAVA_OPTIONS makes Ghidra
+# authenticate as $GHIDRA_USER (not the container's `root`, which fails).
+# -showversion makes the JVM echo `Picked up JDK_JAVA_OPTIONS:` / `Picked up
+# _JAVA_OPTIONS:` plus the openjdk banner, paired with the wrapper-side log
+# lines above for full visibility without `bash -x`.
+printf '%s\n' "$GHIDRA_PASSWORD" | exec "${JAVA_BIN}" \
+    -showversion \
+    -cp "${CPATH}" \
+    ghidra.Ghidra \
+    ghidra.app.util.headless.AnalyzeHeadless \
+    "${args[@]}"
