@@ -98,6 +98,18 @@ pub enum Cmd {
         #[arg(long)]
         address: String,
     },
+    /// Read back a function's stored signature (calling convention, return
+    /// type, parameter list with names and types, stack purge, stack frame
+    /// size). Sourced from the `Function` object directly — does NOT go
+    /// through the decompiler, so it cannot return a stale decompile.
+    /// Use to verify an edit landed (`function update` is reported to
+    /// intermittently partial-apply; see notes/rpc-server.md).
+    Show {
+        #[arg(long = "file", value_name = "FILE")]
+        program: String,
+        #[arg(long)]
+        address: String,
+    },
     /// Rename the function at an address
     ///
     /// `--name` is a BARE LEAF only — it must not contain `::` or `/`.
@@ -429,6 +441,16 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                 .str("address", address)
                 .build(),
         ),
+        Cmd::Show { program, address } => {
+            let response = client.invoke(
+                Req::new("ShowFunction")
+                    .str("file", program)
+                    .str("address", address)
+                    .build(),
+            )?;
+            print_show_function(&response);
+            Ok(())
+        }
         Cmd::SetName {
             program,
             address,
@@ -592,5 +614,65 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                 .opt_str("source", Source::opt(source))
                 .build(),
         ),
+    }
+}
+
+/// Pretty-print a `ShowFunction` response. The server returns one
+/// JSON object per function with these keys:
+///
+///   name (string)
+///   entryPoint (string, e.g. "0x00402490")
+///   callingConvention (string, e.g. "__cdecl" or "default")
+///   returnType (string, type path)
+///   stackPurge (int, bytes the callee pops)
+///   stackFrameSize (int, current frame size)
+///   parameters (array of {name, dataType, ordinal, storage})
+///   hasVarArgs (bool)
+///   noReturn (bool)
+///   repeatable (bool)
+///
+/// Format: header line (name @ entryPoint), then one line per signature
+/// attribute. Parameters printed as a numbered table — ordinal-based, so
+/// callers can match against the request they sent.
+fn print_show_function(response: &Json) {
+    let name = response.get("name").and_then(Json::as_str).unwrap_or("?");
+    let entry = response.get("entryPoint").and_then(Json::as_str).unwrap_or("?");
+    println!("function {} @ {}", name, entry);
+
+    if let Some(cc) = response.get("callingConvention").and_then(Json::as_str) {
+        println!("  calling convention: {}", cc);
+    }
+    if let Some(rt) = response.get("returnType").and_then(Json::as_str) {
+        println!("  return type:        {}", rt);
+    }
+    if let Some(p) = response.get("stackPurge").and_then(Json::as_f64) {
+        println!("  stack purge:        {}", p as i64);
+    }
+    if let Some(s) = response.get("stackFrameSize").and_then(Json::as_f64) {
+        println!("  stack frame size:   {}", s as i64);
+    }
+    if let Some(b) = response.get("hasVarArgs").and_then(Json::as_bool) {
+        if b {
+            println!("  var-args:           yes");
+        }
+    }
+    if let Some(b) = response.get("noReturn").and_then(Json::as_bool) {
+        if b {
+            println!("  no-return:          yes");
+        }
+    }
+    if let Some(params) = response.get("parameters").and_then(Json::as_array) {
+        if params.is_empty() {
+            println!("  parameters:         (none)");
+        } else {
+            println!("  parameters:");
+            for p in params {
+                let ord = p.get("ordinal").and_then(Json::as_f64).unwrap_or(-1.0) as i64;
+                let pname = p.get("name").and_then(Json::as_str).unwrap_or("?");
+                let ptype = p.get("dataType").and_then(Json::as_str).unwrap_or("?");
+                let storage = p.get("storage").and_then(Json::as_str).unwrap_or("?");
+                println!("    [{}] {} : {}  ({})", ord, pname, ptype, storage);
+            }
+        }
     }
 }
