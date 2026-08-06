@@ -604,6 +604,10 @@ public class RpcServer extends GhidraScript {
         // Unified function search (replaces FindFunctionsByName + FindFunctionsByTag,
         // adds address lookup). See FindFunctionHandler.java for dispatch rules.
         register("FindFunction", new procedures.ghidra.program.model.listing.FindFunctionHandler());
+        // Signature readback straight from the Function object — no decompile
+        // path involved. Companion to UpdateFunctionCommand; see
+        // ShowFunctionHandler.java.
+        register("ShowFunction", new procedures.ghidra.program.model.listing.ShowFunctionHandler());
         register("GetXrefs", new procedures.ghidra.program.model.listing.GetXrefsHandler());
         register("GetImports", new procedures.ghidra.program.model.listing.GetImportsHandler());
         register("GetExports", new procedures.ghidra.program.model.listing.GetExportsHandler());

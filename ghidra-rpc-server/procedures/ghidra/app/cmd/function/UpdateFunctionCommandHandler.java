@@ -13,6 +13,7 @@ import procedures.RpcResponse;
 
 import ghidra.app.cmd.function.UpdateFunctionCommand;
 import ghidra.program.model.data.DataType;
+import ghidra.program.model.listing.AutoParameterType;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Function.FunctionUpdateType;
 import ghidra.program.model.listing.Parameter;
@@ -87,8 +88,33 @@ public final class UpdateFunctionCommandHandler implements RpcProcedure {
         }
 
         // Verification pass — see Javadoc above. Compare the live function
-        // object against the request. Disagreement is a non-success
-        // response naming the mismatched field.
+        // object against the request. Disagreement is reported as a
+        // `warning` on the success response (NOT a non-success error),
+        // because the dispatcher treats success as the commit-and-checkin
+        // gate: returning an error here would silently roll back the
+        // edit that `applyCommand` already applied. Verified on 2026-08-06
+        // #391 incident followup — the rollback was the worst part of
+        // the verifier, worse than the original silent-success bug.
+        //
+        // Auto-`this` alignment: on `__thiscall` (and any other convention
+        // whose prototype model has an auto-this slot), the stored
+        // parameter list has one more entry than the request: the auto
+        // `this` at ordinal 0. Naively indexing stored[i] against request[i]
+        // shifts the diff by one and produces a guaranteed false positive
+        // on every member function (verified deterministically on
+        // 0x004B6B70). Detect the slot via
+        // `stored.isAutoParameter() && stored.getAutoParameterType() ==
+        // AutoParameterType.THIS` and offset stored index by 1 when it is
+        // present.
+        int storedOffset = 0;
+        if (f.getParameterCount() > 0) {
+            Parameter first = f.getParameter(0);
+            if (first.isAutoParameter()
+                && first.getAutoParameterType() == AutoParameterType.THIS) {
+                storedOffset = 1;
+            }
+        }
+
         StringBuilder diff = new StringBuilder();
         if (returnType != null) {
             DataType actualRet = f.getReturnType();
@@ -104,12 +130,9 @@ public final class UpdateFunctionCommandHandler implements RpcProcedure {
                 JsonObject reqParam = reqParams.get(i).getAsJsonObject();
                 String requestedName = RpcContext.optStr(reqParam, "name");
                 if (requestedName == null || requestedName.isEmpty()) continue;
-                // Map requested ordinal to stored parameter by ordinal.
-                // The stored Function's ordinals match the request order
-                // for DYNAMIC_STORAGE_* modes (the i-th requested param
-                // becomes the i-th stored param).
-                Parameter stored = (i < f.getParameterCount())
-                    ? f.getParameter(i) : null;
+                int storedIdx = i + storedOffset;
+                Parameter stored = (storedIdx < f.getParameterCount())
+                    ? f.getParameter(storedIdx) : null;
                 if (stored == null) {
                     diff.append("; parameters[").append(i).append("] requested name='")
                         .append(requestedName).append("' stored=(none)");
@@ -123,13 +146,13 @@ public final class UpdateFunctionCommandHandler implements RpcProcedure {
             }
         }
         if (diff.length() > 0) {
-            return RpcResponse.error(
-                "UpdateFunctionCommand reported success but the live function object "
-                + "does not reflect every requested edit" + diff
-                + ". Ghidra's Function.updateFunction intermittently drops parts of "
-                + "the request without raising an exception; re-issuing the same "
-                + "command typically lands them. Verify with `function show --address "
-                + f.getEntryPoint() + "` before trusting the result.");
+            base.warning = "UpdateFunctionCommand reported success at the Ghidra "
+                + "layer but the live function object disagrees with the request "
+                + "on at least one field" + diff
+                + ". The edit IS committed and checked in (this is a warning, "
+                + "not an error). The 2026-08-06 #391 incident noted that "
+                + "re-issuing the same command can land the missing parts; verify "
+                + "with `function show --address " + f.getEntryPoint() + "`.";
         }
         return base;
     }
