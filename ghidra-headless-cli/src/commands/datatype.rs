@@ -107,12 +107,12 @@ pub enum Cmd {
         #[arg(long)]
         with_deps: bool,
     },
-    /// Create a struct / union / enum / typedef
+    /// Create a struct / union / enum / typedef / funcdef
     Create {
         /// Target file project path
         #[arg(long = "file", value_name = "FILE")]
         program: String,
-        /// One of: struct, union, enum, typedef [default: required unless --definition is given]
+        /// One of: struct, union, enum, typedef, funcdef [default: required unless --definition is given]
         #[arg(long)]
         kind: Option<String>,
         /// New type name [default: required unless --definition OR --path is given;
@@ -165,8 +165,30 @@ pub enum Cmd {
         /// Enum byte width [default: 4]
         #[arg(long, default_value_t = 4i64)]
         enum_size: i64,
+        /// FunctionDefinition: return type (C-syntax like "int" or a full
+        /// path like "/Cat/Type"). Required when --kind=funcdef.
+        #[arg(long, value_name = "TYPE")]
+        return_type: Option<String>,
+        /// FunctionDefinition: parameter list as a JSON array of
+        /// {"name": "...", "type": "..."} objects. The leading entry IS
+        /// the implicit ECX `this` on `__thiscall` conventions — pass it
+        /// explicitly as `{"name":"widget","type":"CScreen *"}` rather
+        /// than expecting the server to inject it. Empty array is valid
+        /// for void-arg funcs; omit for a default-empty list.
+        #[arg(long, value_name = "JSON")]
+        parameters: Option<String>,
+        /// FunctionDefinition: calling convention name (e.g. "__thiscall",
+        /// "__stdcall", "default", "unknown").
+        #[arg(long, value_name = "CONVENTION")]
+        calling_convention: Option<String>,
+        /// FunctionDefinition: mark var-args.
+        #[arg(long)]
+        var_args: bool,
+        /// FunctionDefinition: mark no-return.
+        #[arg(long)]
+        no_return: bool,
     },
-    /// Create or REPLACE a struct / union / enum / typedef (silently overwrites
+    /// Create or REPLACE a struct / union / enum / typedef / funcdef (silently overwrites
     /// on name collision; references preserved). Same input shape as `create`.
     Replace {
         /// Target file project path
@@ -179,7 +201,7 @@ pub enum Cmd {
         /// the snippet's embedded name must match the path's last segment.
         #[arg(long, value_name = "PATH")]
         path: Option<String>,
-        /// One of: struct, union, enum, typedef [default: required unless --definition is given]
+        /// One of: struct, union, enum, typedef, funcdef [default: required unless --definition is given]
         #[arg(long)]
         kind: Option<String>,
         /// New type name [default: required unless --definition OR --path is given;
@@ -232,6 +254,28 @@ pub enum Cmd {
         /// Enum byte width [default: 4]
         #[arg(long, default_value_t = 4i64)]
         enum_size: i64,
+        /// FunctionDefinition: return type (C-syntax like "int" or a full
+        /// path like "/Cat/Type"). Required when --kind=funcdef.
+        #[arg(long, value_name = "TYPE")]
+        return_type: Option<String>,
+        /// FunctionDefinition: parameter list as a JSON array of
+        /// {"name": "...", "type": "..."} objects. The leading entry IS
+        /// the implicit ECX `this` on `__thiscall` conventions — pass it
+        /// explicitly as `{"name":"widget","type":"CScreen *"}` rather
+        /// than expecting the server to inject it. Empty array is valid
+        /// for void-arg funcs; omit for a default-empty list.
+        #[arg(long, value_name = "JSON")]
+        parameters: Option<String>,
+        /// FunctionDefinition: calling convention name (e.g. "__thiscall",
+        /// "__stdcall", "default", "unknown").
+        #[arg(long, value_name = "CONVENTION")]
+        calling_convention: Option<String>,
+        /// FunctionDefinition: mark var-args.
+        #[arg(long)]
+        var_args: bool,
+        /// FunctionDefinition: mark no-return.
+        #[arg(long)]
+        no_return: bool,
     },
     /// Edit an existing data type (batched: rename/move/description/addFields/replaceFields/addEntries,
     /// and — for FunctionDefinition targets — returnType/parameters/callingConvention/varArgs/noReturn)
@@ -495,6 +539,11 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             entries,
             base,
             enum_size,
+            return_type,
+            parameters,
+            calling_convention,
+            var_args,
+            no_return,
         } => run_create_or_replace(
             "CreateDataType",
             program,
@@ -506,6 +555,11 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             entries,
             base,
             enum_size,
+            return_type,
+            parameters,
+            calling_convention,
+            var_args,
+            no_return,
             client,
         ),
         Cmd::Replace {
@@ -519,9 +573,14 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             entries,
             base,
             enum_size,
+            return_type,
+            parameters,
+            calling_convention,
+            var_args,
+            no_return,
         } => run_replace(
             program, path, kind, name, category, definition, fields, entries, base, enum_size,
-            client,
+            return_type, parameters, calling_convention, var_args, no_return, client,
         ),
         Cmd::Edit {
             program,
@@ -759,6 +818,11 @@ fn run_create_or_replace(
     entries: Option<String>,
     base: Option<String>,
     enum_size: i64,
+    return_type: Option<String>,
+    parameters: Option<String>,
+    calling_convention: Option<String>,
+    var_args: bool,
+    no_return: bool,
     client: &Client,
 ) -> Result<(), ()> {
     // --definition wins over the explicit JSON arrays: when both are
@@ -789,6 +853,7 @@ fn run_create_or_replace(
         let e = parse_opt_json("entries", entries)?;
         (Some(k), Some(n), f, e, base)
     };
+    let parameters_json = parse_opt_json("parameters", parameters)?;
     let response = client.invoke(
         Req::new(procedure)
             .str("file", program)
@@ -800,6 +865,11 @@ fn run_create_or_replace(
             .opt_json("entries", entries_json)
             .opt_str("base", base)
             .int("enumSize", enum_size)
+            .opt_str("returnType", return_type)
+            .opt_json("parameters", parameters_json)
+            .opt_str("callingConvention", calling_convention)
+            .bool("varArgs", var_args)
+            .bool("noReturn", no_return)
             .build(),
     )?;
     print_show(&response, false)?;
@@ -824,6 +894,11 @@ fn run_replace(
     entries: Option<String>,
     base: Option<String>,
     enum_size: i64,
+    return_type: Option<String>,
+    parameters: Option<String>,
+    calling_convention: Option<String>,
+    var_args: bool,
+    no_return: bool,
     client: &Client,
 ) -> Result<(), ()> {
     // --definition wins over the explicit JSON arrays: when given, the
@@ -865,6 +940,7 @@ fn run_replace(
         let e = parse_opt_json("entries", entries)?;
         (Some(k), Some(n), f, e, base)
     };
+    let parameters_json = parse_opt_json("parameters", parameters)?;
     let response = client.invoke(
         Req::new("ReplaceDataType")
             .str("file", program)
@@ -877,6 +953,11 @@ fn run_replace(
             .opt_json("entries", entries_json)
             .opt_str("base", base)
             .int("enumSize", enum_size)
+            .opt_str("returnType", return_type)
+            .opt_json("parameters", parameters_json)
+            .opt_str("callingConvention", calling_convention)
+            .bool("varArgs", var_args)
+            .bool("noReturn", no_return)
             .build(),
     )?;
     print_show(&response, false)?;

@@ -1,5 +1,9 @@
 package procedures.ghidra.program.model.data;
 
+import java.util.ArrayList;
+import java.util.List;
+
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 import ghidra.program.model.data.Category;
@@ -8,6 +12,9 @@ import ghidra.program.model.data.DataType;
 import ghidra.program.model.data.DataTypeConflictHandler;
 import ghidra.program.model.data.DataTypeManager;
 import ghidra.program.model.data.EnumDataType;
+import ghidra.program.model.data.FunctionDefinitionDataType;
+import ghidra.program.model.data.ParameterDefinition;
+import ghidra.program.model.data.ParameterDefinitionImpl;
 import ghidra.program.model.data.StructureDataType;
 import ghidra.program.model.data.TypedefDataType;
 import ghidra.program.model.data.UnionDataType;
@@ -160,9 +167,12 @@ public final class ReplaceDataTypeHandler implements RpcProcedure {
                     case "typedef":
                         dt = createTypedef(req, name, cp, dtm, ctx);
                         break;
+                    case "funcdef":
+                        dt = createFuncdef(req, name, cp, dtm, ctx);
+                        break;
                     default:
                         throw new IllegalArgumentException("Unknown kind '" + kind
-                            + "' (use struct|union|enum|typedef).");
+                            + "' (use struct|union|enum|typedef|funcdef).");
                 }
                 result[0] = category.addDataType(dt, DataTypeConflictHandler.REPLACE_HANDLER);
             } catch (Throwable t) {
@@ -215,5 +225,52 @@ public final class ReplaceDataTypeHandler implements RpcProcedure {
             DataTypeManager dtm, RpcContext ctx) throws Exception {
         return new TypedefDataType(cp, name,
             ctx.requireDataType(RpcContext.reqStr(req, "base")), dtm);
+    }
+
+    /**
+     * Build a {@link FunctionDefinitionDataType} for replace. Identical to
+     * {@code CreateDataTypeHandler.createFuncdef}; documented there. Replace
+     * uses {@code REPLACE_HANDLER} so a name clash overwrites in place and
+     * references (typed function pointers in vtable slots, applied data,
+     * other types that resolve through this name) stay bound to the new
+     * def rather than orphaning to a fresh identity.
+     */
+    private DataType createFuncdef(JsonObject req, String name, CategoryPath cp,
+            DataTypeManager dtm, RpcContext ctx) throws Exception {
+        FunctionDefinitionDataType fd = new FunctionDefinitionDataType(cp, name, dtm);
+        fd.setReturnType(ctx.requireDataType(RpcContext.reqStr(req, "returnType")));
+        if (req.has("parameters") && !req.get("parameters").isJsonNull()) {
+            JsonElement pel = req.get("parameters");
+            if (!pel.isJsonArray()) {
+                throw new IllegalArgumentException(
+                    "'parameters' must be a JSON array of {name, type} objects.");
+            }
+            List<ParameterDefinition> params = new ArrayList<>();
+            for (JsonElement element : pel.getAsJsonArray()) {
+                if (!element.isJsonObject()) {
+                    throw new IllegalArgumentException(
+                        "Each parameter must be a {name, type} object.");
+                }
+                JsonObject p = element.getAsJsonObject();
+                String pname = (p.has("name") && !p.get("name").isJsonNull())
+                    ? p.get("name").getAsString()
+                    : "";
+                String ptype = RpcContext.reqStr(p, "type");
+                params.add(new ParameterDefinitionImpl(
+                    pname, ctx.requireDataType(ptype), null));
+            }
+            fd.setArguments(params.toArray(new ParameterDefinition[0]));
+        }
+        if (req.has("callingConvention")
+                && !req.get("callingConvention").isJsonNull()) {
+            fd.setCallingConvention(RpcContext.reqStr(req, "callingConvention"));
+        }
+        if (req.has("varArgs") && !req.get("varArgs").isJsonNull()) {
+            fd.setVarArgs(req.get("varArgs").getAsBoolean());
+        }
+        if (req.has("noReturn") && !req.get("noReturn").isJsonNull()) {
+            fd.setNoReturn(req.get("noReturn").getAsBoolean());
+        }
+        return fd;
     }
 }

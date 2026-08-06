@@ -1,5 +1,9 @@
 package procedures.ghidra.program.model.data;
 
+import java.util.ArrayList;
+import java.util.List;
+
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 import ghidra.program.model.data.Category;
@@ -8,6 +12,9 @@ import ghidra.program.model.data.DataType;
 import ghidra.program.model.data.DataTypeConflictHandler;
 import ghidra.program.model.data.DataTypeManager;
 import ghidra.program.model.data.EnumDataType;
+import ghidra.program.model.data.FunctionDefinitionDataType;
+import ghidra.program.model.data.ParameterDefinition;
+import ghidra.program.model.data.ParameterDefinitionImpl;
 import ghidra.program.model.data.StructureDataType;
 import ghidra.program.model.data.TypedefDataType;
 import ghidra.program.model.data.UnionDataType;
@@ -112,9 +119,12 @@ public final class CreateDataTypeHandler implements RpcProcedure {
                     case "typedef":
                         dt = createTypedef(req, name, cp, dtm, ctx);
                         break;
+                    case "funcdef":
+                        dt = createFuncdef(req, name, cp, dtm, ctx);
+                        break;
                     default:
                         throw new IllegalArgumentException("Unknown kind '" + kind
-                            + "' (use struct|union|enum|typedef).");
+                            + "' (use struct|union|enum|typedef|funcdef).");
                 }
                 result[0] = category.addDataType(dt, DataTypeConflictHandler.DEFAULT_HANDLER);
             } catch (Throwable t) {
@@ -167,6 +177,75 @@ public final class CreateDataTypeHandler implements RpcProcedure {
             DataTypeManager dtm, RpcContext ctx) throws Exception {
         return new TypedefDataType(cp, name,
             ctx.requireDataType(RpcContext.reqStr(req, "base")), dtm);
+    }
+
+    /**
+     * Build a {@link FunctionDefinitionDataType} from the explicit-JSON
+     * args. Mirrors {@code EditDataTypeHandler.applyFunctionDefinitionEdits}
+     * (which already handles the edit-in-place case) so the wire shape is
+     * identical between create and edit: callers can copy a payload between
+     * the two procedures without reshaping.
+     *
+     * <p>Behavior on the {@code __thiscall} leading {@code this}: the user
+     * passes it as the first parameter in the {@code parameters} array —
+     * this helper does NOT auto-inject it (compare with
+     * {@code CreateFunctionDefinitionFromSourceCmd}, which does inject the
+     * auto-this from the source function's parameter list). Reason: a
+     * from-scratch funcdef has no source function to read from; the
+     * convention alone doesn't determine whether the user wants the
+     * implicit ECX slot. The convention is preserved via
+     * {@code setCallingConvention} (which accepts {@code "__thiscall"} and
+     * every other name the program's {@code CompilerSpec} recognizes), and
+     * the leading parameter, if any, is whatever the caller put there.
+     *
+     * <p>Fail-loud on unknown parameter types: {@code requireDataType} throws
+     * {@code IllegalArgumentException} when the type does not exist; the
+     * enclosing {@code runWrite} block propagates the throw, the
+     * transaction rolls back, and the caller sees the Ghidra-side message.
+     * No silent {@code undefined4} substitution.
+     */
+    private DataType createFuncdef(JsonObject req, String name, CategoryPath cp,
+            DataTypeManager dtm, RpcContext ctx) throws Exception {
+        FunctionDefinitionDataType fd = new FunctionDefinitionDataType(cp, name, dtm);
+        // returnType: required (server side; CLI forwards whatever edit accepts).
+        // Omitting returnType would leave the def as void-returning (Ghidra
+        // default), which is rarely what the caller wants. Make it required
+        // here for the same reason "fields" is required for struct: the
+        // funcdef is useless without a body.
+        fd.setReturnType(ctx.requireDataType(RpcContext.reqStr(req, "returnType")));
+        if (req.has("parameters") && !req.get("parameters").isJsonNull()) {
+            JsonElement pel = req.get("parameters");
+            if (!pel.isJsonArray()) {
+                throw new IllegalArgumentException(
+                    "'parameters' must be a JSON array of {name, type} objects.");
+            }
+            List<ParameterDefinition> params = new ArrayList<>();
+            for (JsonElement element : pel.getAsJsonArray()) {
+                if (!element.isJsonObject()) {
+                    throw new IllegalArgumentException(
+                        "Each parameter must be a {name, type} object.");
+                }
+                JsonObject p = element.getAsJsonObject();
+                String pname = (p.has("name") && !p.get("name").isJsonNull())
+                    ? p.get("name").getAsString()
+                    : "";
+                String ptype = RpcContext.reqStr(p, "type");
+                params.add(new ParameterDefinitionImpl(
+                    pname, ctx.requireDataType(ptype), null));
+            }
+            fd.setArguments(params.toArray(new ParameterDefinition[0]));
+        }
+        if (req.has("callingConvention")
+                && !req.get("callingConvention").isJsonNull()) {
+            fd.setCallingConvention(RpcContext.reqStr(req, "callingConvention"));
+        }
+        if (req.has("varArgs") && !req.get("varArgs").isJsonNull()) {
+            fd.setVarArgs(req.get("varArgs").getAsBoolean());
+        }
+        if (req.has("noReturn") && !req.get("noReturn").isJsonNull()) {
+            fd.setNoReturn(req.get("noReturn").getAsBoolean());
+        }
+        return fd;
     }
 
     /**
