@@ -240,11 +240,11 @@ public class RpcServer extends GhidraScript {
         // a 24h expiry (see svrREADME "Allows the reset password expiration to be
         // set to a specified number of days"); the account goes stale if not used
         // for that long. Re-setting the same value resets the clock without
-        // changing the credential. The launcher passes GHIDRA_PASSWORD into the
-        // JVM as -Dghidra.rpc.password via GHIDRA_JAVA_OPTIONS; we read it here
-        // and call RepositoryServerAdapter.setPassword(...) on the live server
-        // connection. Opt out with GHIDRA_REFRESH_PW=0 (the launcher then doesn't
-        // set the property and this block is a no-op). Best-effort: a failure
+        // changing the credential. The launcher exports GHIDRA_PASSWORD into the
+        // JVM's environment; we read it here and call
+        // RepositoryServerAdapter.setPassword(...) on the live server connection.
+        // Opt out with GHIDRA_REFRESH_PW=0 (the launcher then doesn't export the
+        // env var and this block is a no-op). Best-effort: a failure
         // here logs a warning but never blocks the RPC server from starting —
         // the existing password may still be valid, and surfacing the error at
         // startup would mask the real reason auth will fail later.
@@ -333,10 +333,12 @@ public class RpcServer extends GhidraScript {
      * <p>Env var over JVM system property: previously this read
      * {@code -Dghidra.rpc.password} via {@code GHIDRA_JAVA_OPTIONS}. That path
      * was unsafe for passwords containing whitespace (the wrapper's bash
-     * word-split leaks the post-whitespace token into java's cmdline as a
-     * separate unrecognized arg, which corrupts Ghidra's classloader init —
-     * see {@code feedback_password_whitespace_jvm_arg.md}). Env vars are
-     * opaque to the JVM-arg parser and survive arbitrary content.
+     * word-split leaked the post-whitespace token into java's cmdline as a
+     * separate unrecognized arg, which corrupted Ghidra's classloader init —
+     * see {@code feedback_password_whitespace_jvm_arg.md}). The
+     * 2026-08-05 wrapper-only bypass (see {@code launch_sh_env_var_migration.md})
+     * retired {@code GHIDRA_JAVA_OPTIONS} entirely; env vars are opaque to the
+     * JVM-arg parser and survive arbitrary content.
      *
      * <p>Hash format: the server-side {@code UserManager.setPassword} validates
      * the incoming char[] as a SALTED-SHA-256 hash (4-char alphanumeric salt

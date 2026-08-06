@@ -151,20 +151,10 @@ echo ">> login user: $GHIDRA_USER  (mode: $mode, programs: ${GHIDRA_PROGRAM:-non
 
 # Forward GHIDRA_PASSWORD to the JVM as an environment variable so RpcServer.java
 # can call RepositoryServerAdapter.setPassword(...) on connect and push out the
-# server-side password expiry (default 24h on fresh accounts; setting the password
-# to itself resets the clock). Previously this was injected as
-# `-Dghidra.rpc.password=${GHIDRA_PASSWORD}` via GHIDRA_JAVA_OPTIONS, but that
-# path is unsafe for passwords containing whitespace: bash word-splits
-# launch.sh's `set -o noglob; ... ${VMARGS_FROM_CALLER}` exec line on whitespace
-# (launch.sh:238), leaking the post-whitespace token into java's cmdline as a
-# separate unrecognized arg. Java's launcher treats that as a main-class
-# candidate, which corrupts the classloader init for ghidra.GhidraClassLoader
-# and reproduces the same ClassNotFoundException as the Temurin-LTS CDS bug.
-# Env vars are opaque to the JVM-arg parser and survive arbitrary content, so
-# the structural fix is to read the password via System.getenv("GHIDRA_PASSWORD")
-# in RpcServer.java (see feedback_password_whitespace_jvm_arg.md). The JVM
-# inherits this env var because we export it below before exec'ing
-# analyzeHeadless.
+# server-side password expiry. The wrapper reads it via System.getenv(...) in
+# Java — env vars are opaque to the JVM-arg parser and survive arbitrary
+# content, including whitespace (which broke the old `-Dghidra.rpc.password`
+# path through launch.sh's word-split). See feedback_password_whitespace_jvm_arg.md.
 export GHIDRA_PASSWORD
 
 # Single source of truth for JVM args. As of 2026-08-05 the wrapper bypasses
@@ -175,9 +165,7 @@ export GHIDRA_PASSWORD
 # tokenizes both env vars itself (not bash), so values containing whitespace
 # survive intact and the launch.sh:238 `${VMARGS_FROM_CALLER}` word-split bug
 # is bypassed at its source (we never invoke that script). Flags below
-# originally came from upstream support/launch.properties + the
-# GHIDRA_JAVA_OPTIONS / GHIDRA_HEADLESS_MAXMEM escaping hatches that
-# analyzeHeadless used to expose.
+# originally came from upstream support/launch.properties.
 #
 # --enable-native-access=ALL-UNNAMED  — JDK 21+ JEP 413/414 module-init flag
 #                                       (required by FlatLaf).
@@ -216,8 +204,7 @@ JDK_JAVA_OPTIONS="${JDK_JAVA_OPTIONS:-} \
   -XX:ParallelGCThreads=2 \
   -XX:CICompilerCount=2 \
   -Djava.awt.headless=true \
-  -Xshare:off \
-  ${GHIDRA_HEADLESS_MAXMEM:+-Xmx${GHIDRA_HEADLESS_MAXMEM}}"
+  -Xshare:off"
 export JDK_JAVA_OPTIONS
 
 # En_US is the only locale Ghidra's resource bundles ship with. JVM reads
@@ -231,14 +218,6 @@ _JAVA_OPTIONS="${_JAVA_OPTIONS:-} \
   -Duser.variant= \
   -Djava.system.class.loader=ghidra.GhidraClassLoader"
 export _JAVA_OPTIONS
-
-# Backward-compat: legacy GHIDRA_JAVA_OPTIONS is folded into JDK_JAVA_OPTIONS
-# so any caller that exported it under the old analyzeHeadless path still
-# works. New code should set JDK_JAVA_OPTIONS directly.
-if [ -n "${GHIDRA_JAVA_OPTIONS:-}" ]; then
-    JDK_JAVA_OPTIONS="${JDK_JAVA_OPTIONS} ${GHIDRA_JAVA_OPTIONS}"
-    export JDK_JAVA_OPTIONS
-fi
 
 # Log the effective JDK_JAVA_OPTIONS the wrapper just exported so debugging
 # classloader / VM-init issues (e.g. Temurin-LTS CDS race with
