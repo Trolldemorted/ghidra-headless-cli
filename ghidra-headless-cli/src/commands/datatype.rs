@@ -391,7 +391,7 @@ pub enum Cmd {
     /// Retype a single struct/union field in place. Preserves the field's
     /// name, comment, and all other fields. Default is strict-equal length
     /// (new type length must equal existing component length); pass
-    /// --force true to allow grow/shrink (may shift trailing components).
+    /// --force to allow grow/shrink (may shift trailing components).
     /// Not supported on enums, typedefs, or built-ins.
     SetFieldType {
         /// Target file project path

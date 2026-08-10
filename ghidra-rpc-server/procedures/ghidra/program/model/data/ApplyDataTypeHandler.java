@@ -167,7 +167,7 @@ public final class ApplyDataTypeHandler implements RpcProcedure {
                             + r.start + ":" + consumedEnd
                             + "` (the struct's internal fields overlap with "
                             + "previously-typed bytes; apply-type will not "
-                            + "silently clobber them). Or pass --force true "
+                            + "silently clobber them). Or pass --force "
                             + "to have apply-type clear the conflicting bytes "
                             + "itself (raw bytes are preserved; only their "
                             + "listing entries are erased). Then re-run apply-type.";

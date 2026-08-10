@@ -176,7 +176,7 @@ pub struct ReadBytesArgs {
 /// region with copies of the type, pass multiple `--address-set` entries
 /// stepped by the type's length.
 ///
-/// `--force true` opts in to clearing bytes inside the type's consumed
+/// `--force` opts in to clearing bytes inside the type's consumed
 /// range (raw bytes preserved, listing entries erased) and retrying when
 /// the new type would collide with already-defined code units. Without
 /// it, a collision returns a clear error pointing at `memory undefine`.
