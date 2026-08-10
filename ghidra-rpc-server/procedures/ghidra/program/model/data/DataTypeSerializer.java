@@ -13,6 +13,7 @@ import ghidra.program.model.data.DataTypeComponent;
 import ghidra.program.model.data.DataTypeManager;
 import ghidra.program.model.data.Enum;
 import ghidra.program.model.data.FunctionDefinition;
+import ghidra.program.model.data.ParameterDefinition;
 import ghidra.program.model.data.Pointer;
 import ghidra.program.model.data.SourceArchive;
 import ghidra.program.model.data.Structure;
@@ -79,7 +80,35 @@ final class DataTypeSerializer {
             o.addProperty("count", a.getNumElements());
         } else if (dt instanceof FunctionDefinition) {
             FunctionDefinition fd = (FunctionDefinition) dt;
+            // `signature` is the full prototype string Ghidra prints — kept
+            // for callers that already scrape it. The structured fields
+            // below additionally expose the parts that QA needs to read
+            // back individually (notably `callingConvention`, which used
+            // to be invisible on the wire — see #407, #373, #430).
+            // Without callingConvention as a discrete field, a funcdef
+            // that lost its `__thiscall` (or any other convention) on a
+            // partial edit would silently look "fixed" because the typed
+            // leading `this` is still in `parameters[]` — the decompiler
+            // then treats `this` as a stack param and reads saved ESI/EDI
+            // at the slot call, surfacing as `unaff_ESI` / `unaff_retaddr`
+            // in every caller. Surfacing the convention as its own field
+            // makes this defect class detectable.
             o.addProperty("signature", fd.getPrototypeString());
+            o.addProperty("callingConvention", fd.getCallingConventionName());
+            DataType ret = fd.getReturnType();
+            o.addProperty("returnType", ret == null ? "void" : ret.getDisplayName());
+            JsonArray params = new JsonArray();
+            ParameterDefinition[] pds = fd.getArguments();
+            for (ParameterDefinition pd : pds) {
+                JsonObject p = new JsonObject();
+                p.addProperty("name", pd.getName());
+                DataType pdt = pd.getDataType();
+                p.addProperty("type", pdt == null ? "undefined" : pdt.getDisplayName());
+                params.add(p);
+            }
+            o.add("parameters", params);
+            o.addProperty("varArgs", fd.hasVarArgs());
+            o.addProperty("noReturn", fd.hasNoReturn());
         } else if (dt instanceof BitFieldDataType) {
             BitFieldDataType bf = (BitFieldDataType) dt;
             o.addProperty("base", bf.getDisplayName()); // bitfield naming includes size

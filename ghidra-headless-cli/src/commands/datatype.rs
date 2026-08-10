@@ -1451,28 +1451,61 @@ fn print_show_full(
     // scripts pipe to `head -1` or awk on the path.
     println!("{}\t{}\t{}", kind, path, size);
 
-    // C output: require the server-generated `c` field (Ghidra's
+    // C output: prefer the server-generated `c` field (Ghidra's
     // DataTypeWriter). If it is missing or empty, fail loudly with
     // a non-zero exit — do NOT silently fall back to the JSON
     // detail, because that would re-route output without the user
     // knowing it. The user can rerun with --json to inspect the
     // structured view.
-    match response.get("c").and_then(Json::as_str) {
-        Some(s) if !s.is_empty() => {
+    //
+    // FunctionDefinition is the exception: the C writer's filter
+    // path for funcdefs often produces empty output (the type has
+    // no body to wrap), and the user-visible ask is "show me the
+    // signature so I can verify the calling convention is intact".
+    // See #407/#373/#430 — the target assertion is that a vtable-
+    // slot funcdef carries BOTH a typed leading `this` AND
+    // `__thiscall`; a funcdef that lost the convention is the
+    // exact defect class that the QA pass needs to read back. The
+    // structured `signature` field (added 2026-08-10) carries the
+    // full prototype including the convention, so we fall back to
+    // it instead of erroring. `--json` still works for callers
+    // that want the structured view.
+    let c = response.get("c").and_then(Json::as_str);
+    if let Some(s) = c {
+        if !s.is_empty() {
             for line in s.lines() {
                 println!("{}", line);
             }
-            Ok(())
+            return Ok(());
         }
-        _ => {
-            common::log_arg_err(format!(
-                "server returned no C declaration for '{}' (path={}, kind={}). \
-                 The C writer did not produce output for this type. \
-                 Retry with --json to see the structured view.",
-                name, path, kind
-            ));
-            Err(())
+    }
+    if kind == "functiondef" {
+        let signature = response
+            .get("detail")
+            .and_then(|d| d.get("signature"))
+            .and_then(Json::as_str);
+        match signature {
+            Some(s) if !s.is_empty() => {
+                println!("signature: {}", s);
+                Ok(())
+            }
+            _ => {
+                common::log_arg_err(format!(
+                    "server returned no signature for funcdef '{}' (path={}). \
+                     Retry with --json to inspect the structured view.",
+                    name, path
+                ));
+                Err(())
+            }
         }
+    } else {
+        common::log_arg_err(format!(
+            "server returned no C declaration for '{}' (path={}, kind={}). \
+             The C writer did not produce output for this type. \
+             Retry with --json to see the structured view.",
+            name, path, kind
+        ));
+        Err(())
     }
 }
 
