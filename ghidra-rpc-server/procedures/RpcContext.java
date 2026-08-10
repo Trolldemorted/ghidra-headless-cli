@@ -16,6 +16,8 @@ import ghidra.app.util.parser.FunctionSignatureParser;
 import ghidra.framework.cmd.BackgroundCommand;
 import ghidra.framework.cmd.Command;
 import ghidra.framework.data.DefaultCheckinHandler;
+import ghidra.framework.client.RepositoryAdapter;
+import ghidra.framework.client.RemoteAdapterListener;
 import ghidra.framework.model.DomainFile;
 import ghidra.framework.model.DomainFolder;
 import ghidra.framework.model.Project;
@@ -171,6 +173,41 @@ public class RpcContext {
 
     /** Consecutive connection-lost checkin failures since the last successful checkin. */
     private int connectionLostFailures = 0;
+
+    /**
+     * Wall-clock time (ms) at which the most recent Ghidra Server disconnect
+     * was observed, whether via the {@link RepositoryAdapter}'s listener or
+     * via the {@link #noteConnectionLost} catch site. {@code 0} when the
+     * project has never been disconnected. Read on every {@link #resolveFile}
+     * call; the resolver retries its lookup once after a forced reconnect
+     * when this timestamp is recent (within {@link #DISCONNECT_RETRY_WINDOW_MS}).
+     *
+     * <p>Why the resolver retries on a recent disconnect: when the Ghidra
+     * Server RMI socket dies, {@code ProjectData.getFile(path)} returns
+     * {@code null} because the in-memory project tree is briefly inaccessible
+     * (the listener fires, the cached folder tree is invalidated, the next
+     * lookup returns null). Without a retry, the dispatch sees "No file at
+     * '/<path>'" on every call until the orchestrator-restart cycle completes
+     * — same shape as the silent-half-state that {@link #noteConnectionLost}
+     * exists to escape for the mutating path. The fix is local: force a
+     * reconnect via {@link RepositoryAdapter#connect} and retry the lookup.
+     * If the Server is genuinely down, the retry also fails and the caller
+     * gets the same error; if the Server recovered, the retry succeeds and
+     * no request is lost. Volatile suffices: the worst case is a stale read
+     * on the retry decision, which either skips a retry (harmless) or
+     * triggers one when it was no longer needed (also harmless).
+     */
+    private volatile long lastDisconnectMs = 0;
+
+    /**
+     * Window after a disconnect during which {@link #resolveFile} retries.
+     * Long enough to ride out the typical Ghidra Server restart (the
+     * disconnect listener fires, the Server bounces, the RMI layer
+     * re-establishes — observed end-to-end in under 10s on the local
+     * dev box). Short enough that a genuinely-down server doesn't make
+     * every request sit on a retry.
+     */
+    private static final long DISCONNECT_RETRY_WINDOW_MS = 30_000;
 
     /**
      * Stuck-request watchdog: if a single dispatch holds the dispatch lock
@@ -418,6 +455,38 @@ public class RpcContext {
     public RpcContext(Project project, TaskMonitor monitor) {
         this.project = project;
         this.monitor = monitor;
+        // Auto-reconnect support (added 2026-08-10): wire a
+        // RemoteAdapterListener on the project's repository so we know the
+        // wall-clock time of the most recent Ghidra Server disconnect. The
+        // resolver checks this timestamp on a miss and forces a reconnect
+        // + retry once. Local (non-shared) projects have no repository —
+        // getRepository() returns null in that case and the listener is
+        // skipped. The listener is also a no-op when the project is
+        // already-disconnected at startup (the timestamp just stays at 0).
+        try {
+            RepositoryAdapter repo = (project == null) ? null : project.getRepository();
+            if (repo != null) {
+                repo.addListener(new RemoteAdapterListener() {
+                    @Override
+                    public void connectionStateChanged(Object state) {
+                        // Ghidra's listener fires on both transitions; we
+                        // only care about the disconnected event. The state
+                        // object is internal — checking isConnected() here
+                        // would race the listener thread; instead we trust
+                        // the listener to fire for the disconnect side
+                        // and let the reconnect path drive isConnected on
+                        // retry. The "Disconnected from repository" log
+                        // we observe is from this very listener.
+                        lastDisconnectMs = System.currentTimeMillis();
+                    }
+                });
+            }
+        } catch (Exception ignored) {
+            // Listener registration is best-effort; if it fails (e.g. a
+            // Ghidra version that doesn't expose addListener), the
+            // resolver still retries on noteConnectionLost-driven
+            // timestamps, which is the legacy path.
+        }
     }
 
     /**
@@ -1046,6 +1115,16 @@ public class RpcContext {
      * with up to 5 leaf-name matches when the exact lookup misses. Used
      * to enrich the surrounding caller's error message. Pass null in
      * normal use.
+     *
+     * <p>Auto-reconnect on a recent disconnect: a miss within
+     * {@link #DISCONNECT_RETRY_WINDOW_MS} of a recorded disconnect triggers
+     * one forced {@link RepositoryAdapter#connect()} attempt + a retry.
+     * The Ghidra Server typically re-establishes within seconds of a
+     * transient outage; without this re-try, every request during the
+     * outage window would surface "No file at '/...'" even though the
+     * Server is back. The retry is bounded (one shot); if the forced
+     * reconnect fails, the original miss is returned and the caller
+     * sees the standard error. Added 2026-08-10.
      */
     private DomainFile resolveFile(String path, java.util.List<String> outCandidates) {
         DomainFile df = project.getProjectData().getFile(normalize(path));
@@ -1058,7 +1137,70 @@ public class RpcContext {
             String name = path.contains("/") ? path.substring(path.lastIndexOf('/') + 1) : path;
             collectNameCandidates(project.getProjectData().getRootFolder(), name, outCandidates, 5);
         }
+        // Retry path: a recent disconnect can leave the in-memory project
+        // tree inaccessible (the repository listener fires, the cached
+        // folder tree is invalidated, ProjectData.getFile returns null on
+        // every call). The original reconnect-on-disconnect policy was
+        // "exit and let the orchestrator restart us" — too coarse for
+        // the brief blips the Ghidra Server hits during routine ops. Try
+        // a single forced reconnect + retry; if the Server is back, the
+        // lookup succeeds and the caller sees success. If the Server is
+        // still down, skip the retry (the RepositoryAdapter.connect IO
+        // would block) and fall through to the original miss.
+        if (recentDisconnect()) {
+            DomainFile retried = retryResolveAfterReconnect(path);
+            if (retried != null) {
+                return retried;
+            }
+        }
         return null;
+    }
+
+    /**
+     * True when {@link #lastDisconnectMs} is within the retry window.
+     * Atomic read — the timestamp is set on the listener / noteConnectionLost
+     * thread and read on the dispatch thread.
+     */
+    private boolean recentDisconnect() {
+        long t = lastDisconnectMs;
+        if (t == 0) return false;
+        return (System.currentTimeMillis() - t) <= DISCONNECT_RETRY_WINDOW_MS;
+    }
+
+    /**
+     * Force a reconnect on the project's repository and retry the file
+     * lookup once. Returns the retry result, or null if the forced
+     * reconnect threw (Server genuinely down) or the lookup still
+     * misses. Any exception from {@link RepositoryAdapter#connect} is
+     * swallowed and logged — the caller falls back to the original miss
+     * path. The expensive operation is bounded: connect() either
+     * succeeds quickly (sub-second on the local box) or throws fast
+     * (the Ghidra Server is unreachable).
+     */
+    private DomainFile retryResolveAfterReconnect(String path) {
+        try {
+            RepositoryAdapter repo = project.getRepository();
+            if (repo == null) {
+                return null;
+            }
+            if (repo.isConnected()) {
+                // The Server came back on its own (auto-reconnect from
+                // Ghidra's listener thread) — the file lookup may still
+                // be lagging the cache invalidation. One retry.
+                return project.getProjectData().getFile(normalize(path));
+            }
+            Msg.info(this, "Recent Ghidra Server disconnect detected; "
+                + "forcing reconnect before retrying " + path);
+            repo.connect();
+            DomainFile df = project.getProjectData().getFile(normalize(path));
+            if (df != null) {
+                Msg.info(this, "Reconnect + file lookup succeeded for " + path);
+            }
+            return df;
+        } catch (Exception e) {
+            Msg.warn(this, "Forced reconnect failed for " + path + ": " + message(e));
+            return null;
+        }
     }
 
     /** Walk the project tree; append up to {@code limit} files whose name matches {@code name}. */
