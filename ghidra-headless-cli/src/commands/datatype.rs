@@ -599,14 +599,37 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             no_var_args,
             no_return,
         } => {
-            let add_fields_json = parse_opt_json("addFields", add_fields)?;
             let add_entries_json = parse_opt_json("addEntries", add_entries)?;
-            // --definition wins over explicit --add-fields/--add-entries JSON.
-            let (add_fields_json, add_entries_json) = if definition.is_some() {
-                (None, None)
-            } else {
-                (add_fields_json, add_entries_json)
-            };
+            // --definition takes the whole body. Reject redundant/explicit
+            // struct/union/enum field flags rather than silently dropping
+            // them — the server enforces this too, and a clear error is
+            // better than a half-applied request. (2026-08-10:
+            // --replace-fields + --definition was the silent-data-loss bug.)
+            if definition.is_some() {
+                if replace_fields {
+                    common::log_arg_err(
+                        "--replace-fields cannot be combined with --definition. \
+                         The --definition path replaces the whole body — the \
+                         parsed snippet's fields are the new field list. \
+                         --replace-fields is only meaningful with the explicit \
+                         JSON path (--add-fields). Drop --replace-fields when \
+                         using --definition."
+                            .to_string(),
+                    );
+                    return Err(());
+                }
+                if add_fields.is_some() {
+                    common::log_arg_err(
+                        "--add-fields cannot be combined with --definition. \
+                         The --definition path replaces the whole body — the \
+                         parsed snippet's fields are the new field list. \
+                         Drop --add-fields when using --definition."
+                            .to_string(),
+                    );
+                    return Err(());
+                }
+            }
+            let add_fields_json = parse_opt_json("addFields", add_fields)?;
             // --definition is NOT routed for FunctionDefinition targets —
             // the C snippet path is Composite/Enum/TypeDef only. Reject
             // client-side if combined with any of the funcdef structured

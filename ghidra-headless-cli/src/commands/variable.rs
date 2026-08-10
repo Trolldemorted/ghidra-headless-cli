@@ -148,6 +148,61 @@ pub enum Cmd {
         #[arg(long, value_enum)]
         source: Option<Source>,
     },
+    /// Rename a decompiler-only local (e.g. `pCVar2`, `iVar1`, `puVar1`)
+    ///
+    /// Unlike `set-name`, which requires a stored database-backed variable
+    /// name, this verb renames a register/SSA temporary that only exists in
+    /// the decompiler view. It mirrors the GUI's "Rename Variable" (hotkey
+    /// `L`): the new name is stored as a dynamic-hash varnode override and
+    /// persists across decompiles.
+    ///
+    /// The hard part is the same dynamic-hash persistence used by
+    /// `set-decompiler-type` (see forgejo #95, shipped 2026-07-18):
+    /// identifying the target, splitting out of the merge group, and
+    /// committing via `HighFunctionDBUtil.updateDBVariable`. Rename passes
+    /// the existing type and a new name; retype passes the existing name
+    /// and a new type.
+    ///
+    /// Supply exactly ONE of two ways to identify the target:
+    ///
+    ///   * `--decompiler-name <NAME>` — exact display name in the
+    ///     function's decompiled C output (e.g. `pCVar2`, `iVar1`,
+    ///     `puVar1`, `param_1`). The server decompiles the function and
+    ///     looks the name up in `LocalSymbolMap.getNameToSymbolMap()`.
+    ///   * `--at <PC>` + `--storage <STORAGE>` — first-use PC (hex)
+    ///     and the storage string the decompiler prints (e.g.
+    ///     `EAX:4`, `Stack[-0x4]`). Useful when the display name is
+    ///     unstable across decompiles.
+    ///
+    /// Example: turn `pCVar2` into a self-documenting name in a UI handler
+    /// so the decompiler C output reads as `hoveredWidget` instead of
+    /// `pCVar2`.
+    SetDecompilerName {
+        #[arg(long = "file", value_name = "FILE")]
+        program: String,
+        /// Function entry-point address (hex)
+        #[arg(long)]
+        address: String,
+        /// Decompiler display name (e.g. "pCVar2"). Mutually exclusive
+        /// with `--at`/`--storage`.
+        #[arg(long, conflicts_with_all = ["at", "storage"])]
+        decompiler_name: Option<String>,
+        /// First-use PC address (hex). Mutually exclusive with
+        /// `--decompiler-name`; must be paired with `--storage`.
+        #[arg(long, conflicts_with_all = ["decompiler_name"])]
+        at: Option<String>,
+        /// Variable storage string as printed by the decompiler
+        /// (e.g. "EAX:4", "Stack[-0x4]"). Mutually exclusive with
+        /// `--decompiler-name`; must be paired with `--at`.
+        #[arg(long, conflicts_with_all = ["decompiler_name"])]
+        storage: Option<String>,
+        /// New variable name, e.g. "hoveredWidget"
+        #[arg(long)]
+        name: String,
+        /// Symbol source type [default: user-defined]
+        #[arg(long, value_enum)]
+        source: Option<Source>,
+    },
     /// Set the data type of a decompiler-only local (e.g. `puVar1`)
     ///
     /// Unlike `set-type`, which requires a stored database-backed variable
@@ -312,6 +367,53 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                 .opt_str("source", Source::opt(source))
                 .build(),
         ),
+        Cmd::SetDecompilerName {
+            program,
+            address,
+            decompiler_name,
+            at,
+            storage,
+            name,
+            source,
+        } => {
+            // Exactly one of the two identification paths must be present.
+            // clap's `conflicts_with_all` rejects the case where
+            // `--decompiler-name` is set alongside `--at`/`--storage`, but
+            // it does not catch "neither set" or "--at without --storage"
+            // (those have no conflict target). Validate here.
+            let has_name = decompiler_name.is_some();
+            let has_pc_path = at.is_some() && storage.is_some();
+            let half_pc =
+                (at.is_some() && storage.is_none()) || (at.is_none() && storage.is_some());
+            if has_name && has_pc_path {
+                log::error!(
+                    "--decompiler-name is mutually exclusive with --at/--storage; \
+                     supply exactly one"
+                );
+                return Err(());
+            }
+            if !has_name && !has_pc_path {
+                if half_pc {
+                    log::error!("--at and --storage must be supplied together");
+                } else {
+                    log::error!(
+                        "supply exactly one of --decompiler-name, or --at together with --storage"
+                    );
+                }
+                return Err(());
+            }
+            client.run_simple(
+                Req::new("RenameDecompilerVariable")
+                    .str("file", program)
+                    .str("address", address)
+                    .opt_str("decompilerName", decompiler_name)
+                    .opt_str("pc", at)
+                    .opt_str("storage", storage)
+                    .str("name", name)
+                    .opt_str("source", Source::opt(source))
+                    .build(),
+            )
+        }
         Cmd::SetDecompilerType {
             program,
             address,

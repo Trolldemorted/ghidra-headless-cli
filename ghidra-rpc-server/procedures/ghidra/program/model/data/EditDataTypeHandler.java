@@ -44,9 +44,40 @@ public final class EditDataTypeHandler implements RpcProcedure {
 
         String defn = RpcContext.optStr(req, "definition");
         if (defn != null && !defn.isEmpty()) {
+            // Refuse redundant/conflicting flag combinations outright rather
+            // than silently dropping one. The CLI rejects the same combos
+            // client-side, but the server must enforce too — the policy is
+            // "garbage in, refused out", never "garbage in, half-applied".
+            if (req.has("replaceFields") && req.get("replaceFields").getAsBoolean()) {
+                return RpcResponse.error(
+                    "'replaceFields' cannot be combined with 'definition': "
+                    + "the --definition path replaces the whole body, so the "
+                    + "explicit clear-and-rebuild is redundant. Drop "
+                    + "'replaceFields' when using 'definition'."
+                );
+            }
+            if (req.has("addFields")) {
+                return RpcResponse.error(
+                    "'addFields' cannot be combined with 'definition': "
+                    + "the parsed snippet's fields are the new field list. "
+                    + "Drop 'addFields' when using 'definition'."
+                );
+            }
             // Parse the snippet directly into the program DTM. CParser
             // requires a named snippet; the parsed type's name must equal
             // the target's so REPLACE_HANDLER can swap it in place.
+            //
+            // `replaceFields` is silently ignored on this path. The
+            // `--definition` path replaces the whole body — the parsed
+            // snippet's fields ARE the new field list — so the explicit
+            // delete-all would be redundant AND, worse, was the source of a
+            // silent-data-loss bug: `doEdits` ran `replaceFields` first,
+            // clearing the existing struct of all components, and the
+            // subsequent `addDataType(parsed, REPLACE_HANDLER)` is a no-op
+            // because CParser already registered `parsed` in the DTM with
+            // REPLACE semantics. The result was a 0-field struct reported
+            // as success. The CLI rejects the combination up front; this
+            // is defense-in-depth for any other client.
             DataType parsed;
             try {
                 parsed = CDefinitionParser.parse(defn,
@@ -64,9 +95,11 @@ public final class EditDataTypeHandler implements RpcProcedure {
                     + "'. The snippet must declare the target's name "
                     + "(e.g. `struct " + target.getName() + " { ... };`).");
             }
+            // Run rename/move/description first; the parsed snippet's
+            // body replaces the target's body wholesale below.
             boolean[] touched = {false};
             ctx.runWrite("EditDataType", () -> {
-                doEdits(req, target, ctx);                  // rename, move first
+                doEdits(req, target, ctx);              // rename, move first
                 ctx.program().getDataTypeManager().addDataType(parsed,
                     DataTypeConflictHandler.REPLACE_HANDLER);
                 touched[0] = true;

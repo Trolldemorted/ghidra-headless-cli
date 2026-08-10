@@ -581,6 +581,7 @@ public class RpcServer extends GhidraScript {
         register("SetVariableNameCmd", new procedures.ghidra.app.cmd.function.SetVariableNameCmdHandler());
         register("SetVariableDataTypeCmd", new procedures.ghidra.app.cmd.function.SetVariableDataTypeCmdHandler());
         register("RetypeDecompilerVariable", new procedures.ghidra.app.cmd.function.RetypeDecompilerVariableHandler());
+        register("RenameDecompilerVariable", new procedures.ghidra.app.cmd.function.RenameDecompilerVariableHandler());
         register("SetVariableCommentCmd", new procedures.ghidra.app.cmd.function.SetVariableCommentCmdHandler());
         register("DeleteVariableCmd", new procedures.ghidra.app.cmd.function.DeleteVariableCmdHandler());
         register("AddStackVarCmd", new procedures.ghidra.app.cmd.function.AddStackVarCmdHandler());
