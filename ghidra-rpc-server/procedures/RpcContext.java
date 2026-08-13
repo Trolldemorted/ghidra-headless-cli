@@ -1421,6 +1421,28 @@ public class RpcContext {
 
     /** Release every program we opened. Call on shutdown; leaves the context empty. */
     public void closeAll() {
+        // Drain in-flight dispatches before releasing programs. Without
+        // this, an in-flight read (typical: FlatDecompilerAPI → decompiler
+        // subprocess reading from the listing) can crash with
+        // {@code ClosedException: File is closed} when {@code p.release}
+        // yanks the program out from under the subprocess mid-BufferMgr
+        // access — observed 2026-08-13 cascade: connection-lost handler
+        // scheduled System.exit, the JVM shutdown hook ran closeAll →
+        // release, the decompiler subprocess's encodeHeaderComment tried
+        // to read a comment from the now-closed BufferMgr, the project
+        // logged "use count has gone negative" because the in-flight
+        // dispatch still held a reference, and the JVM tore down with a
+        // stack of cascading errors.
+        //
+        // The dispatch thread clears {@link #dispatchStartMs} BEFORE
+        // releasing the lock, so we can spin-wait on it without holding
+        // any lock here. {@code dispatchStartMs > 0} means "a dispatch is
+        // currently inside the lock body". Bounded wait — if the dispatch
+        // is genuinely stuck (e.g. an RMI call to a downed Server), we
+        // don't want closeAll to hang forever; after the timeout we log
+        // and proceed, accepting that the in-flight request will crash
+        // when its program is released.
+        drainInFlight(CLOSE_ALL_DRAIN_MS);
         // Revert any dirty local files BEFORE releasing programs: undoCheckout
         // needs the DomainFile reachable, and once we release the cached
         // Program + its checkout, the server-side lock disappears and the
@@ -1440,6 +1462,42 @@ public class RpcContext {
             lock.unlock();
         }
     }
+
+    /**
+     * Spin-wait up to {@code timeoutMs} for any in-flight dispatch to
+     * finish (signaled by {@link #dispatchStartMs} returning to 0). Logs
+     * once per second so the operator can see why closeAll is blocked.
+     * Called by {@link #closeAll} before releasing programs; safe to call
+     * outside the lock since {@code dispatchStartMs} is volatile.
+     */
+    private void drainInFlight(long timeoutMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        long lastLog = 0;
+        while (dispatchStartMs != 0) {
+            if (System.currentTimeMillis() >= deadline) {
+                Msg.warn(this, "closeAll: in-flight dispatch did not drain within "
+                    + timeoutMs + "ms; releasing programs anyway (the in-flight "
+                    + "request may crash with 'File is closed' — acceptable on a "
+                    + "genuinely-stuck RMI call to a downed Server).");
+                return;
+            }
+            long now = System.currentTimeMillis();
+            if (now - lastLog >= 1000) {
+                Msg.info(this, "closeAll: waiting for in-flight dispatch to drain "
+                    + "(up to " + timeoutMs + "ms total)...");
+                lastLog = now;
+            }
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+    }
+
+    /** Max time {@link #closeAll} will wait for in-flight dispatches to finish. */
+    private static final long CLOSE_ALL_DRAIN_MS = 10_000;
 
     // ---------------------------------------------------------------------------
     // Checkout / check-in (per resolved program). Called only under {@link #lock}.
@@ -1567,6 +1625,24 @@ public class RpcContext {
         if (!isConnectionLost(message)) {
             return;
         }
+        // Auto-reconnect: a recent disconnect listener event means the
+        // Ghidra Server RMI socket may already have recovered — or may
+        // recover on a forced connect(). When the reconnect lands, the
+        // next request will work; we don't want THIS request's failure
+        // (the one whose RMI threw) to count against the exit threshold
+        // and drive the JVM down. We can't transparently retry the call
+        // itself without wrapping every RMI-touching site — that's a
+        // bigger change — but absorbing the disconnect event so the
+        // counter doesn't climb is the next-best thing: the caller still
+        // sees this request's error, the next one works, and the orchestrator
+        // doesn't restart us for what was actually a transient blip.
+        // Verified end-to-end on the local box: a 2-3s Server restart
+        // cycle now goes unnoticed at the JVM level (added 2026-08-13).
+        if (tryReconnect()) {
+            Msg.info(this, "Reconnect succeeded after disconnect at " + where
+                + "; not incrementing the exit counter");
+            return;
+        }
         int n = ++connectionLostFailures;
         Msg.warn(this, "Connection-lost #" + n + "/" + CONNECTION_LOST_THRESHOLD
             + " detected at " + where + ": " + message);
@@ -1579,6 +1655,35 @@ public class RpcContext {
                     // best-effort; advisory callback
                 }
             }
+        }
+    }
+
+    /**
+     * Force a reconnect on the project's repository and report success.
+     * Returns true if {@link RepositoryAdapter#isConnected} is true after
+     * the attempt (covers both "already reconnected on its own" and
+     * "forced connect() succeeded"). Returns false on IOException or when
+     * the project has no repository (local projects). Cheap to call — the
+     * fast path is {@code isConnected()} + return; the slow path is the
+     * RMI handshake which Ghidra bounds by its own connection timeout.
+     */
+    private boolean tryReconnect() {
+        if (!recentDisconnect()) {
+            return false; // no listener event yet — don't churn on unrelated errors
+        }
+        try {
+            RepositoryAdapter repo = (project == null) ? null : project.getRepository();
+            if (repo == null) {
+                return false;
+            }
+            if (repo.isConnected()) {
+                return true; // Ghidra's listener auto-reconnected already
+            }
+            repo.connect();
+            return repo.isConnected();
+        } catch (Exception e) {
+            Msg.warn(this, "Forced reconnect failed: " + message(e));
+            return false;
         }
     }
 
