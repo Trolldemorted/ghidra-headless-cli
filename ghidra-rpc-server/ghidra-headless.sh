@@ -157,6 +157,17 @@ echo ">> login user: $GHIDRA_USER  (mode: $mode, programs: ${GHIDRA_PROGRAM:-non
 # path through launch.sh's word-split). See feedback_password_whitespace_jvm_arg.md.
 export GHIDRA_PASSWORD
 
+# Export the connection-identifying env vars so the RPC server's JVM can
+# read them via System.getenv(...) when its stale-checkout self-heal
+# helper needs to open a fresh RepositoryServerAdapter. Without these,
+# self-heal degrades to "no orphan found" and the request fails with the
+# manual CleanCheckouts hint. See /workdir/notes/checkin-rollback.md
+# "Known gaps — Checkout-acquired-but-unmodified files".
+export GHIDRA_HOST
+export GHIDRA_PORT
+export GHIDRA_USER
+export GHIDRA_PROJECT
+
 # Single source of truth for JVM args. As of 2026-08-05 the wrapper bypasses
 # upstream `support/launch.sh` / `support/launch.properties` /
 # `support/analyzeHeadless` entirely — see the bypass note at the top of this

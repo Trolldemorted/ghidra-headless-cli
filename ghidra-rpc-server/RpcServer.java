@@ -162,6 +162,22 @@ public class RpcServer extends GhidraScript {
         } else {
             Msg.info(this, "GHIDRA_RPC_ADMIN_PASSWORD is unset (no admin gate).");
         }
+        // Early-mode self-heal for the OOM-kill stale-checkout recovery gap.
+        // When enabled AND JVM uptime < earlyWindowMs, acquireCheckoutWithRetry
+        // will terminate our own user's stale checkout on the Ghidra Server
+        // via a fresh RepositoryServerAdapter after the retry loop exhausts,
+        // then retry df.checkout. See /workdir/notes/checkin-rollback.md
+        // "Known gaps — Checkout-acquired-but-unmodified files".
+        boolean selfHeal = !"0".equals(env("GHIDRA_RPC_CHECKOUT_SELF_HEAL", "1"));
+        long earlyWindowMs = parseLongMs(
+            env("GHIDRA_RPC_CHECKOUT_RETRY_EARLY_WINDOW_MS", "60000"),
+            60_000L, 0L, 86_400_000L, "GHIDRA_RPC_CHECKOUT_RETRY_EARLY_WINDOW_MS");
+        context.setCheckoutRetryConfig(selfHeal, earlyWindowMs);
+        Msg.info(this, "Checkout recovery: selfHeal="
+            + (selfHeal ? "enabled" : "disabled")
+            + " earlyWindowMs=" + earlyWindowMs
+            + " (override via GHIDRA_RPC_CHECKOUT_SELF_HEAL and "
+            + "GHIDRA_RPC_CHECKOUT_RETRY_EARLY_WINDOW_MS)");
         // Detect mid-session Ghidra Server connection loss in RpcContext and
         // exit through the same graceful path the SIGTERM shutdown hook uses,
         // so compose / k8s / systemd can restart us with a fresh RMI connection.
@@ -715,5 +731,36 @@ public class RpcServer extends GhidraScript {
     private static String env(String key, String dflt) {
         String v = System.getenv(key);
         return (v == null || v.isEmpty()) ? dflt : v;
+    }
+
+    /**
+     * Parse an env-var value as a long ms duration, falling back to
+     * {@code dflt} on parse failure and clamping to {@code [min, max]}.
+     * Logs and falls back to {@code dflt} on any error so a single bad
+     * env var doesn't kill startup; per
+     * {@code feedback_cli_help_defaults} the resolved value is logged so
+     * operators can confirm the effective setting without re-reading the
+     * env. {@code label} is the env-var name to mention in the fallback
+     * log line.
+     */
+    private static long parseLongMs(String raw, long dflt, long min, long max, String label) {
+        if (raw == null) {
+            return dflt;
+        }
+        long v;
+        try {
+            v = Long.parseLong(raw.trim());
+        } catch (NumberFormatException nfe) {
+            Msg.warn(RpcServer.class,
+                label + "=" + raw + " is not a valid long; using default " + dflt + "ms");
+            return dflt;
+        }
+        if (v < min || v > max) {
+            Msg.warn(RpcServer.class,
+                label + "=" + v + "ms is out of range [" + min + "," + max
+                    + "]; using default " + dflt + "ms");
+            return dflt;
+        }
+        return v;
     }
 }
