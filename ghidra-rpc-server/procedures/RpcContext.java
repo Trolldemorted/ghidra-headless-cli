@@ -177,44 +177,24 @@ public class RpcContext {
 
     /**
      * Wall-clock ms when this {@link RpcContext} was constructed. Used by
-     * {@link #acquireCheckoutWithRetry} to decide whether the JVM is still
-     * in "early" mode (recent restart) — a window during which a "held by
-     * another user" failure is almost certainly the OOM-kill orphan race
-     * and self-heal is appropriate, vs steady state where it is more likely
-     * a real cross-session conflict that self-heal must not touch. Set once;
-     * no synchronization needed (final).
+     * the post-retry-exhaust self-heal helper to log JVM uptime in the
+     * "held by another user" diagnostic line. Set once; no synchronization
+     * needed (final).
      */
     private final long startTimeMs = System.currentTimeMillis();
 
     /**
-     * Default early-mode window in ms. When JVM uptime is below this,
-     * {@link #acquireCheckoutWithRetry} will attempt self-heal after the
-     * retry loop exhausts. Default 60s: well above the typical RST-detect
-     * reap (a couple of seconds per {@code oom_kill_stale_checkout_recovery})
-     * and above the observed 21s+ in prod, with ~3× margin. Overridable via
-     * {@code GHIDRA_RPC_CHECKOUT_RETRY_EARLY_WINDOW_MS}; installed by
-     * {@link #setCheckoutRetryConfig}.
-     */
-    private static final long DEFAULT_EARLY_WINDOW_MS = 60_000L;
-
-    /**
-     * Self-heal enabled by default. When true AND JVM uptime is below
-     * {@link #earlyWindowMs}, {@link #acquireCheckoutWithRetry} will attempt
-     * to terminate our own user's stale checkout on the Ghidra Server after
-     * the retry loop exhausts, then retry the checkout. Overridable via
-     * {@code GHIDRA_RPC_CHECKOUT_SELF_HEAL}; installed by
-     * {@link #setCheckoutRetryConfig}.
+     * Self-heal enabled by default. When {@code true},
+     * {@link #acquireCheckoutWithRetry} will attempt to terminate our own
+     * user's stale checkout on the Ghidra Server after the retry loop
+     * exhausts, then retry the checkout. The user-identity filter inside
+     * {@link #selfHealStaleCheckout} is the actual safety mechanism — it
+     * only terminates checkouts owned by us, so self-heal is safe to run
+     * any time the retry exhausts (no uptime gate). Set via
+     * {@link #setCheckoutRetryConfig} from the
+     * {@code GHIDRA_RPC_CHECKOUT_SELF_HEAL} env var.
      */
     private volatile boolean selfHealEnabled = true;
-
-    /**
-     * Self-heal window in ms (see {@link #DEFAULT_EARLY_WINDOW_MS}). Set
-     * once at startup via {@link #setCheckoutRetryConfig}; read under the
-     * dispatch lock by the retry helper. {@code volatile} because the
-     * setter is called from {@code RpcServer.run} (a different thread
-     * context than dispatch).
-     */
-    private volatile long earlyWindowMs = DEFAULT_EARLY_WINDOW_MS;
 
     /** Consecutive connection-lost checkin failures since the last successful checkin. */
     private int connectionLostFailures = 0;
@@ -553,25 +533,20 @@ public class RpcContext {
     }
 
     /**
-     * Install the early-mode self-heal configuration for
+     * Install the self-heal configuration for
      * {@link #acquireCheckoutWithRetry}. Called once at server startup from
      * {@code RpcServer.run}, immediately after the password setters.
      *
      * @param selfHealEnabled when {@code true}, attempt to terminate our own
      *        user's stale checkouts on the Ghidra Server after the retry
-     *        loop exhausts, if JVM uptime is still below
-     *        {@code earlyWindowMs}; otherwise fail with the
-     *        CleanCheckouts hint. Always {@code false} is the safe choice
-     *        for deployments that want the operator in the loop.
-     * @param earlyWindowMs uptime threshold (ms) below which the JVM is
-     *        considered "recently restarted" and self-heal is permitted.
-     *        Capped at 24h to defend against obviously-wrong values.
+     *        loop exhausts. The user-identity filter inside
+     *        {@link #selfHealStaleCheckout} is the safety mechanism: it
+     *        only terminates checkouts owned by us, so self-heal is safe
+     *        any time the retry exhausts. Set to {@code false} to require
+     *        manual {@code CleanCheckouts} recovery for every OOM cycle.
      */
-    public void setCheckoutRetryConfig(boolean selfHealEnabled, long earlyWindowMs) {
+    public void setCheckoutRetryConfig(boolean selfHealEnabled) {
         this.selfHealEnabled = selfHealEnabled;
-        this.earlyWindowMs = (earlyWindowMs < 0 || earlyWindowMs > 86_400_000L)
-            ? DEFAULT_EARLY_WINDOW_MS
-            : earlyWindowMs;
     }
 
     /** The program selected for the current request; throws if none is active. */
@@ -1042,18 +1017,20 @@ public class RpcContext {
      *       (connection-lost counter, eventual JVM exit after threshold).</li>
      * </ul>
      *
-     * <p><b>Early-mode self-heal</b>: when the retry loop exhausts AND JVM
-     * uptime is below {@link #earlyWindowMs} AND
-     * {@link #selfHealEnabled} is {@code true}, this helper invokes
+     * <p><b>Self-heal after retry exhaust</b>: when the retry loop exhausts
+     * AND {@link #selfHealEnabled} is {@code true}, this helper invokes
      * {@link #selfHealStaleCheckout} to terminate our own user's stale
      * checkout on the Ghidra Server via a fresh connection, then retries
      * {@code df.checkout} once. This closes the gap on long-reap-cycle
      * networks without waiting passively for the server to detect the dead
-     * RMI socket. Self-heal is intentionally limited to {@code earlyWindowMs}
-     * uptime so it never auto-terminates a checkout that another live
-     * session legitimately holds in steady state. The 60s default is
-     * empirically chosen (typical reap ~3s, observed worst case 21s+,
-     * ~3× margin); override with {@code GHIDRA_RPC_CHECKOUT_RETRY_EARLY_WINDOW_MS}.
+     * RMI socket. Self-heal is intentionally NOT gated on JVM uptime — the
+     * common case is the JVM being idle after restart, when the first
+     * request comes in minutes or hours after startup; an uptime gate
+     * would close before the orphan is ever seen. The actual safety
+     * mechanism is the user-identity filter inside
+     * {@link #selfHealStaleCheckout}, which only terminates checkouts owned
+     * by us. Disable via {@code GHIDRA_RPC_CHECKOUT_SELF_HEAL=0} to require
+     * manual {@code CleanCheckouts} recovery for every OOM cycle.
      *
      * <p>Phase 3 of {@link #revertDirtyLocalFilesOnStartup} does NOT cover
      * the OOM-kill case: it walks the project tree via
@@ -1104,37 +1081,45 @@ public class RpcContext {
                 throw coEx;
             }
         }
-        // Retry loop exhausted. Delegate the early-mode self-heal to a
-        // dedicated helper so this method stays under the 200-line
-        // MethodLength cap; the helper owns the post-loop recovery logic
-        // (and rethrows RMI-death the same way this method does on the
-        // initial attempt). See {@link #trySelfHealAfterExhaust}.
+        // Retry loop exhausted. Delegate the self-heal to a dedicated
+        // helper so this method stays under the 200-line MethodLength cap;
+        // the helper owns the post-loop recovery logic (and rethrows
+        // RMI-death the same way this method does on the initial attempt).
+        // See {@link #trySelfHealAfterExhaust}.
         return trySelfHealAfterExhaust(df);
     }
 
     /**
-     * Post-retry-exhaust recovery: when the JVM is still in early mode
-     * (uptime &lt; {@link #earlyWindowMs}) AND {@link #selfHealEnabled} is
+     * Post-retry-exhaust recovery: when {@link #selfHealEnabled} is
      * {@code true}, attempt to terminate our own user's stale checkouts on
      * the Ghidra Server via {@link #selfHealStaleCheckout}, then retry
      * {@code df.checkout} once. Returns {@code true} on success, {@code false}
-     * when self-heal is skipped, finds nothing, or post-heal retry still
+     * when self-heal is disabled, finds nothing, or post-heal retry still
      * fails. Propagates {@link IOException}-class failures through
      * {@link #noteConnectionLost} so the dispatch-lost counter increments
      * exactly like the initial-attempt path.
+     *
+     * <p>There is intentionally NO uptime gate here. The original 2026-08-14
+     * design gated self-heal on a 60-second early-mode window, reasoning that
+     * "in steady state, held by another user is a real cross-session conflict
+     * that self-heal must not touch" — but that gate breaks the common
+     * idle-after-restart case where the first request comes in minutes (or
+     * hours) after the JVM started. The actual safety mechanism is the
+     * user-identity filter inside {@link #selfHealStaleCheckout}, which only
+     * terminates checkouts owned by the calling user. So self-heal is safe to
+     * run any time the retry exhausts; the kill switch is
+     * {@link #setCheckoutRetryConfig}'s {@code selfHealEnabled} flag.
      */
     private boolean trySelfHealAfterExhaust(DomainFile df) throws Exception {
-        long uptimeMs = System.currentTimeMillis() - startTimeMs;
-        if (!selfHealEnabled || uptimeMs >= earlyWindowMs) {
-            // Steady state OR self-heal disabled — fall through and let
-            // the caller throw. "Held by another user" is then more likely
-            // a real cross-session conflict that self-heal must not touch.
+        if (!selfHealEnabled) {
+            // Operator opted out (GHIDRA_RPC_CHECKOUT_SELF_HEAL=0). Fall
+            // through and let the caller throw with the CleanCheckouts hint.
             return false;
         }
+        long uptimeMs = System.currentTimeMillis() - startTimeMs;
         Msg.warn(this, "Checkout of '" + df.getPathname()
             + "' held by another user after " + HELD_RETRY_TOTAL_MS
             + "ms retry budget (JVM uptime " + uptimeMs
-            + "ms < earlyWindowMs=" + earlyWindowMs
             + "ms); attempting self-heal");
         int terminated = selfHealStaleCheckout(df);
         if (terminated <= 0) {
