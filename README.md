@@ -22,6 +22,13 @@ Plus two optional RPC-server gates:
 - `GHIDRA_RPC_WRITE_PASSWORD` — if set, write requests must carry `writePassword`. See `notes/rpc-server.md`.
 - `GHIDRA_RPC_ADMIN_PASSWORD` — gates the `purge-versions` procedure (consolidating old revisions on the Ghidra Server). See `notes/rpc-server.md`.
 
+Plus two optional RPC-server tuning knobs for the OOM-kill stale-checkout recovery path (see `notes/checkin-rollback.md` "Known gaps"):
+
+| Var | Default | Purpose |
+|---|---|---|
+| `GHIDRA_RPC_CHECKOUT_SELF_HEAL` | `1` | When `1`, the server auto-terminates its own user's stale checkouts on the Ghidra Server after the in-lock retry exhausts (only while JVM uptime is below `GHIDRA_RPC_CHECKOUT_RETRY_EARLY_WINDOW_MS`). Set to `0` to require manual `CleanCheckouts` recovery. |
+| `GHIDRA_RPC_CHECKOUT_RETRY_EARLY_WINDOW_MS` | `60000` | JVM uptime (ms) below which the server is considered "recently restarted" and self-heal is permitted. Capped at 24h; out-of-range values fall back to the default with a warn line at startup. |
+
 Full env-var list (folder, program, script, readonly, etc.) lives in `ghidra-headless.sh`'s header comment.
 
 ## JVM configuration
