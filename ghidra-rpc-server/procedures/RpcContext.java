@@ -258,6 +258,18 @@ public class RpcContext {
     private volatile long dispatchStartMs = 0;
 
     /**
+     * Whether the currently-running dispatch is mutating. Paired with
+     * {@link #dispatchStartMs}. The watchdog skips non-mutating dispatches
+     * — read-only procedures (decompiler, listing, FindFunction, etc.) make
+     * no {@code df.save}/{@code df.checkin} calls, so a slow decompile is
+     * legitimate work, not an RMI hang. Tripping the watchdog on a slow
+     * read triggers closeAll which yanks the program out from under the
+     * decompiler subprocess → cascading {@code ClosedException: File is
+     * closed} (observed 2026-08-15 /Patrician3.exe). Volatile suffices.
+     */
+    private volatile boolean dispatchMutates = false;
+
+    /**
      * Deadline (seconds) for starting a single transaction. {@link
      * DomainObjectAdapterDB#startTransaction} uses an unbounded retry loop on
      * {@code DomainObjectLockedException} (its {@code lambda$new$0} sleeps
@@ -356,6 +368,14 @@ public class RpcContext {
             long start = dispatchStartMs;
             if (start == 0) {
                 continue; // no dispatch in flight
+            }
+            // Read-only procedures make no df.save / df.checkin calls and
+            // thus can't hit the RMI-hang regime the watchdog exists to
+            // catch. A slow decompile (or any long read) is legitimate
+            // work — skip the watchdog rather than killing the JVM and
+            // triggering the closeAll cascade.
+            if (!dispatchMutates) {
+                continue;
             }
             long elapsed = System.currentTimeMillis() - start;
             if (elapsed < thresholdMs) {
@@ -623,33 +643,18 @@ public class RpcContext {
         // round-trip to a Ghidra Server whose response stream died after
         // committing the version).
         dispatchStartMs = System.currentTimeMillis();
+        // Pair the start timestamp with the procedure's mutating-ness so
+        // the watchdog can distinguish an RMI-capable hang (mutating only)
+        // from legitimately slow read-only work (decompiler subprocess,
+        // listing reads).
+        dispatchMutates = procedure.mutates();
         try {
-            // Write-password gate (GHIDRA_RPC_WRITE_PASSWORD on the server). When set,
-            // every mutating call must carry a matching "password" field;
-            // read-only calls bypass the gate in both modes. Checked first so
-            // a rejected request never touches the project tree, the program
-            // cache, or an open transaction.
-            String required = writePassword;
-            if (required != null && procedure.mutates()) {
-                String supplied = optStr(request, "password");
-                if (supplied == null || !required.equals(supplied)) {
-                    return RpcResponse.error("Missing or invalid 'password' field; "
-                        + "mutating requests require GHIDRA_RPC_WRITE_PASSWORD.");
-                }
-            }
-            // Admin-password gate (GHIDRA_RPC_ADMIN_PASSWORD on the server). When set,
-            // every procedure whose requiresAdmin() is true must carry a matching
-            // "adminPassword" field; a wrong/missing value returns an error
-            // BEFORE any project tree or repository access. Independent from the
-            // write-password gate above: a leaked GHIDRA_RPC_WRITE_PASSWORD does NOT
-            // grant admin rights. Read & non-admin procedures bypass this gate.
-            String adminRequired = adminPassword;
-            if (adminRequired != null && procedure.requiresAdmin()) {
-                String supplied = optStr(request, "adminPassword");
-                if (supplied == null || !adminRequired.equals(supplied)) {
-                    return RpcResponse.error("Missing or invalid 'adminPassword' field; "
-                        + "this request requires GHIDRA_RPC_ADMIN_PASSWORD.");
-                }
+            // Password gates run first so a rejected request never touches
+            // the project tree, the program cache, or an open transaction.
+            // See checkPasswordGates Javadoc for the per-gate semantics.
+            RpcResponse gateErr = checkPasswordGates(procedure, request);
+            if (gateErr != null) {
+                return gateErr;
             }
             // Capture path up front so the corruption-recovery retry (below) can re-resolve
             // the DomainFile. Only set when the procedure targets a program.
@@ -711,22 +716,13 @@ public class RpcContext {
                         // Thrown-buffer-lock surface (e.g. "Locked buffer: N" escapes the
                         // decompiler subprocess): evict + retry once.
                         logBufferLockRecovery(procedureOf(request), message(primaryEx));
-                        try {
-                            program = evictAndReopen(path);
-                        } catch (Exception reopenEx) {
-                            return RpcResponse.error("Recovery reopen failed after "
-                                + "buffer-lock corruption: " + message(reopenEx));
+                        RpcResponse reopenErr = recoverFromBufferLockCorruption(
+                            procedure, request, path, dispatchOwnsTx);
+                        if (reopenErr != null) {
+                            return reopenErr;
                         }
-                        active = program;
-                        this.path = (program != null) ? path : null;
+                        program = active;
                         recovered = true;
-                        // The old program was released; Ghidra implicitly aborts
-                        // its open transactions. Start a fresh dispatch tx on
-                        // the new program so runWrite's dispatchOwnedTransaction
-                        // check correctly sees the open tx.
-                        if (dispatchOwnsTx) {
-                            dispatchTxId = startTransactionBounded(program, "RPC " + procedureOf(request));
-                        }
                         try {
                             response = procedure.execute(request, this);
                         } catch (Exception retryEx) {
@@ -745,18 +741,13 @@ public class RpcContext {
                 if (!recovered && program != null && response != null && !response.success
                         && isBufferLockError(response.error)) {
                     logBufferLockRecovery(procedureOf(request), response.error);
-                    try {
-                        program = evictAndReopen(path);
-                    } catch (Exception reopenEx) {
-                        return RpcResponse.error("Recovery reopen failed after "
-                            + "buffer-lock corruption: " + message(reopenEx));
+                    RpcResponse reopenErr = recoverFromBufferLockCorruption(
+                        procedure, request, path, dispatchOwnsTx);
+                    if (reopenErr != null) {
+                        return reopenErr;
                     }
-                    active = program;
-                    this.path = (program != null) ? path : null;
+                    program = active;
                     recovered = true;
-                    if (dispatchOwnsTx) {
-                        dispatchTxId = startTransactionBounded(program, "RPC " + procedureOf(request));
-                    }
                     response = procedure.execute(request, this);
                 }
                 // Commit the dispatch-owned tx BEFORE checkin(). save() (called
@@ -826,6 +817,7 @@ public class RpcContext {
             }
         } finally {
             dispatchStartMs = 0; // clear before unlock so the watchdog sees 0, not a stale start
+            dispatchMutates = false; // paired with the start timestamp; clear together
             lock.unlock();
         }
     }
@@ -844,6 +836,71 @@ public class RpcContext {
         } catch (Exception ignored) {
             // Msg.warn failing (e.g. during shutdown) must not abort the recovery path.
         }
+    }
+
+    /**
+     * Password gates that must run BEFORE any project tree, program cache,
+     * or open transaction. Returns a non-null error response when either
+     * gate rejects the request; null when both pass.
+     *
+     * <p>Write gate ({@link #writePassword}): when set, every mutating call
+     * must carry a matching {@code "password"} field; read-only calls
+     * bypass the gate in both modes.
+     *
+     * <p>Admin gate ({@link #adminPassword}): when set, every procedure
+     * whose {@link RpcProcedure#requiresAdmin()} is true must carry a
+     * matching {@code "adminPassword"} field. Independent from the write
+     * gate — a leaked {@code GHIDRA_RPC_WRITE_PASSWORD} does NOT grant
+     * admin rights. Read &amp; non-admin procedures bypass this gate.
+     */
+    private RpcResponse checkPasswordGates(RpcProcedure procedure, JsonObject request) {
+        if (writePassword != null && procedure.mutates()) {
+            String supplied = optStr(request, "password");
+            if (supplied == null || !writePassword.equals(supplied)) {
+                return RpcResponse.error("Missing or invalid 'password' field; "
+                    + "mutating requests require GHIDRA_RPC_WRITE_PASSWORD.");
+            }
+        }
+        if (adminPassword != null && procedure.requiresAdmin()) {
+            String supplied = optStr(request, "adminPassword");
+            if (supplied == null || !adminPassword.equals(supplied)) {
+                return RpcResponse.error("Missing or invalid 'adminPassword' field; "
+                    + "this request requires GHIDRA_RPC_ADMIN_PASSWORD.");
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Shared evict-and-reopen sequence for both buffer-lock recovery surfaces
+     * (thrown and command-returned-false). On success, this updates
+     * {@link #active}, {@link #path}, and {@link #dispatchTxId} (when
+     * {@code dispatchOwnsTx} is true) so the caller can continue. On failure,
+     * returns a non-null error response; the caller returns it directly.
+     *
+     * <p>Mutates instance state: {@code active}, {@code path},
+     * {@code dispatchTxId}. Caller must read {@link #active} back into its
+     * local {@code program} variable after this returns null (success).
+     */
+    private RpcResponse recoverFromBufferLockCorruption(RpcProcedure procedure, JsonObject request,
+            String path, boolean dispatchOwnsTx) {
+        Program reopened;
+        try {
+            reopened = evictAndReopen(path);
+        } catch (Exception reopenEx) {
+            return RpcResponse.error("Recovery reopen failed after "
+                + "buffer-lock corruption: " + message(reopenEx));
+        }
+        active = reopened;
+        this.path = (reopened != null) ? path : null;
+        // The old program was released; Ghidra implicitly aborts its open
+        // transactions. Start a fresh dispatch tx on the new program so
+        // runWrite's dispatchOwnedTransaction check correctly sees the open
+        // tx. Only when dispatch owns a tx (mutating procedure on a program).
+        if (dispatchOwnsTx) {
+            dispatchTxId = startTransactionBounded(reopened, "RPC " + procedureOf(request));
+        }
+        return null;
     }
 
     private static String procedureOf(JsonObject request) {
