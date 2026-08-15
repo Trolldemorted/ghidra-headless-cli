@@ -1226,7 +1226,14 @@ public class RpcContext {
                         + ", user=" + c.getUser() + ")");
                     // notify=true so the RemoteAdapterListener fires on the
                     // live connection (matches CleanCheckouts.java:45).
-                    r.terminateCheckout(folder, name, c.getCheckoutId(), true);
+                    // terminateCheckout throws "Checkin is in-progress"
+                    // when the dead session is still mid-push to the
+                    // server (the server is waiting for an ack from the
+                    // dead RMI socket that will never come). The Ghidra
+                    // Server's checkin-side timeout clears the in-progress
+                    // state after a few seconds; retry with backoff until
+                    // it does. Other errors propagate to the outer catch.
+                    terminateCheckoutWithWait(r, folder, name, path, c);
                     terminated++;
                 } else {
                     // Safety guard: in a multi-user deployment, never
@@ -1252,6 +1259,66 @@ public class RpcContext {
                 }
             }
         }
+    }
+
+    /**
+     * Retry wrapper for {@link RepositoryAdapter#terminateCheckout} that
+     * rides out the {@code "Checkin is in-progress"} failure mode.
+     *
+     * <p>The Ghidra Server throws "Checkin is in-progress" when terminate
+     * is called on a checkout whose owning session is mid-push to the
+     * server (the server is waiting for an ack on the dead RMI socket
+     * that will never come). Ghidra Server's checkin-side timeout clears
+     * the in-progress state after a few seconds; until then terminate
+     * will keep failing. Backoff schedule: 1s, 2s, 4s, 8s = 15s total.
+     * If all retries exhaust, the last exception is re-thrown so the
+     * caller's outer catch surfaces it to the operator via the
+     * CleanCheckouts hint.
+     *
+     * <p>Other exceptions (permission denial, RMI socket death, etc.)
+     * are NOT retried — they are deterministic failures that won't be
+     * fixed by waiting.
+     */
+    private static final long[] TERMINATE_CHECKOUT_BACKOFF_MS = {
+        1_000L, 2_000L, 4_000L, 8_000L
+    };
+
+    private void terminateCheckoutWithWait(RepositoryAdapter r, String folder,
+            String name, String path, ItemCheckoutStatus c) throws Exception {
+        Exception last = null;
+        for (int attempt = 0; attempt <= TERMINATE_CHECKOUT_BACKOFF_MS.length; attempt++) {
+            try {
+                r.terminateCheckout(folder, name, c.getCheckoutId(), true);
+                if (attempt > 0) {
+                    Msg.info(this, "Self-heal terminated checkout id="
+                        + c.getCheckoutId() + " on " + path
+                        + " after " + attempt + " retries");
+                }
+                return;
+            } catch (Exception ex) {
+                last = ex;
+                String msg = message(ex);
+                if (!msg.contains("Checkin is in-progress")
+                        || attempt >= TERMINATE_CHECKOUT_BACKOFF_MS.length) {
+                    throw ex;
+                }
+                long backoff = TERMINATE_CHECKOUT_BACKOFF_MS[attempt];
+                Msg.warn(this, "Checkin is in-progress for '" + path
+                    + "' checkout id=" + c.getCheckoutId()
+                    + "; retrying terminate in " + backoff + "ms (attempt "
+                    + (attempt + 1) + "/" + TERMINATE_CHECKOUT_BACKOFF_MS.length + ")");
+                try {
+                    Thread.sleep(backoff);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw new RuntimeException(
+                        "Interrupted while waiting for checkin-in-progress"
+                            + " to clear on '" + path + "'", ie);
+                }
+            }
+        }
+        // Unreachable; loop either returns or throws. Defensive.
+        throw last;
     }
 
     /**
@@ -1418,39 +1485,101 @@ public class RpcContext {
     }
 
     /**
-     * Force a reconnect on the project's repository and retry the file
-     * lookup once. Returns the retry result, or null if the forced
-     * reconnect threw (Server genuinely down) or the lookup still
-     * misses. Any exception from {@link RepositoryAdapter#connect} is
-     * swallowed and logged — the caller falls back to the original miss
-     * path. The expensive operation is bounded: connect() either
-     * succeeds quickly (sub-second on the local box) or throws fast
-     * (the Ghidra Server is unreachable).
+     * Backoff schedule for {@link #retryResolveAfterReconnect}'s repeated
+     * {@code getFile} lookups. Each entry is the sleep BEFORE the next
+     * retry. Total wait across all retries: 250+500+1000+2000+4000 = 7750ms.
+     * Sized so the in-memory project tree cache has time to refresh after a
+     * disconnect+reconnect without blocking the dispatch for too long
+     * (the dispatch holds the server-wide lock for the whole window).
+     */
+    private static final long[] RESOLVE_RETRY_BACKOFF_MS = {
+        250L, 500L, 1_000L, 2_000L, 4_000L
+    };
+
+    /**
+     * Force a reconnect on the project's repository (if needed) and retry
+     * the file lookup with exponential backoff. Returns the retry result,
+     * or null if the forced reconnect threw (Server genuinely down) or the
+     * lookup still misses after all retries. Any exception from
+     * {@link RepositoryAdapter#connect} is swallowed and logged — the
+     * caller falls back to the original miss path. The expensive operation
+     * is bounded: connect() either succeeds quickly (sub-second on the
+     * local box) or throws fast (the Ghidra Server is unreachable).
+     *
+     * <p>The {@code getFile} retry loop addresses the stale-cache-after-
+     * disconnect case observed 2026-08-15: a self-heal attempt that
+     * triggers a project RMI disconnect (Ghidra Server invalidates the
+     * user's session on certain errors) leaves the cached folder tree
+     * null until the listener-driven invalidation propagates. A single
+     * {@code getFile} call after reconnect returns null because the
+     * cache hasn't refreshed yet; the caller then sees {@code "No file
+     * at '/...'"} for a file that exists on the Server. Wait + retry
+     * until the cache catches up.
      */
     private DomainFile retryResolveAfterReconnect(String path) {
+        RepositoryAdapter repo;
         try {
-            RepositoryAdapter repo = project.getRepository();
-            if (repo == null) {
-                return null;
-            }
-            if (repo.isConnected()) {
-                // The Server came back on its own (auto-reconnect from
-                // Ghidra's listener thread) — the file lookup may still
-                // be lagging the cache invalidation. One retry.
-                return project.getProjectData().getFile(normalize(path));
-            }
-            Msg.info(this, "Recent Ghidra Server disconnect detected; "
-                + "forcing reconnect before retrying " + path);
-            repo.connect();
-            DomainFile df = project.getProjectData().getFile(normalize(path));
-            if (df != null) {
-                Msg.info(this, "Reconnect + file lookup succeeded for " + path);
-            }
-            return df;
+            repo = (project == null) ? null : project.getRepository();
         } catch (Exception e) {
-            Msg.warn(this, "Forced reconnect failed for " + path + ": " + message(e));
+            Msg.warn(this, "project.getRepository() failed during reconnect-retry: "
+                + message(e));
             return null;
         }
+        if (repo == null) {
+            return null;
+        }
+        if (!repo.isConnected()) {
+            Msg.info(this, "Recent Ghidra Server disconnect detected; "
+                + "forcing reconnect before retrying " + path);
+            try {
+                repo.connect();
+            } catch (Exception e) {
+                Msg.warn(this, "Forced reconnect failed for " + path + ": "
+                    + message(e));
+                return null;
+            }
+        }
+        // Connected (now or already). The Server may have reconnected but
+        // the cached folder tree is still null — Ghidra invalidates it
+        // asynchronously via RemoteAdapterListener. Retry getFile with
+        // backoff until the cache catches up, the path resolves, or the
+        // client cancels.
+        for (int attempt = 0; attempt <= RESOLVE_RETRY_BACKOFF_MS.length; attempt++) {
+            DomainFile df;
+            try {
+                df = project.getProjectData().getFile(normalize(path));
+            } catch (Exception e) {
+                Msg.warn(this, "getFile(" + path + ") threw on attempt "
+                    + (attempt + 1) + ": " + message(e));
+                return null;
+            }
+            if (df != null) {
+                if (attempt > 0) {
+                    Msg.info(this, "Reconnect + file lookup succeeded for "
+                        + path + " on attempt " + (attempt + 1));
+                }
+                return df;
+            }
+            if (attempt >= RESOLVE_RETRY_BACKOFF_MS.length) {
+                break;
+            }
+            long backoff = RESOLVE_RETRY_BACKOFF_MS[attempt];
+            if (monitor != null && monitor.isCancelled()) {
+                Msg.info(this, "Aborting resolveFile retry for " + path
+                    + " — monitor cancelled");
+                return null;
+            }
+            try {
+                Thread.sleep(backoff);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return null;
+            }
+        }
+        Msg.warn(this, "Reconnect succeeded but getFile still misses after "
+            + RESOLVE_RETRY_BACKOFF_MS.length + " retries: " + path
+            + " (project tree cache may still be invalidating)");
+        return null;
     }
 
     /** Walk the project tree; append up to {@code limit} files whose name matches {@code name}. */
