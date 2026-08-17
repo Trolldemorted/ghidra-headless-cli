@@ -43,6 +43,12 @@ public final class ListFilesHandler implements RpcProcedure {
         int limit = RpcContext.reqInt(req, "limit");
 
         ProjectData data = ctx.project().getProjectData();
+        // Force-re-sync the in-memory project tree from the Ghidra Server
+        // if the disconnect listener marked it stale. file list walks
+        // getFolder + getFiles straight off the cache, so a stale cache
+        // (post-disconnect Server restart that lost the event counter)
+        // would silently drop entries. See RpcContext.ensureTreeFresh.
+        ctx.ensureTreeFresh();
         DomainFolder folder = data.getFolder(folderPath);
         if (folder == null) {
             return RpcResponse.error("No folder found for '" + folderPath + "'.");

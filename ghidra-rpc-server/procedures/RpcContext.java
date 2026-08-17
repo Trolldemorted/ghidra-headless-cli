@@ -225,6 +225,27 @@ public class RpcContext {
     private volatile long lastDisconnectMs = 0;
 
     /**
+     * Set to {@code true} when the project's repository reports a disconnect,
+     * cleared by {@link #ensureTreeFresh} after a successful
+     * {@code ProjectData.refresh(true)} re-sync. Read on every tree access
+     * ({@link #resolveFile}, {@code file list}); the tree may be stale after
+     * a Server disconnect because the in-memory folder cache is
+     * event-driven (see
+     * {@link #ensureTreeFresh} Javadoc for the full mechanism). Volatile
+     * suffices: a stale read either defers the refresh by one request
+     * (harmless) or skips it when no longer needed (also harmless).
+     */
+    private volatile boolean treeRefreshPending = false;
+
+    /**
+     * Serializes concurrent {@link #ensureTreeFresh} callers. Multiple
+     * requests can hit the path at once; only one should run the
+     * blocking {@code ProjectData.refresh(true)} (the others wait on this
+     * lock and then re-check the flag, which the winner cleared).
+     */
+    private final Object treeRefreshLock = new Object();
+
+    /**
      * Window after a disconnect during which {@link #resolveFile} retries.
      * Long enough to ride out the typical Ghidra Server restart (the
      * disconnect listener fires, the Server bounces, the RMI layer
@@ -523,6 +544,21 @@ public class RpcContext {
                         // retry. The "Disconnected from repository" log
                         // we observe is from this very listener.
                         lastDisconnectMs = System.currentTimeMillis();
+                        // The in-memory project folder tree is
+                        // event-driven (RepositoryChangeDispatcher polls
+                        // the Server for change events and feeds a
+                        // FileSystemListener). On a disconnect the
+                        // dispatcher thread stops; on reconnect
+                        // RepositoryAdapter.recoverConnection restarts
+                        // it, but if the Server was restarted in between,
+                        // the per-client event counter is gone and the
+                        // dispatcher only sees events from after the
+                        // reconnect. Any file/folder added during the
+                        // disconnect window is now invisible to
+                        // getFolder/getFiles. Mark the tree as needing
+                        // refresh; the next resolveFile / file-list call
+                        // re-syncs via ProjectData.refresh(true).
+                        treeRefreshPending = true;
                     }
                 });
             }
@@ -1501,6 +1537,11 @@ public class RpcContext {
      * sees the standard error. Added 2026-08-10.
      */
     private DomainFile resolveFile(String path, java.util.List<String> outCandidates) {
+        // Force-re-sync the in-memory project tree from the Server if the
+        // disconnect listener marked it stale. Without this, a successful
+        // getFile hit (the file IS in our cache) returns null for any file
+        // added during the disconnect window — see ensureTreeFresh Javadoc.
+        ensureTreeFresh();
         DomainFile df = project.getProjectData().getFile(normalize(path));
         if (df != null) {
             return df;
@@ -1539,6 +1580,72 @@ public class RpcContext {
         long t = lastDisconnectMs;
         if (t == 0) return false;
         return (System.currentTimeMillis() - t) <= DISCONNECT_RETRY_WINDOW_MS;
+    }
+
+    /**
+     * Force-re-sync the project's in-memory folder tree from the Ghidra
+     * Server after a disconnect. Called from any entry point that walks
+     * the tree ({@link #resolveFile}, the {@code file list} handler)
+     * before reading. Idempotent: clears the
+     * {@link #treeRefreshPending} flag on success or failure.
+     *
+     * <p><b>Why this is needed.</b> Ghidra's project folder tree
+     * ({@code ProjectData} / {@code DomainFolderDB}) is event-driven:
+     * a daemon {@code RepositoryChangeDispatcher} thread polls the
+     * Server for change events and feeds a {@code FileSystemListener}
+     * that mutates the cache. On a Server disconnect the dispatcher
+     * thread stops; on reconnect
+     * {@code RepositoryAdapter.recoverConnection()} restarts it — but
+     * if the Server was restarted during the disconnect, the
+     * per-client event counter is gone and the dispatcher only sees
+     * events from after the reconnect. Any file/folder added during
+     * the disconnect window is now invisible to
+     * {@code getFolder}/{@code getFiles}. {@code ProjectData.refresh(true)}
+     * is Ghidra's built-in re-sync that walks the tree from the Server.
+     * Observed 2026-08-17: after a 17:22:48 disconnect, {@code file list}
+     * was missing entries with no error in the log.
+     *
+     * <p><b>Cost.</b> {@code refresh(true)} is blocking — it walks the
+     * tree and re-fetches from the Server. Bounded by project size;
+     * typical seconds on a healthy Server. The dispatch lock is held
+     * across this call, so other requests wait. The
+     * {@link #treeRefreshLock} serializes concurrent callers: the first
+     * one in runs refresh, the rest block on the lock and re-check
+     * the flag (cleared by the winner) and return without doing
+     * anything.
+     *
+     * <p>Errors are swallowed and logged — {@code refresh(true)}'s
+     * own catch block funnels exceptions through
+     * {@code ClientUtil.handleException} (a GUI error dialog in
+     * non-headless mode; in headless it's effectively a log line). We
+     * clear the pending flag regardless so we don't loop on refresh
+     * failures; the next {@code recentDisconnect()} set will retrigger
+     * a fresh attempt.
+     */
+    public void ensureTreeFresh() {
+        if (!treeRefreshPending || project == null) {
+            return;
+        }
+        synchronized (treeRefreshLock) {
+            if (!treeRefreshPending) {
+                return;
+            }
+            try {
+                project.getProjectData().refresh(true);
+                Msg.info(this, "Project tree re-synced from Ghidra Server "
+                    + "after disconnect (refresh=true)");
+            } catch (Exception e) {
+                Msg.warn(this, "Project tree refresh failed after "
+                    + "disconnect: " + message(e)
+                    + " — subsequent lookups may be stale until the next "
+                    + "disconnect-triggered refresh");
+            } finally {
+                // Clear whether or not refresh succeeded — otherwise a
+                // persistently-failing refresh would re-run on every
+                // request. A fresh disconnect will set the flag again.
+                treeRefreshPending = false;
+            }
+        }
     }
 
     /**
