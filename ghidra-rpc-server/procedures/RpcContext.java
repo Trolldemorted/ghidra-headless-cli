@@ -2157,14 +2157,24 @@ public class RpcContext {
             Msg.warn(this, "Stale-checkout scan failed: " + message(ex)
                 + " (terminated " + terminated + " before the failure)");
         } finally {
-            if (server != null) {
-                try {
-                    server.disconnect();
-                } catch (Exception ignored) {
-                    // best-effort; the helper RMI adapter will be
-                    // garbage-collected anyway.
-                }
-            }
+            // INTENTIONALLY do NOT call server.disconnect() here.
+            // ClientUtil.getRepositoryServer returns a SHARED, cached
+            // adapter per host:port (static `serverHandles` Hashtable in
+            // ghidra.framework.client.ClientUtil) — the same object the
+            // project's adapter uses. Disconnecting it nukes the project's
+            // RMI socket, leaves the local project tree empty, and breaks
+            // every read until the next process restart. Observed 2026-08-27
+            // on prod: scan's disconnect fired the project's disconnect
+            // listener (`WARN Disconnected from Ghidra Server`), the local
+            // tree was wiped, and even the disconnect-triggered
+            // ensureTreeFresh() refresh at the next request returned 0 files
+            // (refresh(true) on a disconnected project doesn't repopulate the
+            // tree — see also retryResolveAfterReconnect, which has to
+            // call repo.connect() first). The scan only makes read-only RMI
+            // calls (getSubfolderList, getItemList, getCheckouts) and an
+            // occasional terminateCheckout write — none of which need a
+            // per-call disconnect. The shared adapter stays connected for
+            // the project's use.
         }
     }
 
