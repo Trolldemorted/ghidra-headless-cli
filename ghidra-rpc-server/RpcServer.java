@@ -239,6 +239,17 @@ public class RpcServer extends GhidraScript {
         context.startStuckDispatchWatchdog();
         registerHandlers();
 
+        // Force a full project-tree refresh from the Ghidra Server before
+        // any other startup work. The local tree is whatever Ghidra populated
+        // at connect time, and ensureTreeFresh() (gated on disconnect events)
+        // hasn't fired yet. Without this, file list returns whatever the local
+        // cache has — which can be a tiny fraction of the server's full
+        // inventory. Observed 2026-08-27 on prod: only the 2 files uploaded
+        // in this JVM were visible. Best-effort: a transient refresh failure
+        // logs and continues; the next disconnect will retrigger via
+        // ensureTreeFresh.
+        context.refreshProjectTreeOnStartup();
+
         // Phase 3 startup revert: if a previous JVM exited with dirty local
         // files (e.g. because the Ghidra Server connection was down at SIGTERM
         // time and closeAll's revertDirtyLocalFiles had no server to talk to),
@@ -249,6 +260,17 @@ public class RpcServer extends GhidraScript {
         // pushed. Best-effort: failures log and continue so a single bad file
         // can't block the server from starting.
         context.revertDirtyLocalFilesOnStartup();
+
+        // Proactive startup checkout cleanup: an abrupt JVM exit (SIGKILL,
+        // host OOM, container eviction, etc.) mid-request leaves the file's
+        // server-side checkout attached to the dead RMI session until the
+        // Ghidra Server reaps the broken socket. The on-demand self-heal in
+        // trySelfHealAfterExhaust only fires when the next request opens
+        // the file; if the JVM sits idle and the first request targets a
+        // different file, the orphan stays stuck. Walk the tree proactively
+        // and terminate our user's checkouts. Gated by the same
+        // GHIDRA_RPC_CHECKOUT_SELF_HEAL flag as the on-demand path.
+        context.scanAndTerminateStaleCheckoutsOnStartup();
 
         // Push out the server-side password expiry by re-setting the password to
         // its current value. Fresh user accounts on a -a0 Ghidra Server default to

@@ -64,6 +64,27 @@ public final class ProgramLoaderHandler implements RpcProcedure {
         TaskMonitor monitor = ctx.monitor();
         ensureFolder(project, folderPath);
 
+        // Fail fast on exact-name collision. Ghidra's ProgramLoader would otherwise
+        // auto-uniquify the name (foo -> foo.0) and create a *new* file rather than
+        // overwriting — leaving both the analyzed and the fresh copy on the server.
+        // Observed 2026-08-27: a user re-uploaded /Patrician3.exe expecting a
+        // replacement, but ProgramLoader silently produced /Patrician3 (and
+        // /Patrician3.0 on retry) so the rpcserver held a fresh copy while the
+        // canonical /Patrician3.exe stayed on the server. Force the operator to
+        // explicitly delete or rename before continuing.
+        DomainFolder folder = project.getProjectData().getFolder(folderPath);
+        if (folder != null) {
+            DomainFile existing = folder.getFile(name);
+            if (existing != null) {
+                String displayPath = folderPath.equals("/") ? "/" + name : folderPath + "/" + name;
+                return RpcResponse.error("File '" + displayPath
+                    + "' already exists (v" + existing.getVersion()
+                    + "). ProgramLoader creates a new file and never overwrites; "
+                    + "to replace an existing file, delete it first (file delete --file "
+                    + displayPath + ") or use a different name.");
+            }
+        }
+
         MessageLog log = new MessageLog();
         // Give the ByteProvider a name: the source(byte[]) overload leaves it null, which
         // NPEs loaders that sniff by filename (GZF/GDT/Tenet). name() sets the program name.

@@ -21,6 +21,7 @@ import ghidra.framework.client.PasswordClientAuthenticator;
 import ghidra.framework.client.RepositoryAdapter;
 import ghidra.framework.client.RepositoryServerAdapter;
 import ghidra.framework.client.RemoteAdapterListener;
+import ghidra.framework.remote.RepositoryItem;
 import ghidra.framework.store.ItemCheckoutStatus;
 import ghidra.framework.model.DomainFile;
 import ghidra.framework.model.DomainFolder;
@@ -1649,6 +1650,42 @@ public class RpcContext {
     }
 
     /**
+     * Force a full project-tree refresh from the Ghidra Server at JVM
+     * startup, BEFORE any user request lands. Complements
+     * {@link #ensureTreeFresh}, which only triggers on disconnect events:
+     * if no disconnect has fired in this JVM, {@code ensureTreeFresh()} is
+     * a no-op and the local tree is whatever Ghidra populated at connect
+     * time. Files that exist on the server but were never opened in this
+     * JVM are invisible to {@code getFolder}/{@code getFiles} until a
+     * refresh happens — observed 2026-08-27 on prod where {@code cli file
+     * list} returned only the 2 files uploaded in this JVM, missing the
+     * rest of the inventory.
+     *
+     * <p>Wired into {@link RpcServer#run} immediately before
+     * {@link #revertDirtyLocalFilesOnStartup} so the dirty-file scan walks
+     * a complete tree (otherwise it scans a partial tree and misses dirty
+     * files outside the local cache). Best-effort: a single failure logs
+     * and returns so a transient server error doesn't block the JVM from
+     * starting — the next disconnect will retrigger via
+     * {@code ensureTreeFresh}.
+     */
+    public void refreshProjectTreeOnStartup() {
+        if (project == null) {
+            return;
+        }
+        Msg.info(this, "Refreshing project tree from Ghidra Server at startup...");
+        try {
+            project.getProjectData().refresh(true);
+            Msg.info(this, "Project tree re-synced from Ghidra Server at startup "
+                + "(refresh=true)");
+        } catch (Exception e) {
+            Msg.warn(this, "Project tree refresh at startup failed: " + message(e)
+                + " — file list may show a partial inventory until the next "
+                + "disconnect-triggered refresh");
+        }
+    }
+
+    /**
      * Backoff schedule for {@link #retryResolveAfterReconnect}'s repeated
      * {@code getFile} lookups. Each entry is the sleep BEFORE the next
      * retry. Total wait across all retries: 250+500+1000+2000+4000 = 7750ms.
@@ -1959,6 +1996,175 @@ public class RpcContext {
         }
         for (DomainFolder sub : folder.getFolders()) {
             collectDirtyFiles(sub, out);
+        }
+    }
+
+    /**
+     * Proactive startup hook: walk the project tree via a fresh
+     * {@link RepositoryServerAdapter} (independent of the project's RMI
+     * socket) and terminate any stale checkouts owned by us. Complements
+     * the on-demand path in {@link #trySelfHealAfterExhaust}, which only
+     * fires when the next request tries to open a specific file. If the
+     * JVM sits idle for minutes/hours after restart and the first request
+     * targets a different file, the stale checkout stays stuck until
+     * something explicitly opens the original — observed 2026-08-27 on
+     * prod where the canonical {@code /Patrician3.exe} held a checkout
+     * orphaned by an abrupt JVM exit and the user had to manually clean
+     * it up.
+     *
+     * <p>Reuses the same user-identity safety filter as
+     * {@link #selfHealStaleCheckout}: only OUR user's checkouts are
+     * terminated, never another user's. Cross-user termination in a
+     * shared deployment would silently kill legitimate live checkouts;
+     * the Ghidra Server would refuse the call anyway (permission check
+     * is on user identity), but logging here makes the guard explicit.
+     *
+     * <p>Gated by {@link #selfHealEnabled} — if the operator set
+     * {@code GHIDRA_RPC_CHECKOUT_SELF_HEAL=0} to require manual
+     * {@code CleanCheckouts} recovery, the startup scan honors that.
+     * Same flag, same intent (clear OUR user's stale checkouts), one
+     * source of truth.
+     *
+     * <p>Cost: one RMI handshake (~500ms) + O(project size)
+     * {@code getCheckouts} calls (~50ms each). For a 100-file project,
+     * ~5-10s of startup delay. Bounded by project size; runs once per
+     * JVM start.
+     *
+     * <p>Best-effort: a single file's failure (e.g. a transient RMI
+     * glitch) is logged and skipped so one bad file doesn't abort the
+     * whole scan. Caller is {@link RpcServer#run} immediately after
+     * {@link #revertDirtyLocalFilesOnStartup} so the dirty-file scan
+     * sees a complete tree (assumes {@link #refreshProjectTreeOnStartup}
+     * ran first).
+     */
+    public void scanAndTerminateStaleCheckoutsOnStartup() {
+        if (project == null) {
+            return;
+        }
+        if (!selfHealEnabled) {
+            Msg.info(this, "Stale-checkout scan: disabled via "
+                + "GHIDRA_RPC_CHECKOUT_SELF_HEAL=0");
+            return;
+        }
+        String host = System.getenv("GHIDRA_HOST");
+        String portStr = System.getenv("GHIDRA_PORT");
+        String user = System.getenv("GHIDRA_USER");
+        String pass = System.getenv("GHIDRA_PASSWORD");
+        String repoName = System.getenv("GHIDRA_PROJECT");
+        if (host == null || portStr == null || user == null
+                || pass == null || repoName == null) {
+            Msg.warn(this, "Stale-checkout scan skipped: missing one of "
+                + "GHIDRA_HOST/GHIDRA_PORT/GHIDRA_USER/"
+                + "GHIDRA_PASSWORD/GHIDRA_PROJECT in env");
+            return;
+        }
+        int port;
+        try {
+            port = Integer.parseInt(portStr);
+        } catch (NumberFormatException nfe) {
+            Msg.warn(this, "Stale-checkout scan skipped: GHIDRA_PORT not numeric: "
+                + portStr);
+            return;
+        }
+        Msg.info(this, "Scanning project tree for stale checkouts owned by us at startup...");
+        RepositoryServerAdapter server = null;
+        int totalFiles = 0;
+        int terminated = 0;
+        try {
+            ClientUtil.setClientAuthenticator(
+                new PasswordClientAuthenticator(user, pass));
+            server = ClientUtil.getRepositoryServer(host, port, true);
+            RepositoryAdapter r = server.getRepository(repoName);
+            r.connect();
+            // Repo-side BFS walk — model: /workdir/testscripts/CleanCheckouts.java:32-53.
+            // The repo adapter walker produces (folder, name) tuples directly
+            // so we never need to translate between the local project tree and
+            // the helper RMI adapter.
+            java.util.ArrayDeque<String> stack = new java.util.ArrayDeque<>();
+            stack.push("/");
+            while (!stack.isEmpty()) {
+                String folder = stack.pop();
+                String[] subfolders;
+                try {
+                    subfolders = r.getSubfolderList(folder);
+                } catch (Exception ex) {
+                    Msg.warn(this, "Stale-checkout scan: getSubfolderList('"
+                        + folder + "') failed: " + message(ex) + " (skipping subtree)");
+                    continue;
+                }
+                for (String sub : subfolders) {
+                    stack.push(folder.equals("/") ? "/" + sub : folder + "/" + sub);
+                }
+                RepositoryItem[] items;
+                try {
+                    items = r.getItemList(folder);
+                } catch (Exception ex) {
+                    Msg.warn(this, "Stale-checkout scan: getItemList('"
+                        + folder + "') failed: " + message(ex) + " (skipping files in folder)");
+                    continue;
+                }
+                for (RepositoryItem it : items) {
+                    totalFiles++;
+                    String name = it.getName();
+                    ItemCheckoutStatus[] checkouts;
+                    try {
+                        checkouts = r.getCheckouts(folder, name);
+                    } catch (Exception ex) {
+                        Msg.warn(this, "Stale-checkout scan: getCheckouts('"
+                            + folder + "', '" + name + "') failed: " + message(ex)
+                            + " (skipping file)");
+                        continue;
+                    }
+                    if (checkouts == null || checkouts.length == 0) {
+                        continue;
+                    }
+                    String path = folder.equals("/") ? "/" + name : folder + "/" + name;
+                    for (ItemCheckoutStatus c : checkouts) {
+                        if (!user.equals(c.getUser())) {
+                            // Safety guard: in a multi-user deployment, never
+                            // terminate another user's checkout from a non-admin
+                            // process. The Ghidra Server would refuse it anyway,
+                            // but logging here makes the guard explicit.
+                            Msg.warn(this, "Stale-checkout scan: leaving checkout "
+                                + "of OTHER user " + c.getUser() + " on " + path);
+                            continue;
+                        }
+                        Msg.warn(this, "Stale-checkout scan: terminating checkout id="
+                            + c.getCheckoutId() + " on " + path
+                            + " (v" + c.getCheckoutVersion() + ", user=" + c.getUser() + ")");
+                        try {
+                            // Reuse the existing retry helper: rides out the
+                            // "Checkin is in-progress" failure mode (the dead
+                            // session is still mid-push to the server, waiting
+                            // for an ack that will never come). The Ghidra
+                            // Server's checkin-side timeout clears the in-progress
+                            // state after a few seconds; retry with backoff
+                            // until it does. Other errors propagate to the outer
+                            // catch (logged, file skipped, scan continues).
+                            terminateCheckoutWithWait(r, folder, name, path, c);
+                            terminated++;
+                        } catch (Exception ex) {
+                            Msg.warn(this, "Stale-checkout scan: could not terminate "
+                                + "checkout id=" + c.getCheckoutId() + " on " + path
+                                + ": " + message(ex) + " (skipping)");
+                        }
+                    }
+                }
+            }
+            Msg.info(this, "Stale-checkout scan: terminated " + terminated
+                + " stale checkout(s) across " + totalFiles + " files");
+        } catch (Exception ex) {
+            Msg.warn(this, "Stale-checkout scan failed: " + message(ex)
+                + " (terminated " + terminated + " before the failure)");
+        } finally {
+            if (server != null) {
+                try {
+                    server.disconnect();
+                } catch (Exception ignored) {
+                    // best-effort; the helper RMI adapter will be
+                    // garbage-collected anyway.
+                }
+            }
         }
     }
 
