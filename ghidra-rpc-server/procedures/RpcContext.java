@@ -699,12 +699,18 @@ public class RpcContext {
         // listing reads).
         dispatchMutates = procedure.mutates();
         try {
-            // Password gates run first so a rejected request never touches
-            // the project tree, the program cache, or an open transaction.
-            // See checkPasswordGates Javadoc for the per-gate semantics.
-            RpcResponse gateErr = checkPasswordGates(procedure, request);
-            if (gateErr != null) {
-                return gateErr;
+            // Fail-closed preflight: server-state guard (degraded
+            // repository / recent severe-checkout issue) AND password
+            // gates run BEFORE anything touches the project tree, the
+            // program cache, or an open transaction. server-state comes
+            // first so a degraded server can't be coaxed into writes
+            // by a privileged caller; the orchestrator sees a non-zero
+            // exit on EVERY RPC and can grep for "SEVERE server issue".
+            // Extracted into preflightGates to keep dispatch under the
+            // 200-line MethodLength cap; see 2026-08-27 note.
+            RpcResponse preflightErr = preflightGates(procedure, request);
+            if (preflightErr != null) {
+                return preflightErr;
             }
             // Capture path up front so the corruption-recovery retry (below) can re-resolve
             // the DomainFile. Only set when the procedure targets a program.
@@ -889,9 +895,28 @@ public class RpcContext {
     }
 
     /**
+     * Run both fail-closed preflight gates in order: server-state guard
+     * (degraded repository / recent severe-checkout issue) FIRST, then
+     * password gates. Returns the first non-null error response, or null
+     * when both pass. Called as the first step of {@link #dispatch} — a
+     * degraded server must not service ANY request, even from a privileged
+     * caller, so the orchestrator sees a non-zero exit on every RPC and
+     * can grep for "SEVERE server issue" to find the cause. Extracted from
+     * dispatch to keep that method under the 200-line MethodLength cap.
+     */
+    private RpcResponse preflightGates(RpcProcedure procedure, JsonObject request) {
+        RpcResponse serverErr = serverStateGuardError();
+        if (serverErr != null) {
+            return serverErr;
+        }
+        return checkPasswordGates(procedure, request);
+    }
+
+    /**
      * Password gates that must run BEFORE any project tree, program cache,
      * or open transaction. Returns a non-null error response when either
-     * gate rejects the request; null when both pass.
+     * gate rejects the request; null when both pass. Called from
+     * {@link #preflightGates} (the unified preflight entry point).
      *
      * <p>Write gate ({@link #writePassword}): when set, every mutating call
      * must carry a matching {@code "password"} field; read-only calls
@@ -917,6 +942,63 @@ public class RpcContext {
                 return RpcResponse.error("Missing or invalid 'adminPassword' field; "
                     + "this request requires GHIDRA_RPC_ADMIN_PASSWORD.");
             }
+        }
+        return null;
+    }
+
+    /**
+     * Fail-closed guard for every RPC: when the project is in a
+     * known-degraded state, return a SEVERE-server-issue error WITHOUT
+     * touching the project tree, the program cache, or opening any
+     * transaction. Called as the first step of {@link #dispatch} (above
+     * the password gates on purpose — a degraded server should not be
+     * issuing writes even from a privileged caller; the orchestrator
+     * needs a non-zero exit on every RPC so it knows to restart).
+     *
+     * <p>Two signals trigger the guard:
+     * <ul>
+     *   <li>{@link #isRepositoryConnected()} returns false — the project's
+     *       RMI socket is dead. Without this guard, every read would
+     *       silently produce empty/incorrect results because the local
+     *       tree hasn't been refreshed and refresh(true) on a disconnected
+     *       project doesn't repopulate (see
+     *       {@link #retryResolveAfterReconnect} for the connect() prefix
+     *       that's required).
+     *   <li>{@link #recentSevereCheckoutIssue()} returns true — a
+     *       terminate-checkout operation exhausted its 15s retry budget on
+     *       the server. The local tree may be fine, but the user should
+     *       know the project is in a degraded state and not trust results
+     *       until the next request's self-heal recovers.
+     * </ul>
+     *
+     * <p>Returns a non-null error response when either signal fires;
+     * null when the server is healthy. {@code ListFilesHandler} repeats
+     * the same check inline as defense-in-depth (so a manual `file list`
+     * also gets a loud error if dispatch is ever bypassed in a future
+     * test path).
+     */
+    private RpcResponse serverStateGuardError() {
+        if (!isRepositoryConnected()) {
+            return RpcResponse.error(
+                "SEVERE server issue: project repository reports "
+                + "disconnected from the Ghidra Server. The local tree "
+                + "may be empty/stale as a result; check server.log for "
+                + "`Disconnected from Ghidra Server` events and the "
+                + "orchestrator's restart status before trusting any "
+                + "RPC result from this JVM.");
+        }
+        if (recentSevereCheckoutIssue()) {
+            long t = lastSevereCheckoutIssueMs();
+            return RpcResponse.error(
+                "SEVERE server issue: a terminate-checkout operation "
+                + "exhausted its retry budget at " + t
+                + " (the Ghidra Server is stuck in checkin-in-progress on "
+                + "a stale checkout from a previous JVM). The next request "
+                + "may recover via on-demand self-heal, but as long as this "
+                + "condition persists the project may be in an inconsistent "
+                + "state. Inspect server.log for `Terminate-checkout retry "
+                + "budget exhausted` and consider manually clearing the "
+                + "offending checkout via /workdir/testscripts/CleanCheckouts.java.");
         }
         return null;
     }
