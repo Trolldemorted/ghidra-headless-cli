@@ -49,6 +49,41 @@ public final class ListFilesHandler implements RpcProcedure {
         // (post-disconnect Server restart that lost the event counter)
         // would silently drop entries. See RpcContext.ensureTreeFresh.
         ctx.ensureTreeFresh();
+        // Surface server-side problems explicitly. Two non-overlapping
+        // signals:
+        //  - project's RepositoryAdapter reports disconnected: refresh()
+        //    on a disconnected project silently produces an empty tree,
+        //    which the user can't distinguish from "the project is
+        //    genuinely empty". Without this check we'd return a
+        //    misleading "found 0 entries".
+        //  - recent severe-checkout-issue (terminate-checkout retry
+        //    budget exhausted because the server is stuck in
+        //    "Checkin is in-progress"): the local tree is fine but the
+        //    user should know the server is in a degraded state.
+        // Both are loud, actionable messages — replacing the silent
+        // empty-result pattern that hid prod issues 2026-08-27.
+        if (!ctx.isRepositoryConnected()) {
+            return RpcResponse.error(
+                "SEVERE server issue: project repository reports "
+                + "disconnected from the Ghidra Server. The local tree "
+                + "may be empty/stale as a result; check the server.log "
+                + "for `Disconnected from Ghidra Server` events and the "
+                + "orchestrator's restart status before trusting any "
+                + "file-list result from this JVM.");
+        }
+        if (ctx.recentSevereCheckoutIssue()) {
+            long t = ctx.lastSevereCheckoutIssueMs();
+            return RpcResponse.error(
+                "SEVERE server issue: a terminate-checkout operation "
+                + "exhausted its retry budget at " + t
+                + " (the Ghidra Server is stuck in checkin-in-progress on "
+                + "a stale checkout from a previous JVM). The next request "
+                + "may recover via on-demand self-heal, but as long as this "
+                + "condition persists the project may be in an inconsistent "
+                + "state. Inspect server.log for `Terminate-checkout retry "
+                + "budget exhausted` and consider manually clearing the "
+                + "offending checkout via /workdir/testscripts/CleanCheckouts.java.");
+        }
         DomainFolder folder = data.getFolder(folderPath);
         if (folder == null) {
             return RpcResponse.error("No folder found for '" + folderPath + "'.");

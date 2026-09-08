@@ -226,6 +226,19 @@ public class RpcContext {
     private volatile long lastDisconnectMs = 0;
 
     /**
+     * Set whenever a {@code terminateCheckout} request exhausts its 15s
+     * retry budget because the Ghidra Server keeps reporting
+     * {@code "Checkin is in-progress"} — a SEVERE server-side condition
+     * (the dead session's in-progress state hasn't cleared). Read-only
+     * surface via {@link #recentSevereCheckoutIssue()} for procedures that
+     * want to surface a clear error to the user instead of returning a
+     * misleading empty result. Set in
+     * {@link #terminateCheckoutWithWait}; cleared after a window via
+     * {@link #clearSevereCheckoutIssueAfterWindow(long)}.
+     */
+    private volatile long lastSevereCheckoutIssueMs = 0;
+
+    /**
      * Set to {@code true} when the project's repository reports a disconnect,
      * cleared by {@link #ensureTreeFresh} after a successful
      * {@code ProjectData.refresh(true)} re-sync. Read on every tree access
@@ -1344,14 +1357,16 @@ public class RpcContext {
                 + message(ex));
             return 0;
         } finally {
-            if (server != null) {
-                try {
-                    server.disconnect();
-                } catch (Exception ignored) {
-                    // best-effort; the helper RMI adapter will be
-                    // garbage-collected anyway.
-                }
-            }
+            // INTENTIONALLY do NOT call server.disconnect() here.
+            // ClientUtil.getRepositoryServer returns a SHARED, cached adapter
+            // per host:port (static `serverHandles` Hashtable in
+            // ghidra.framework.client.ClientUtil) — the same object the
+            // project's adapter uses. Disconnecting it nukes the project's
+            // RMI socket and wipes the local tree; the per-request self-heal
+            // path was observed 2026-08-27 (prod) making the entire project
+            // unreadable right after a successful termination. See the
+            // long-form note in scanAndTerminateStaleCheckoutsOnStartup's
+            // finally block.
         }
     }
 
@@ -1394,6 +1409,23 @@ public class RpcContext {
                 String msg = message(ex);
                 if (!msg.contains("Checkin is in-progress")
                         || attempt >= TERMINATE_CHECKOUT_BACKOFF_MS.length) {
+                    if (msg.contains("Checkin is in-progress")) {
+                        // Out of retries: the Ghidra Server is stuck — the
+                        // dead session's checkin-in-progress state has not
+                        // cleared within 15s. This is a SEVERE server-side
+                        // condition (observed 2026-08-27 on prod, where the
+                        // server took ~77s to clear the in-progress state and
+                        // the next request's self-heal recovered). Loud ERROR so
+                        // operators see it in default log filtering AND so
+                        // ListFiles can include a "server issue" note in its
+                        // response (see recentSevereCheckoutIssue()).
+                        lastSevereCheckoutIssueMs = System.currentTimeMillis();
+                        Msg.error(this, "Terminate-checkout retry budget exhausted "
+                            + "for '" + path + "' checkout id=" + c.getCheckoutId()
+                            + ": " + msg + " (server stuck in checkin-in-progress "
+                            + "longer than 15s; the next request's self-heal may "
+                            + "recover, but this is a SEVERE server issue)");
+                    }
                     throw ex;
                 }
                 long backoff = TERMINATE_CHECKOUT_BACKOFF_MS[attempt];
@@ -1581,6 +1613,60 @@ public class RpcContext {
         long t = lastDisconnectMs;
         if (t == 0) return false;
         return (System.currentTimeMillis() - t) <= DISCONNECT_RETRY_WINDOW_MS;
+    }
+
+    /**
+     * True when a {@code terminateCheckout} exhausted its 15s retry budget
+     * (the Ghidra Server kept reporting {@code "Checkin is in-progress"} on
+     * a stale checkout) within {@link #DISCONNECT_RETRY_WINDOW_MS}. Reads as
+     * a windowed boolean so the next request — typically a {@code file list}
+     * from the user checking the aftermath — surfaces a clear error
+     * ("SEVERE server issue: ..."), not a misleading empty result. Flag is
+     * cleared automatically by the window check.
+     */
+    public boolean recentSevereCheckoutIssue() {
+        long t = lastSevereCheckoutIssueMs;
+        if (t == 0) return false;
+        return (System.currentTimeMillis() - t) <= DISCONNECT_RETRY_WINDOW_MS;
+    }
+
+    /**
+     * Wall-clock millis of the most recent terminate-checkout budget
+     * exhaustion, or 0 if none in this JVM. Procedures can use this to
+     * annotate responses with a "server issue recently observed" warning
+     * without having to second-guess the boolean window.
+     */
+    public long lastSevereCheckoutIssueMs() {
+        return lastSevereCheckoutIssueMs;
+    }
+
+    /**
+     * True when the project's {@link RepositoryAdapter} is in a connected
+     * state — i.e. the local project's RMI socket is live. Returns false
+     * for local (non-shared) projects where {@code project.getRepository()}
+     * is null. Procedures like {@code file list} use this to distinguish
+     * "the project genuinely has no files" from "the local tree is empty
+     * because the project's connection is dead" — observed 2026-08-27 on
+     * prod where self-heal's {@code server.disconnect()} nuked the
+     * project's adapter and {@code file list} returned a misleading "0
+     * entries". Cheap: {@code isConnected()} is a local getter.
+     */
+    public boolean isRepositoryConnected() {
+        if (project == null) {
+            return false;
+        }
+        try {
+            RepositoryAdapter repo = project.getRepository();
+            if (repo == null) {
+                // Local (non-shared) project — no RMI to be disconnected from.
+                return true;
+            }
+            return repo.isConnected();
+        } catch (Exception e) {
+            // project.getRepository() can throw if the project is mid-teardown.
+            // Treat as disconnected rather than masking the underlying issue.
+            return false;
+        }
     }
 
     /**
