@@ -549,14 +549,13 @@ public class RpcContext {
                 repo.addListener(new RemoteAdapterListener() {
                     @Override
                     public void connectionStateChanged(Object state) {
-                        // Ghidra's listener fires on both transitions; we
-                        // only care about the disconnected event. The state
-                        // object is internal — checking isConnected() here
-                        // would race the listener thread; instead we trust
-                        // the listener to fire for the disconnect side
-                        // and let the reconnect path drive isConnected on
-                        // retry. The "Disconnected from repository" log
-                        // we observe is from this very listener.
+                        // Ghidra's listener fires on both transitions;
+                        // we update the timestamps for both (the
+                        // reconnect side updates recentDisconnect(), the
+                        // disconnect side updates recentSevereCheckoutIssue-
+                        // free recovery path). The "Disconnected from
+                        // repository" log we observe on the WARN line is
+                        // from this very listener.
                         lastDisconnectMs = System.currentTimeMillis();
                         // The in-memory project folder tree is
                         // event-driven (RepositoryChangeDispatcher polls
@@ -573,6 +572,110 @@ public class RpcContext {
                         // refresh; the next resolveFile / file-list call
                         // re-syncs via ProjectData.refresh(true).
                         treeRefreshPending = true;
+                        // Drive the JVM-exit recovery path. Pre-fix:
+                        // the listener logged timestamps and left the
+                        // JVM serving SEVERE-error responses forever
+                        // (observed 2026-09-17: Server's RMI socket
+                        // died 09:46, JVM stayed up with isConnected()
+                        // == false until 15:28 and beyond; every RPC
+                        // returned "SEVERE server issue: project
+                        // repository reports disconnected" with no
+                        // orchestrator restart). The per-RMI-call catch
+                        // sites (noteConnectionLost at the checkout
+                        // helpers, openProgram, checkin, etc.) only fire
+                        // when an RPC throws — they don't help when the
+                        // disconnect happens while the JVM is idle.
+                        // The handler chain we're kicking off:
+                        //   1. Defer 500ms to let Ghidra's auto-
+                        //      recoverConnection land (it doesn't
+                        //      always fire for Service-side restarts —
+                        //      verified by inspection of Ghidra
+                        //      12.1.2's RepositoryAdapter; the
+                        //      keepalive ping returns false but the
+                        //      socket itself doesn't always re-establish
+                        //      on its own).
+                        //   2. Check repo.isConnected() — if the socket
+                        //      came back, do nothing.
+                        //   3. Otherwise call tryReconnect(): a forced
+                        //      repo.connect() may succeed where the
+                        //      auto-reconnect failed.
+                        //   4. If the forced reconnect also fails,
+                        //      fire onConnectionLost directly. Bypass
+                        //      CONNECTION_LOST_THRESHOLD — this isn't a
+                        //      noisy RMI-call catch, it's the underlying
+                        //      connection-state listener confirming the
+                        //      socket is gone and our one-shot recover
+                        //      couldn't bring it back. The handler
+                        //      closes ServerSocket and schedules
+                        //      System.exit(0) after a 2s grace.
+                        // The whole sequence runs on a daemon thread so
+                        // Ghidra's listener pump isn't blocked on a
+                        // repo.connect() that may take seconds on a
+                        // dead RMI socket.
+                        Thread recovery = new Thread(() -> {
+                            try {
+                                Thread.sleep(500);
+                            } catch (InterruptedException ie) {
+                                Thread.currentThread().interrupt();
+                                return;
+                            }
+                            boolean stillDown;
+                            try {
+                                RepositoryAdapter r = project.getRepository();
+                                stillDown = r != null && !r.isConnected();
+                            } catch (Exception e) {
+                                // Defensive: if the getter itself
+                                // throws (adapter in a half-torn-down
+                                // state), treat it as down so we attempt
+                                // recovery rather than staying silent.
+                                stillDown = true;
+                            }
+                            if (!stillDown) {
+                                return; // auto-reconnect already landed
+                            }
+                            if (tryReconnect()) {
+                                Msg.info(this,
+                                    "Listener-driven forced reconnect "
+                                    + "succeeded after disconnect");
+                                return;
+                            }
+                            Msg.error(this,
+                                "Ghidra Server RMI socket down and forced "
+                                + "reconnect failed; firing onConnectionLost "
+                                + "so the JVM exits and the orchestrator "
+                                + "restarts with a fresh connection.");
+                            Runnable h = onConnectionLost;
+                            if (h != null) {
+                                try {
+                                    h.run();
+                                } catch (Exception handlerEx) {
+                                    Msg.error(this,
+                                        "onConnectionLost handler threw",
+                                        handlerEx);
+                                }
+                            }
+                            // Belt-and-suspenders: if the handler was
+                            // unregistered or threw before scheduling
+                            // exit, force-exit now. The orchestrator
+                            // restart is the only path back to a
+                            // healthy state from here.
+                            Thread forceExit = new Thread(() -> {
+                                try {
+                                    Thread.sleep(2_000);
+                                } catch (InterruptedException ie) {
+                                    Thread.currentThread().interrupt();
+                                }
+                                Msg.error(this,
+                                    "Forcing JVM exit after disconnect "
+                                    + "recovery (onConnectionLost did not "
+                                    + "schedule exit)");
+                                System.exit(0);
+                            }, "rpc-disconnect-listener-force-exit");
+                            forceExit.setDaemon(true);
+                            forceExit.start();
+                        }, "rpc-disconnect-listener-recovery");
+                        recovery.setDaemon(true);
+                        recovery.start();
                     }
                 });
             }
