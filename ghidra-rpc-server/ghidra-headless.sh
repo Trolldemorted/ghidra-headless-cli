@@ -204,6 +204,21 @@ export GHIDRA_PROJECT
 #                                       Ubuntu ships a clean CDS cache; the
 #                                       fix lands in Temurin 21.0.12+. Until
 #                                       then, route around it.
+# -XX:+ExitOnOutOfMemoryError  — JVM exits immediately on the first uncaught
+#                                       OutOfMemoryError from any thread.
+#                                       Without this, OOMs kill worker
+#                                       threads one-by-one and the JVM stays
+#                                       up serving cached state forever
+#                                       (observed 2026-09-28: container
+#                                       never restarted after heap exhaustion
+#                                       because no recovery path caught OOM).
+#                                       Belt-and-suspenders with the
+#                                       setDefaultUncaughtExceptionHandler in
+#                                       RpcServer.run(); one of the two will
+#                                       fire per OOM, both produce exit code
+#                                       70 (set by the handler; the JVM's
+#                                       own ExitOnOutOfMemoryError uses
+#                                       System.exit(1)).
 JDK_JAVA_OPTIONS="${JDK_JAVA_OPTIONS:-} \
   --enable-native-access=ALL-UNNAMED \
   -Djavax.xml.accessExternalDTD= \
@@ -215,7 +230,8 @@ JDK_JAVA_OPTIONS="${JDK_JAVA_OPTIONS:-} \
   -XX:ParallelGCThreads=2 \
   -XX:CICompilerCount=2 \
   -Djava.awt.headless=true \
-  -Xshare:off"
+  -Xshare:off \
+  -XX:+ExitOnOutOfMemoryError"
 export JDK_JAVA_OPTIONS
 
 # En_US is the only locale Ghidra's resource bundles ship with. JVM reads

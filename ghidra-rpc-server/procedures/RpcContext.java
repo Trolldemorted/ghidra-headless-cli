@@ -658,7 +658,13 @@ public class RpcContext {
                             // unregistered or threw before scheduling
                             // exit, force-exit now. The orchestrator
                             // restart is the only path back to a
-                            // healthy state from here.
+                            // healthy state from here. Exit code 70
+                            // matches the stuck-dispatch watchdog below
+                            // (line ~440) and the connection-lost exit
+                            // timer in RpcServer: signals "forced
+                            // recovery, please restart" — docker
+                            // --restart=unless-stopped restarts on any
+                            // code; --restart=on-failure needs non-zero.
                             Thread forceExit = new Thread(() -> {
                                 try {
                                     Thread.sleep(2_000);
@@ -669,7 +675,7 @@ public class RpcContext {
                                     "Forcing JVM exit after disconnect "
                                     + "recovery (onConnectionLost did not "
                                     + "schedule exit)");
-                                System.exit(0);
+                                System.exit(70);
                             }, "rpc-disconnect-listener-force-exit");
                             forceExit.setDaemon(true);
                             forceExit.start();

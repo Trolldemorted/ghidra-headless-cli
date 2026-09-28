@@ -93,14 +93,15 @@ public class RpcServer extends GhidraScript {
 
     /**
      * Grace period after the connection-lost handler closes the ServerSocket,
-     * before we force {@link System#exit(int) System.exit(0)}. Long enough
+     * before we force {@link System#exit(int) System.exit(70)}. Long enough
      * for the accept loop to unwind and the run() finally block
      * ({@code clientPool.shutdownNow + context.closeAll + "Stopped."} log)
      * to finish; short enough that the orchestrator sees the JVM exit
      * promptly and starts a replacement with a fresh RMI connection. If
      * analyzeHeadless DOES unwind on its own before this expires, the
      * JVM exits naturally and the System.exit is harmless (no-op on an
-     * already-exited process).
+     * already-exited process). Exit code 70 (not 0) signals "forced
+     * recovery, please restart" to docker restart policies.
      */
     private static final long CONNECTION_LOST_EXIT_GRACE_MS = 2_000;
 
@@ -127,6 +128,17 @@ public class RpcServer extends GhidraScript {
 
     @Override
     public void run() throws Exception {
+        // Install the OOM halter BEFORE anything else so even initialization-time
+        // OOM (during RpcContext construction, project tree refresh, password
+        // refresh, etc.) is caught. The JDK_JAVA_OPTIONS flag
+        // -XX:+ExitOnOutOfMemoryError is the primary safety net; this handler is
+        // belt-and-suspenders for the case where an OOM reaches our default
+        // uncaught-exception handler before the JVM's own ExitOnOutOfMemoryError
+        // machinery notices. Both routes produce a non-zero exit code so the
+        // docker --restart=unless-stopped orchestrator restarts us. See
+        // /root/.claude/plans/polished-beaming-abelson.md.
+        installOomExitHandler();
+
         String bind = env("RPC_BIND", "0.0.0.0");
         int port = Integer.parseInt(env("RPC_PORT", "18000"));
 
@@ -220,7 +232,14 @@ public class RpcServer extends GhidraScript {
                 Msg.error(this, "Forcing JVM exit after "
                     + CONNECTION_LOST_EXIT_GRACE_MS + "ms grace period "
                     + "(analyzeHeadless did not unwind on its own).");
-                System.exit(0);
+                // Exit code 70 (matches the stuck-dispatch watchdog in
+                // RpcContext.watchdogLoop): signals "forced recovery, please
+                // restart" to any orchestrator. With docker --restart=
+                // unless-stopped the orchestrator restarts on any code; with
+                // --restart=on-failure the non-zero code is what triggers
+                // restart. System.exit runs the SIGTERM shutdown hook which
+                // releases the local checkout cleanly.
+                System.exit(70);
             }, "rpc-connection-lost-exit");
             exitTimer.setDaemon(true);
             exitTimer.start();
@@ -456,6 +475,62 @@ public class RpcServer extends GhidraScript {
      * session — the disconnect they perform is what releases the checkouts — and run
      * concurrently with this hook, so they cannot be ordered away from here.
      */
+    /**
+     * Install a JVM-wide default UncaughtExceptionHandler that halts the JVM on the
+     * first OutOfMemoryError from any thread. The JDK_JAVA_OPTIONS flag
+     * -XX:+ExitOnOutOfMemoryError is the primary safety net for OOM that reaches the
+     * JVM's own uncaught-exception machinery; this handler is belt-and-suspenders for
+     * OOM that reaches our default handler (which JDK fires before the JVM's
+     * ExitOnOutOfMemoryError machinery for some Error subclasses).
+     *
+     * <p>Why this matters: observed 2026-09-28 on prod — the JVM threw
+     * {@code OutOfMemoryError} from GhidraSwinglessTimer, main, rpc-client, and RMI
+     * RenewClean threads, but no recovery path caught it. The
+     * {@link RpcContext#noteConnectionLost} sites only fire from dispatch code
+     * that catches "Not connected to repository server", and the disconnect-listener
+     * daemon thread could not even allocate memory to run. The JVM stayed up
+     * serving cached state forever.
+     *
+     * <p>Why {@link Runtime#halt(int)} and not {@link System#exit(int)}:
+     * {@code Runtime.halt} terminates the JVM immediately, bypassing shutdown hooks
+     * and finalizers — both of which may be unable to allocate memory in OOM
+     * state, which is the very failure mode we are trying to escape. Exit code
+     * 70 matches the stuck-dispatch watchdog in {@code RpcContext.watchdogLoop}
+     * (signals "forced recovery, please restart"); with docker
+     * {@code --restart=unless-stopped} the orchestrator restarts on any code;
+     * with {@code --restart=on-failure} the non-zero code is what triggers
+     * restart. {@code halt} is non-static, so we go through
+     * {@link Runtime#getRuntime()} (which itself does not allocate beyond a
+     * cached singleton).
+     *
+     * <p>Non-OOM throwables fall through to the JVM default handler (which prints
+     * to stderr) — we deliberately do not change behavior for unrelated
+     * exceptions.
+     */
+    private void installOomExitHandler() {
+        Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
+            if (throwable instanceof OutOfMemoryError) {
+                // Best-effort log. Msg.error may itself fail to allocate under
+                // OOM pressure — wrap in try/catch so the halt below is
+                // unconditional regardless of how starved the heap is.
+                try {
+                    Msg.error(this, "OutOfMemoryError on thread '" + thread.getName()
+                        + "' (" + throwable.getClass().getSimpleName() + "); halting "
+                        + "JVM with exit code 70 so the orchestrator restarts us "
+                        + "with a fresh heap.");
+                } catch (Throwable ignored) {
+                    // heap too starved to even log; that's fine
+                }
+                Runtime.getRuntime().halt(70);
+            }
+            // For non-OOM throwables, do nothing — let the JVM default handler
+            // print to stderr. We deliberately don't chain to a "previous"
+            // handler because at the time we install this, no application-level
+            // handler is registered yet, and the JVM default (print to stderr)
+            // is the right fallback.
+        });
+    }
+
     private void installShutdownHook() {
         mainThread = Thread.currentThread();
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
