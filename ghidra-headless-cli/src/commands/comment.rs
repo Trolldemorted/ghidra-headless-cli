@@ -24,16 +24,31 @@ pub enum Cmd {
         op: Op,
     },
     /// Plate comment (function header in the listing) at an address
+    ///
+    /// Renders as the header comment in `function decompile` when the
+    /// address is a function entry.
     Plate {
         #[command(subcommand)]
         op: Op,
     },
     /// Repeatable comment at an address
+    ///
+    /// Stored per function, and NOT rendered by this CLI's decompile —
+    /// neither in the function's own output nor at its call sites. Read it
+    /// back with `comment repeatable get`; an unchanged decompile does not
+    /// mean the write failed.
     Repeatable {
         #[command(subcommand)]
         op: Op,
     },
     /// Function-level decompiler comment at an address (resolves to containing function)
+    ///
+    /// SAME STORAGE as `comment plate` on a function entry — Ghidra stores
+    /// a function's comment as the PLATE comment at its entry point, so
+    /// writing one overwrites the other. `Function.getComment()` is
+    /// `getComment(PLATE, entryPoint)`. The two names differ only in where
+    /// you are looking: this one is named for the decompile output it
+    /// appears in.
     Decompiler {
         #[command(subcommand)]
         op: Op,

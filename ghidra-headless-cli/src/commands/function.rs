@@ -285,8 +285,8 @@ pub enum Cmd {
     /// the write failed. Read it back with `comment repeatable get`, or look
     /// for the `repeatable comment: set` line in `function show`.
     ///
-    /// The decompiler comment is the one type that does appear in decompile
-    /// output; use `comment decompiler set` for that.
+    /// If you want a comment that DOES show up in `function decompile`, use
+    /// the plate comment instead: `comment plate set`.
     SetRepeatableComment {
         #[arg(long = "file", value_name = "FILE")]
         program: String,
