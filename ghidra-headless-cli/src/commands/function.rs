@@ -102,8 +102,8 @@ pub enum Cmd {
     /// type, parameter list with names and types, stack purge, stack frame
     /// size). Sourced from the `Function` object directly — does NOT go
     /// through the decompiler, so it cannot return a stale decompile.
-    /// Use to verify an edit landed (`function update` is reported to
-    /// intermittently partial-apply; see notes/rpc-server.md).
+    /// Useful for confirming a decompile reflects your edits rather than
+    /// a cached one.
     Show {
         #[arg(long = "file", value_name = "FILE")]
         program: String,

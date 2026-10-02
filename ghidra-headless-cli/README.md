@@ -12,7 +12,6 @@ load`/`file analyze` cover import and auto-analysis.
 Build:
 
 ```bash
-export RUSTUP_HOME=/workdir/.rustup CARGO_HOME=/workdir/.cargo PATH=/workdir/.cargo/bin:$PATH
 cargo build --release
 ./target/release/ghidra-headless-cli --help
 ```
