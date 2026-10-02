@@ -205,11 +205,16 @@ pub enum Cmd {
     },
     /// Update convention, return type and/or parameters
     ///
-    /// Every field is presence-sensitive: you get an error only for a
-    /// present-but-unusable value, never for a field you left out. Omitting
-    /// `--parameter` PRESERVES the existing parameter list — pass at least
-    /// one `--parameter` to replace the list wholesale, or
-    /// `--clear-parameters` to zero it.
+    /// A flag you leave out changes nothing, so you can edit one part of a
+    /// signature without restating the rest. `--parameter` REPLACES the
+    /// whole list, not appends to it — pass every parameter you want to
+    /// keep, or use `--clear-parameters` to zero the list.
+    ///
+    /// Prints the resulting signature after the write, so the output is
+    /// the read-back, not just an exit code. If the write reported success
+    /// but did not land, a WARNING line precedes it and the printed
+    /// signature shows what is actually stored; re-run the same command to
+    /// apply it, or inspect with `function show`.
     Update {
         #[arg(long = "file", value_name = "FILE")]
         program: String,
