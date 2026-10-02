@@ -278,6 +278,15 @@ pub enum Cmd {
         purge: i64,
     },
     /// Set a function's repeatable comment
+    ///
+    /// The comment is stored on the function but this CLI's decompile does
+    /// NOT render it — not in the function's own output, and not at its call
+    /// sites — so an unchanged decompile here is expected and does not mean
+    /// the write failed. Read it back with `comment repeatable get`, or look
+    /// for the `repeatable comment: set` line in `function show`.
+    ///
+    /// The decompiler comment is the one type that does appear in decompile
+    /// output; use `comment decompiler set` for that.
     SetRepeatableComment {
         #[arg(long = "file", value_name = "FILE")]
         program: String,
@@ -665,7 +674,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
 ///   parameters (array of {name, dataType, ordinal, storage})
 ///   hasVarArgs (bool)
 ///   noReturn (bool)
-///   repeatable (bool)
+///   hasRepeatableComment (bool)
 ///
 /// Format: header line (name @ entryPoint), then one line per signature
 /// attribute. Parameters printed as a numbered table — ordinal-based, so
@@ -699,6 +708,15 @@ fn print_show_function(response: &Json) {
         if b {
             println!("  no-return:          yes");
         }
+    }
+    // Presence, not the text: the decompiler render does not include plate
+    // or repeatable comments, so this line is the only way to tell a
+    // `function set-repeatable-comment` that reported success actually
+    // stored something. Read the text with `comment repeatable get`.
+    if let Some(b) = response.get("hasRepeatableComment").and_then(Json::as_bool)
+        && b
+    {
+        println!("  repeatable comment: set (read with `comment repeatable get`)");
     }
     if let Some(params) = response.get("parameters").and_then(Json::as_array) {
         if params.is_empty() {
