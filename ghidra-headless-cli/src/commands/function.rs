@@ -203,7 +203,13 @@ pub enum Cmd {
         #[arg(long)]
         address_set: Vec<String>,
     },
-    /// Update convention, return type and parameters in one shot
+    /// Update convention, return type and/or parameters
+    ///
+    /// Every field is presence-sensitive: you get an error only for a
+    /// present-but-unusable value, never for a field you left out. Omitting
+    /// `--parameter` PRESERVES the existing parameter list — pass at least
+    /// one `--parameter` to replace the list wholesale, or
+    /// `--clear-parameters` to zero it.
     Update {
         #[arg(long = "file", value_name = "FILE")]
         program: String,
@@ -228,9 +234,16 @@ pub enum Cmd {
         /// Return data type name [default: unchanged]
         #[arg(long)]
         return_type: Option<String>,
-        /// Parameter as [NAME=]DATATYPE (repeatable)
+        /// Parameter as [NAME=]DATATYPE (repeatable) — REPLACES the whole list
         #[arg(long)]
         parameter: Vec<String>,
+        /// Clear all parameters [default: preserved]
+        ///
+        /// Omit --parameter to leave the parameter list exactly as stored;
+        /// pass one or more --parameter to replace it wholesale; pass
+        /// --clear-parameters to zero it. Conflicting with --parameter.
+        #[arg(long, conflicts_with = "parameter")]
+        clear_parameters: bool,
         /// Symbol source type [default: user-defined]
         #[arg(long, value_enum)]
         source: Option<Source>,
@@ -533,11 +546,21 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             calling_convention,
             return_type,
             parameter,
+            clear_parameters,
             source,
             force,
         } => {
-            let params = common::parameters(&parameter).map_err(common::log_arg_err)?;
-            client.run_simple(
+            // `parameters` is presence-sensitive on the wire: the key being
+            // ABSENT means "leave the parameter list alone", while an empty
+            // ARRAY means "replace with nothing". `opt_json` omits the key
+            // when handed None, so the two cases need distinct paths —
+            // collapsing them is what silently dropped parameters.
+            let params = if clear_parameters {
+                Some(Json::Arr(Vec::new()))
+            } else {
+                common::parameters(&parameter).map_err(common::log_arg_err)?
+            };
+            let response = client.invoke(
                 Req::new("UpdateFunctionCommand")
                     .str("file", program)
                     .str("address", address)
@@ -548,7 +571,15 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                     .opt_str("source", Source::opt(source))
                     .bool("force", force)
                     .build(),
-            )
+            )?;
+            // Surface the server's post-write verifier (#391). run_simple
+            // discards the response, so before this the warning was
+            // computed server-side and then thrown away unread.
+            if let Some(w) = response.get("warning").and_then(Json::as_str) {
+                log::warn!("{}", w);
+            }
+            print_show_function(&response);
+            Ok(())
         }
         Cmd::SetVarargs {
             program,
@@ -636,7 +667,10 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
 /// callers can match against the request they sent.
 fn print_show_function(response: &Json) {
     let name = response.get("name").and_then(Json::as_str).unwrap_or("?");
-    let entry = response.get("entryPoint").and_then(Json::as_str).unwrap_or("?");
+    let entry = response
+        .get("entryPoint")
+        .and_then(Json::as_str)
+        .unwrap_or("?");
     println!("function {} @ {}", name, entry);
 
     if let Some(cc) = response.get("callingConvention").and_then(Json::as_str) {
