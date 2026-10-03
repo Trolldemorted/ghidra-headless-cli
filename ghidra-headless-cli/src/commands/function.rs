@@ -279,14 +279,12 @@ pub enum Cmd {
     },
     /// Set a function's repeatable comment
     ///
-    /// The comment is stored on the function but this CLI's decompile does
-    /// NOT render it — not in the function's own output, and not at its call
-    /// sites — so an unchanged decompile here is expected and does not mean
-    /// the write failed. Read it back with `comment repeatable get`, or look
-    /// for the `repeatable comment: set` line in `function show`.
+    /// Visible in `function disassemble` on every line that references this
+    /// function, as `repeatable@<addr>: <text>` — so each call site carries
+    /// the annotation. `function decompile` does not render it.
     ///
-    /// If you want a comment that DOES show up in `function decompile`, use
-    /// the plate comment instead: `comment plate set`.
+    /// This is the same storage and the same rendering as
+    /// `comment repeatable set`; use whichever reads better.
     SetRepeatableComment {
         #[arg(long = "file", value_name = "FILE")]
         program: String,

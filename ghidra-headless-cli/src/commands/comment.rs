@@ -9,34 +9,44 @@ use crate::json::{Json, Req};
 #[derive(Subcommand, Debug)]
 pub enum Cmd {
     /// End-of-line (trailing) comment at an address
+    ///
+    /// Visible in `function disassemble` in the EOL column, appended after a
+    /// `;` on the instruction's line.
     Eol {
         #[command(subcommand)]
         op: Op,
     },
     /// Pre comment (above the line) at an address
+    ///
+    /// Visible in `function disassemble` as `pre: <text>` on the instruction's
+    /// line (the GUI gives it its own column to the left).
     Pre {
         #[command(subcommand)]
         op: Op,
     },
     /// Post comment (below the line) at an address
+    ///
+    /// Visible in `function disassemble` as `post: <text>` on the instruction's
+    /// line (the GUI gives it its own column to the right).
     Post {
         #[command(subcommand)]
         op: Op,
     },
     /// Plate comment (function header in the listing) at an address
     ///
-    /// Renders as the header comment in `function decompile` when the
-    /// address is a function entry.
+    /// Visible in `function disassemble` as `plate: <text>`, and — when the
+    /// address is a function entry — as the header comment in
+    /// `function decompile`. Same storage as `comment decompiler`.
     Plate {
         #[command(subcommand)]
         op: Op,
     },
     /// Repeatable comment at an address
     ///
-    /// Stored per function, and NOT rendered by this CLI's decompile —
-    /// neither in the function's own output nor at its call sites. Read it
-    /// back with `comment repeatable get`; an unchanged decompile does not
-    /// mean the write failed.
+    /// Visible in `function disassemble` on EVERY line that references the
+    /// address, as `repeatable@<target>: <text>` — so a repeatable comment on
+    /// a function annotates each of its call sites, which is the point of the
+    /// feature. `function decompile` does NOT render it.
     Repeatable {
         #[command(subcommand)]
         op: Op,
@@ -46,9 +56,10 @@ pub enum Cmd {
     /// SAME STORAGE as `comment plate` on a function entry — Ghidra stores
     /// a function's comment as the PLATE comment at its entry point, so
     /// writing one overwrites the other. `Function.getComment()` is
-    /// `getComment(PLATE, entryPoint)`. The two names differ only in where
-    /// you are looking: this one is named for the decompile output it
-    /// appears in.
+    /// `getComment(PLATE, entryPoint)`.
+    ///
+    /// Visible as the header comment in `function decompile`, and as
+    /// `plate: <text>` in `function disassemble`.
     Decompiler {
         #[command(subcommand)]
         op: Op,
