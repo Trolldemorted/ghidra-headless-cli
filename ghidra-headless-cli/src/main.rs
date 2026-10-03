@@ -114,9 +114,12 @@ enum Command {
     /// pointer to `&table+0x18` is stored against that exact address and would
     /// never be reported against the table's head. This also scans the
     /// containing data item, mirroring the Ghidra UI's Location References.
-    /// Those matches are tagged `[composite]`, and the header names the data
-    /// type when the target is inside one. `--include-offcut false` matches
-    /// the target address exactly and suppresses them.
+    /// Each of those rows prints `[composite -> <addr> <field>]` naming the
+    /// offset it really points at — which is often NOT the address you asked
+    /// about, and is the only way to tell. A `<name>` without an offset means
+    /// the row sits at that function's entry; `0x...+0x..` means it is inside
+    /// it. `--include-offcut false` matches the target exactly and suppresses
+    /// the composite rows entirely.
     Xrefs(commands::xrefs::Cmd),
     /// Callgraph: walk a function's callers/callees to a depth
     Callgraph(commands::callgraph::Cmd),

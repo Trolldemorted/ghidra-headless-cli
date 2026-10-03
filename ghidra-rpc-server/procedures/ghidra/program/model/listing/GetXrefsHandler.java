@@ -83,7 +83,7 @@ public final class GetXrefsHandler implements RpcProcedure {
         ReferenceIterator it = rm.getReferencesTo(target);
         while (it.hasNext()) {
             ctx.monitor().checkCancelled();
-            addRef(refs, it.next(), fm, includeOffcut, false);
+            addRef(refs, it.next(), fm, includeOffcut, false, null, null);
             if (limit > 0 && refs.size() >= limit) {
                 truncated = true;
                 break;
@@ -120,7 +120,8 @@ public final class GetXrefsHandler implements RpcProcedure {
                         if (dest.equals(cu.getAddress())) continue;
                         ReferenceIterator inner = rm.getReferencesTo(dest);
                         while (inner.hasNext()) {
-                            addRef(refs, inner.next(), fm, includeOffcut, true);
+                            addRef(refs, inner.next(), fm, includeOffcut, true, dest,
+                                componentFieldName(cu, dest));
                             if (limit > 0 && refs.size() >= limit) {
                                 truncated = true;
                                 break;
@@ -138,7 +139,8 @@ public final class GetXrefsHandler implements RpcProcedure {
     }
 
     private static void addRef(List<XrefMatch> out, Reference ref, FunctionManager fm,
-            boolean includeOffcut, boolean compositeMatch) {
+            boolean includeOffcut, boolean compositeMatch, Address component,
+            String componentField) {
         // `includeOffcut` is about the reference's FROM address (a ref whose
         // source is mid-instruction). It is deliberately independent of the
         // composite walk below, which is about where the target lands.
@@ -148,12 +150,34 @@ public final class GetXrefsHandler implements RpcProcedure {
         out.add(new XrefMatch(
             from.toString(),
             fromFn != null ? fromFn.getName() : null,
+            fromFn != null ? fromFn.getEntryPoint().toString() : null,
             ref.getReferenceType().getName(),
             ref.getOperandIndex(),
             ref.isExternalReference(),
             ref.isOffsetReference(),
-            compositeMatch
+            compositeMatch,
+            component == null ? null : component.toString(),
+            componentField
         ));
+    }
+
+    /**
+     * Name of the component {@code component} falls in within {@code cu}, or
+     * null when it is not inside a composite. Without this a {@code [composite]}
+     * row says only "somewhere in the parent", which is not actionable: the
+     * caller cannot tell which offset a row belongs to, and cannot notice that
+     * none of the rows reference the address they asked about.
+     */
+    private static String componentFieldName(CodeUnit cu, Address component) {
+        if (!(cu instanceof Data) || component == null) {
+            return null;
+        }
+        long off = component.subtract(cu.getMinAddress());
+        if (off < 0 || off > Integer.MAX_VALUE) {
+            return null;
+        }
+        Data c = ((Data) cu).getComponentContaining((int) off);
+        return (c == null) ? null : c.getFieldName();
     }
 
     /** Read-only. */
