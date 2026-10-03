@@ -296,6 +296,20 @@ pub enum Cmd {
     /// Decompile a function to C
     Decompile(decompile::DecompileArgs),
     /// Disassemble a function to an instruction listing
+    ///
+    /// Each line is `<address>  <bytes>  <representation>`, followed by the
+    /// listing's comment columns after a `;` — the same comments, in the same
+    /// order, that the Ghidra GUI listing shows. Segments are ` | `-joined and
+    /// self-labelled:
+    ///
+    ///   0010117d  e8c7ffffff  CALL add_one  ; repeatable@00101149: sets class ptr
+    ///   0010117b  89c7        MOV EDI,EAX   ; pre: from caller | EOL note
+    ///
+    /// Labels: `pre:` / `post:` are that code unit's own PRE/POST comments;
+    /// `plate:` its plate comment; `repeatable@<addr>:` the repeatable comment
+    /// of a target this line references — so a repeatable comment on a function
+    /// annotates each of its call sites; `auto:` Ghidra's generated reference
+    /// preview. An unlabelled segment is the code unit's EOL comment.
     Disassemble(disassemble::DisassembleArgs),
     /// Search for functions by name, tag, or address
     Find(find::FindArgs),

@@ -83,6 +83,18 @@ enum Command {
         cmd: commands::file::Cmd,
     },
     /// Comment operations (EOL/PRE/POST/PLATE/REPEATABLE/DECOMPILER)
+    ///
+    /// The banner above a function in `function decompile` is the PLATE
+    /// comment at that entry — nothing else. `comment decompiler` and
+    /// `comment plate` are the same storage: Ghidra keeps a function's
+    /// comment as the plate comment at its entry, so
+    /// `Function.getComment()` is `getComment(PLATE, entryPoint)` and
+    /// setting either one changes the banner.
+    ///
+    /// `comment repeatable` is a different feature and never renders in a
+    /// decompile. It annotates every line that REFERENCES the address in
+    /// `function disassemble`, so setting it leaves the banner untouched;
+    /// verify it with `comment repeatable get`, not against the decompile.
     Comment {
         #[command(subcommand)]
         cmd: commands::comment::Cmd,

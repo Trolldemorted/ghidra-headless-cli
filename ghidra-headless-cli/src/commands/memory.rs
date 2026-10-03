@@ -31,6 +31,27 @@ pub enum Cmd {
     /// Read bytes starting at an address
     ReadBytes(ReadBytesArgs),
     /// Apply a data type at an address (or address range)
+    ///
+    /// Lays a data type at a single address or across one or more ranges; the
+    /// only `memory` verb that consumes a type definition. Was previously
+    /// `datatype apply` — moved because it operates on program memory (clears
+    /// the existing code unit, then `Listing.createData`) rather than on the
+    /// DTM.
+    ///
+    /// Range semantics (single-application): each `--address-set START[:END]`
+    /// lays the type ONCE at `START`, consuming `dt.getLength()` bytes (or
+    /// `--length` for Dynamic types). The `END` is an upper bound. If the
+    /// type is shorter than the range, the response carries a `warnings`
+    /// array (logged on stderr) listing the uncovered bytes. If the type is
+    /// longer than the range, the whole call is rejected before mutation
+    /// runs. This matches the GUI's press-D-and-type behavior. To fill a
+    /// region with copies of the type, pass multiple `--address-set` entries
+    /// stepped by the type's length.
+    ///
+    /// `--force` opts in to clearing bytes inside the type's consumed range
+    /// (raw bytes preserved, listing entries erased) and retrying when the new
+    /// type would collide with already-defined code units. Without it, a
+    /// collision returns a clear error pointing at `memory undefine`.
     ApplyType(ApplyTypeArgs),
     /// Remove the Data/Instruction listing entries at an address (or range);
     /// bytes are preserved. Inverse of `apply-type`. Useful for undoing an
@@ -160,26 +181,9 @@ pub struct ReadBytesArgs {
     pub format: String,
 }
 
-/// Args for `memory apply-type`. Lays a data type at a single address or
-/// across one or more ranges; the only `memory` verb that consumes a type
-/// definition. Was previously `datatype apply` — moved because it operates
-/// on program memory (clears the existing code unit, then
-/// `Listing.createData`) rather than on the DTM.
-///
-/// Range semantics (single-application): each `--address-set START[:END]`
-/// lays the type ONCE at `START`, consuming `dt.getLength()` bytes (or
-/// `--length` for Dynamic types). The `END` is an upper bound. If the
-/// type is shorter than the range, the response carries a `warnings`
-/// array (logged on stderr) listing the uncovered bytes. If the type is
-/// longer than the range, the whole call is rejected before mutation
-/// runs. This matches the GUI's press-D-and-type behavior. To fill a
-/// region with copies of the type, pass multiple `--address-set` entries
-/// stepped by the type's length.
-///
-/// `--force` opts in to clearing bytes inside the type's consumed
-/// range (raw bytes preserved, listing entries erased) and retrying when
-/// the new type would collide with already-defined code units. Without
-/// it, a collision returns a clear error pointing at `memory undefine`.
+/// Args for `memory apply-type`. See the `ApplyType` variant in the `memory`
+/// subcommand list for the full description — clap renders the VARIANT's doc
+/// for a newtype variant, so prose kept only here never reaches `--help`.
 #[derive(Args, Debug)]
 pub struct ApplyTypeArgs {
     /// Target file project path

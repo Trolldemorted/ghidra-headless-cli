@@ -1,5 +1,9 @@
 //! Comment operations: manage EOL / PRE / POST / PLATE / REPEATABLE / DECOMPILER
 //! comments at an address (function-level for DECOMPILER).
+//!
+//! The user-facing explanation of which comment surfaces where lives on the
+//! `Comment` variant in `main.rs` — keep that as the single source of truth
+//! rather than duplicating it here.
 
 use clap::Subcommand;
 
