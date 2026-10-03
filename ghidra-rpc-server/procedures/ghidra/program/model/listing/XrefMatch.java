@@ -12,14 +12,25 @@ final class XrefMatch {
     final int opIndex;            // operand index, or -1 for non-operand refs
     final boolean isExternal;     // target is in EXTERNAL space
     final boolean isOffcut;       // the reference's "from" doesn't start on an instruction boundary
+    final boolean compositeMatch; // found via the containing data item, not the exact address
 
     XrefMatch(String fromAddress, String fromFunction, String refType,
             int opIndex, boolean isExternal, boolean isOffcut) {
+        this(fromAddress, fromFunction, refType, opIndex, isExternal, isOffcut, false);
+    }
+
+    XrefMatch(String fromAddress, String fromFunction, String refType,
+            int opIndex, boolean isExternal, boolean isOffcut, boolean compositeMatch) {
         this.fromAddress = fromAddress;
         this.fromFunction = fromFunction;
         this.refType = refType;
         this.opIndex = opIndex;
         this.isExternal = isExternal;
         this.isOffcut = isOffcut;
+        this.compositeMatch = compositeMatch;
+    }
+
+    boolean isCompositeMatch() {
+        return compositeMatch;
     }
 }

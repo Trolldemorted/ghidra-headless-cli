@@ -6,8 +6,13 @@ import java.util.List;
 import com.google.gson.JsonObject;
 
 import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressIterator;
+import ghidra.program.model.address.AddressSet;
+import ghidra.program.model.listing.CodeUnit;
+import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionManager;
+import ghidra.program.model.listing.Listing;
 import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.ReferenceIterator;
 import ghidra.program.model.symbol.ReferenceManager;
@@ -78,26 +83,77 @@ public final class GetXrefsHandler implements RpcProcedure {
         ReferenceIterator it = rm.getReferencesTo(target);
         while (it.hasNext()) {
             ctx.monitor().checkCancelled();
-            Reference ref = it.next();
-            if (!includeOffcut && ref.isOffsetReference()) continue;
-            Address from = ref.getFromAddress();
-            Function fromFn = fm.getFunctionContaining(from);
-            refs.add(new XrefMatch(
-                from.toString(),
-                fromFn != null ? fromFn.getName() : null,
-                ref.getReferenceType().getName(),
-                ref.getOperandIndex(),
-                ref.isExternalReference(),
-                ref.isOffsetReference()
-            ));
+            addRef(refs, it.next(), fm, includeOffcut, false);
             if (limit > 0 && refs.size() >= limit) {
                 truncated = true;
                 break;
             }
         }
+
+        // Offcut references into the composite data item at `target`.
+        //
+        // ReferenceManager is address-based and a composite (struct/array) is
+        // a single Data, so its component fields have no reference entries of
+        // their own: a reference to &vtable+0x18 is stored against that exact
+        // address and `getReferencesTo(head)` alone will never see it. This
+        // mirrors the GUI's Location References, which walks up to the
+        // containing code unit and scans it
+        // (ReferenceUtils.accumulateOffcutReferences).
+        String containingData = null;
+        if (!truncated) {
+            Listing listing = ctx.program().getListing();
+            CodeUnit cu = listing.getCodeUnitContaining(target);
+            if (cu != null && cu.getLength() > 1) {
+                if (cu instanceof Data) {
+                    Data d = (Data) cu;
+                    containingData = d.getDataType().getName();
+                }
+                Address min = cu.getMinAddress();
+                Address max = cu.getMaxAddress();
+                if (!min.equals(max)) {
+                    // [min+1, max]: the head itself is already covered above.
+                    AddressSet offcut = new AddressSet(min.add(1), max);
+                    AddressIterator dests = rm.getReferenceDestinationIterator(offcut, true);
+                    while (dests.hasNext()) {
+                        ctx.monitor().checkCancelled();
+                        Address dest = dests.next();
+                        if (dest.equals(cu.getAddress())) continue;
+                        ReferenceIterator inner = rm.getReferencesTo(dest);
+                        while (inner.hasNext()) {
+                            addRef(refs, inner.next(), fm, includeOffcut, true);
+                            if (limit > 0 && refs.size() >= limit) {
+                                truncated = true;
+                                break;
+                            }
+                        }
+                        if (truncated) break;
+                    }
+                }
+            }
+        }
+
         return new GetXrefsResponse(
             new XrefTarget(type, to, target.toString()),
-            refs.size(), truncated, refs);
+            refs.size(), truncated, containingData, refs);
+    }
+
+    private static void addRef(List<XrefMatch> out, Reference ref, FunctionManager fm,
+            boolean includeOffcut, boolean compositeMatch) {
+        // `includeOffcut` is about the reference's FROM address (a ref whose
+        // source is mid-instruction). It is deliberately independent of the
+        // composite walk below, which is about where the target lands.
+        if (!includeOffcut && ref.isOffsetReference()) return;
+        Address from = ref.getFromAddress();
+        Function fromFn = fm.getFunctionContaining(from);
+        out.add(new XrefMatch(
+            from.toString(),
+            fromFn != null ? fromFn.getName() : null,
+            ref.getReferenceType().getName(),
+            ref.getOperandIndex(),
+            ref.isExternalReference(),
+            ref.isOffsetReference(),
+            compositeMatch
+        ));
     }
 
     /** Read-only. */

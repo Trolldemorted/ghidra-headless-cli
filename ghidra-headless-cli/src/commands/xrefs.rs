@@ -17,7 +17,11 @@ pub struct Cmd {
     /// How to interpret --to: function | symbol | address
     #[arg(long, value_name = "KIND", default_value = "function")]
     pub r#type: String,
-    /// Include offcut references (refs whose "from" is mid-instruction) [default: true]
+    /// Include references whose target is an interior (offcut) address, e.g.
+    /// &table+0x18 when `table` is an applied struct [default: true]
+    ///
+    /// Pass false to match the target address exactly, which also suppresses
+    /// the `[composite]` walk described in this command's help.
     #[arg(long, default_value_t = true)]
     pub include_offcut: bool,
     /// Cap the number of results [default: 0 = unlimited]
@@ -60,6 +64,12 @@ fn print_xrefs(response: &Json) {
             ""
         }
     );
+    if let Some(dt) = response.get("containingDataType").and_then(Json::as_str) {
+        log::info!(
+            "target is covered by a data item of type `{}`; refs marked [composite] land on a component of it",
+            dt
+        );
+    }
     if let Some(refs) = response.get("refs").and_then(Json::as_array) {
         for r in refs {
             let from = r.get("fromAddress").and_then(Json::as_str).unwrap_or("?");
@@ -68,12 +78,25 @@ fn print_xrefs(response: &Json) {
             let op = r.get("opIndex").and_then(Json::as_f64).unwrap_or(-1.0) as i64;
             let is_ext = r.get("isExternal").and_then(Json::as_bool).unwrap_or(false);
             let is_off = r.get("isOffcut").and_then(Json::as_bool).unwrap_or(false);
+            let comp = r
+                .get("compositeMatch")
+                .and_then(Json::as_bool)
+                .unwrap_or(false);
             let in_fn = from_fn.map(|n| format!(" <{}>", n)).unwrap_or_default();
-            let flags = match (is_ext, is_off) {
-                (true, true) => "  [external,offcut]",
-                (true, false) => "  [external]",
-                (false, true) => "  [offcut]",
-                (false, false) => "",
+            let mut tags: Vec<&str> = Vec::new();
+            if comp {
+                tags.push("composite");
+            }
+            if is_ext {
+                tags.push("external");
+            }
+            if is_off {
+                tags.push("offcut");
+            }
+            let flags = if tags.is_empty() {
+                String::new()
+            } else {
+                format!("  [{}]", tags.join(","))
             };
             println!("{}{}  {}  op={}{}", from, in_fn, ref_type, op, flags);
         }

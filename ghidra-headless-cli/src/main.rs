@@ -107,6 +107,16 @@ enum Command {
         cmd: commands::datatype::Cmd,
     },
     /// Cross-references: list references TO a function / symbol / address
+    ///
+    /// If the target address sits inside a composite data item (a struct or
+    /// array applied over memory), its component fields have no reference
+    /// entries of their own: Ghidra's ReferenceManager is address-based, so a
+    /// pointer to `&table+0x18` is stored against that exact address and would
+    /// never be reported against the table's head. This also scans the
+    /// containing data item, mirroring the Ghidra UI's Location References.
+    /// Those matches are tagged `[composite]`, and the header names the data
+    /// type when the target is inside one. `--include-offcut false` matches
+    /// the target address exactly and suppresses them.
     Xrefs(commands::xrefs::Cmd),
     /// Callgraph: walk a function's callers/callees to a depth
     Callgraph(commands::callgraph::Cmd),
