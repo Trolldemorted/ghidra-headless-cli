@@ -279,6 +279,16 @@ pub enum Cmd {
     },
     /// Edit an existing data type (batched: rename/move/description/addFields/replaceFields/addEntries,
     /// and — for FunctionDefinition targets — returnType/parameters/callingConvention/varArgs/noReturn)
+    ///
+    /// Editing the DTM is not the same as editing what the LISTING shows. A
+    /// `Data` instance applied to memory normally follows the definition, but
+    /// a layout change that no longer fits the space the instance occupies
+    /// leaves it stale or in error — and the `datatype show` output below
+    /// still reports the new definition, so a DTM read-back alone will not
+    /// reveal it. When the edited type is applied anywhere, this command
+    /// prints a WARNING naming those addresses; check them with
+    /// `listing --address <addr>` and re-apply with
+    /// `memory apply-type --type <path> --force` if the listing disagrees.
     Edit {
         /// Target file project path
         #[arg(long = "file", value_name = "FILE")]
@@ -718,6 +728,12 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                     .opt_bool("noReturn", opt_no_return)
                     .build(),
             )?;
+            // The server names the addresses where the edited type is applied
+            // to memory. `print_show` reads the DTM, which is the one place a
+            // stale applied instance does NOT show up — so surface it.
+            if let Some(w) = response.get("warning").and_then(Json::as_str) {
+                log::warn!("{}", w);
+            }
             print_show(&response, false)?;
             Ok(())
         }

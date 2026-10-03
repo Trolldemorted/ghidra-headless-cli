@@ -7,14 +7,17 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
+import ghidra.program.model.address.Address;
 import ghidra.program.model.data.Composite;
 import ghidra.program.model.data.DataType;
 import ghidra.program.model.data.DataTypeConflictHandler;
+import ghidra.program.model.data.DataTypeManager;
 import ghidra.program.model.data.Enum;
 import ghidra.program.model.data.FunctionDefinition;
 import ghidra.program.model.data.ParameterDefinition;
 import ghidra.program.model.data.ParameterDefinitionImpl;
 import ghidra.program.model.data.TypeDef;
+import ghidra.program.model.listing.Data;
 
 import procedures.RpcContext;
 import procedures.RpcProcedure;
@@ -105,8 +108,10 @@ public final class EditDataTypeHandler implements RpcProcedure {
                 touched[0] = true;
             });
             if (!touched[0]) return RpcResponse.error("Edit failed for '" + target.getName() + "'.");
-            return new ShowDataTypeHandler.ConfirmResponse(
-                ctx.program().getDataTypeManager(), target, "edited");
+            return appliedWarning(
+                new ShowDataTypeHandler.ConfirmResponse(
+                    ctx.program().getDataTypeManager(), target, "edited"),
+                target, ctx);
         }
 
         // Explicit-JSON path: rename / move / replaceFields / addFields / addEntries.
@@ -116,8 +121,57 @@ public final class EditDataTypeHandler implements RpcProcedure {
             touched[0] = true;
         });
         if (!touched[0]) return RpcResponse.error("Edit failed for '" + target.getName() + "'.");
-        return new ShowDataTypeHandler.ConfirmResponse(
-            ctx.program().getDataTypeManager(), target, "edited");
+        return appliedWarning(
+            new ShowDataTypeHandler.ConfirmResponse(
+                ctx.program().getDataTypeManager(), target, "edited"),
+            target, ctx);
+    }
+
+    /**
+     * Name the addresses where {@code dt} is applied to memory, so a caller
+     * that verifies with the LISTING (not `datatype show`) knows to re-check
+     * them.
+     *
+     * <p>A `Data` instance normally follows the DTM automatically, but only
+     * while the new layout fits the space the instance occupies. Verified
+     * 2026-10-03 on an applied struct: reshaping it to a different layout of
+     * the SAME size updated the listing in place; growing it 12 -> 16 bytes,
+     * where 16 still fit, also updated in place; growing it past the space
+     * the instance occupies put the instance in an ERROR state, the listing
+     * reporting "Data type ... is too big for available space". The old
+     * field names are not silently retained in any of these.
+     *
+     * <p>The warning exists because `datatype show` reads the DTM and is
+     * therefore NOT a sufficient read-back: it reports the new definition
+     * in every case above, including the one where the listing is in error.
+     */
+    private static RpcResponse appliedWarning(RpcResponse resp, DataType dt, RpcContext ctx) {
+        if (!(dt instanceof Composite) && !(dt instanceof Enum)
+            && !(dt instanceof FunctionDefinition)) {
+            return resp;
+        }
+        DataTypeManager dtm = ctx.program().getDataTypeManager();
+        List<String> applied = new ArrayList<>();
+        for (Data d : ctx.program().getListing().getDefinedData(true)) {
+            // Resolve through the DTM so a cloned instance still matches.
+            if (dtm.getDataType(d.getDataType().getDataTypePath()) == dt) {
+                applied.add(d.getMinAddress().toString());
+            }
+            if (applied.size() >= 20) break;
+        }
+        if (applied.isEmpty()) return resp;
+        Address first = null;
+        resp.warning = "Edited type '" + dt.getName() + "' is applied at "
+            + applied.size() + " address(es) in memory: " + String.join(", ", applied)
+            + (applied.size() >= 20 ? ", ..." : "")
+            + ". Instances normally follow the DTM automatically, but a layout "
+            + "change that no longer fits the space the instance occupies leaves "
+            + "it in an error state (the listing reports \"Data type ... is too "
+            + "big for available space\") while `datatype show` still reports the "
+            + "new definition. Verify with "
+            + "`listing --address <addr>` and re-apply with `memory apply-type "
+            + "--type " + dt.getPathName() + " --force` if it disagrees.";
+        return resp;
     }
 
     private static boolean sameKind(DataType a, DataType b) {

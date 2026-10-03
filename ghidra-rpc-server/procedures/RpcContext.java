@@ -282,8 +282,33 @@ public class RpcContext {
      * JVM exits, the orchestrator restarts us, the shutdown hook releases
      * the local checkout, and the next launch reopens from the server's
      * committed version. Reads under {@link #lock}.
+     *
+     * <p>Default is 30 minutes, NOT 60s. Verified 2026-10-03: a full
+     * auto-analysis of a 4.5 MB PE legitimately ran 62s, tripped the old
+     * 60s threshold, and the watchdog tore down the server mid-analysis
+     * ("ClosedException: File is closed", then a graceful stop) — the
+     * analysis never finished. Any mutating dispatch over a minute dies
+     * with it. A hung RMI call never returns, so a higher threshold still
+     * catches the real hang; it only delays detection. Override with
+     * {@code GHIDRA_RPC_STUCK_DISPATCH_SECONDS} when a deployment's
+     * analyses are slower still.
      */
-    private static final long STUCK_DISPATCH_SECONDS = 60;
+    private static final long STUCK_DISPATCH_SECONDS = stuckDispatchSeconds();
+
+    private static long stuckDispatchSeconds() {
+        String v = System.getenv("GHIDRA_RPC_STUCK_DISPATCH_SECONDS");
+        if (v == null || v.trim().isEmpty()) {
+            return 1800;
+        }
+        try {
+            long n = Long.parseLong(v.trim());
+            return (n > 0) ? n : 1800;
+        } catch (NumberFormatException e) {
+            Msg.warn(RpcContext.class, "Ignoring unparseable "
+                + "GHIDRA_RPC_STUCK_DISPATCH_SECONDS='" + v + "'; using 1800");
+            return 1800;
+        }
+    }
 
     /**
      * System time (ms) at which the currently-running dispatch started.
