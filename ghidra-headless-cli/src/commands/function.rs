@@ -56,6 +56,21 @@ pub enum Cmd {
         source: Option<Source>,
     },
     /// Create a thunk function
+    ///
+    /// Recognised forms, both of which require --referenced-function-address
+    /// (otherwise Ghidra auto-detects, and only for the bare-jump form):
+    ///
+    ///   jmp <target>                  — plain jump thunk
+    ///   sub ecx, N; jmp <target>     — MSVC multiple-inheritance adjustor
+    ///
+    /// Those two are detected by walking forward from --address to the first
+    /// jump terminator. For any other shape, pass --body to state the extent
+    /// yourself — it is what the GUI takes from your Listing selection.
+    /// The adjustor prefix is allowed through to the thunk's own signature
+    /// (`stack purge: N` for a __thiscall thunk), so the decompiler sees the
+    /// `this` adjustment. For the adjustment to render as `this = this - N`
+    /// the function also needs a class association — see
+    /// `function set-class-association`.
     CreateThunk {
         #[arg(long = "file", value_name = "FILE")]
         program: String,
@@ -64,6 +79,13 @@ pub enum Cmd {
         /// Thunked function address [default: auto-detected]
         #[arg(long)]
         referenced_function_address: Option<String>,
+        /// Thunk body as START[:END] [default: derived by walking to the jump]
+        ///
+        /// Half-open, like --address-set: `0x401000:0x401007` covers the
+        /// seven bytes 0x401000..0x401006. Only needed for a thunk shape the
+        /// automatic walk does not model; it overrides that walk.
+        #[arg(long, value_name = "START[:END]")]
+        body: Option<String>,
         /// Check existing function when auto-detecting [default: false]
         #[arg(long)]
         check_existing: bool,
@@ -426,15 +448,26 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             program,
             address,
             referenced_function_address,
+            body,
             check_existing,
-        } => client.run_simple(
-            Req::new("CreateThunkFunctionCmd")
-                .str("file", program)
-                .str("address", address)
-                .opt_str("referencedFunctionAddress", referenced_function_address)
-                .bool("checkExisting", check_existing)
-                .build(),
-        ),
+        } => {
+            // Same START[:END] shape as --address-set, so the body goes over
+            // the wire as `body: [{start, end?}]` and the server's existing
+            // addressSet() parses it unchanged.
+            // None -> empty slice -> address_set returns None -> key omitted,
+            // so the server derives the body as before.
+            let body_ranges: Vec<String> = body.into_iter().collect();
+            let set = common::address_set(&body_ranges).map_err(common::log_arg_err)?;
+            client.run_simple(
+                Req::new("CreateThunkFunctionCmd")
+                    .str("file", program)
+                    .str("address", address)
+                    .opt_str("referencedFunctionAddress", referenced_function_address)
+                    .opt_json("body", set)
+                    .bool("checkExisting", check_existing)
+                    .build(),
+            )
+        }
         Cmd::CreateExternal {
             program,
             library,
