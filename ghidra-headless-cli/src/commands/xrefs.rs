@@ -17,12 +17,17 @@ pub struct Cmd {
     /// How to interpret --to: function | symbol | address
     #[arg(long, value_name = "KIND", default_value = "function")]
     pub r#type: String,
-    /// Include references whose target is an interior (offcut) address, e.g.
-    /// &table+0x18 when `table` is an applied struct [default: true]
+    /// Match the target address exactly [default: true — composite rows on]
     ///
-    /// Pass false to match the target address exactly, which also suppresses
-    /// the `[composite]` walk described in this command's help.
-    #[arg(long, default_value_t = true)]
+    /// Takes an explicit BOOL, e.g. `--include-offcut false` or
+    /// `--include-offcut=false`. The bare `--include-offcut` is an error
+    /// (exit 2), not a shorthand for true.
+    /// False restricts the result to references landing on the address you
+    /// named, suppressing the composite walk (see this command's help) and
+    /// dropping Ghidra's `OffsetReference` instances. True (the default)
+    /// also reports references that land on a component of an enclosing
+    /// composite, each tagged `[composite -> <addr> <field>]`.
+    #[arg(long, value_name = "BOOL", default_value_t = true, action = clap::ArgAction::Set)]
     pub include_offcut: bool,
     /// Cap the number of results [default: 0 = unlimited]
     #[arg(long, default_value_t = 0i64)]

@@ -100,7 +100,12 @@ public final class GetXrefsHandler implements RpcProcedure {
         // containing code unit and scans it
         // (ReferenceUtils.accumulateOffcutReferences).
         String containingData = null;
-        if (!truncated) {
+        // includeOffcut=false means "match this address exactly", so the
+        // composite walk is skipped outright rather than filtered per row.
+        // Filtering on Reference.isOffsetReference() is NOT equivalent: that
+        // is true only for instances of the OffsetReference class, unrelated
+        // to whether a target is interior to a data item.
+        if (!truncated && includeOffcut) {
             Listing listing = ctx.program().getListing();
             CodeUnit cu = listing.getCodeUnitContaining(target);
             if (cu != null && cu.getLength() > 1) {

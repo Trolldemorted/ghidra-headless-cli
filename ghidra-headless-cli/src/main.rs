@@ -118,8 +118,8 @@ enum Command {
     /// offset it really points at — which is often NOT the address you asked
     /// about, and is the only way to tell. A `<name>` without an offset means
     /// the row sits at that function's entry; `0x...+0x..` means it is inside
-    /// it. `--include-offcut false` matches the target exactly and suppresses
-    /// the composite rows entirely.
+    /// it. `--include-offcut false` (an explicit BOOL, not a bare flag) matches
+    /// the target exactly and suppresses the composite rows entirely.
     Xrefs(commands::xrefs::Cmd),
     /// Callgraph: walk a function's callers/callees to a depth
     Callgraph(commands::callgraph::Cmd),
