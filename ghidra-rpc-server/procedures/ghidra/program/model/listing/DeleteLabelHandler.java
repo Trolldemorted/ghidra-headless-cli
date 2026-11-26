@@ -75,10 +75,26 @@ public final class DeleteLabelHandler implements RpcProcedure {
       + name + "' (type=" + sym.getSymbolType() + ").");
         }
 
+        if (sym.isExternal()) {
+            // Deleting an external symbol also removes every reference to that
+            // external location (CodeSymbol.delete: keepReferences = !isExternal()).
+            return RpcResponse.error("'" + name + "' is an external (imported) symbol; "
+                + "refusing to delete it because that would also drop all references to it.");
+        }
+        if (sym.isDynamic()) {
+            return RpcResponse.error("'" + name + "' is a default (dynamic) label generated "
+                + "by Ghidra; there is nothing stored to delete. It disappears when the "
+                + "address gets a user label or loses its references.");
+        }
+
         final String deletedName = sym.getName();
         final String deletedAddr = sym.getAddress().toString();
         final boolean[] ok = { false };
         ctx.runWrite("delete-label " + name, () -> { ok[0] = sym.delete(); });
+        if (!ok[0]) {
+            return RpcResponse.error("Ghidra refused to delete label '" + deletedName
+                + "' at " + deletedAddr + ".");
+        }
         return new DeleteLabelResponse(ok[0], deletedName, deletedAddr);
     }
 

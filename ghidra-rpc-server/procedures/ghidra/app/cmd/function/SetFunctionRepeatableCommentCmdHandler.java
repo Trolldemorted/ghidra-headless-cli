@@ -14,6 +14,8 @@ public final class SetFunctionRepeatableCommentCmdHandler implements RpcProcedur
     @Override
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
         Address entry = ctx.requireAddress(RpcContext.reqStr(req, "address"));
+        // The Ghidra command returns true (a silent no-op) when there is no function.
+        ctx.requireFunctionAt(entry);
         String comment = RpcContext.optStr(req, "comment");
         return ctx.applyCommand(new SetFunctionRepeatableCommentCmd(entry, comment == null ? "" : comment));
     }

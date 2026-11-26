@@ -270,12 +270,12 @@ public final class ShowDataTypeHandler implements RpcProcedure {
         public ConfirmResponse(ghidra.program.model.data.DataTypeManager dtm, DataType dt, String verb) {
             this.success = true;
             this.verb = verb;
-            // Use DataTypeSerializer to get the same scalar fields the
-            // ShowResponse uses (consistency: same kind string, same
-            // path/category formatting, same source labeling). We read
-            // those fields and discard the `detail` JsonObject the
-            // serializer also produces (it's not included here).
-            JsonObject o = new DataTypeSerializer(dtm).describe(dt);
+            // summarize() yields exactly the scalar fields needed here (same
+            // kind string, path/category formatting and source labeling as
+            // ShowResponse). describe() would also build the full field /
+            // entry arrays just to throw them away — one JSON object per
+            // component, which for a large sparse struct is one per BYTE.
+            JsonObject o = new DataTypeSerializer(dtm).summarize(dt);
             this.kind = o.has("kind") ? o.get("kind").getAsString() : null;
             this.name = o.has("name") ? o.get("name").getAsString() : null;
             this.path = o.has("path") ? o.get("path").getAsString() : null;

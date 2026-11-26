@@ -53,10 +53,26 @@ public final class CreateThunkFunctionCmdHandler implements RpcProcedure {
             // uses. It is the only way to cover a thunk whose shape the
             // forward walk below does not model. Without one we derive the
             // body, which covers `jmp <t>` and `sub ecx,N; jmp <t>`.
-            AddressSetView body = (req.has("body") && req.get("body").isJsonArray())
-                ? ctx.addressSet(req)
-                : computeBody(entry, ctx);
-            if (body == null) {
+            boolean explicitBody = req.has("body") && req.get("body").isJsonArray();
+            boolean existing = ctx.program().getFunctionManager().getFunctionAt(entry) != null;
+            AddressSetView body;
+            if (explicitBody) {
+                // The ranges arrive under "body". ctx.addressSet(req) only reads
+                // "addressSet" (falling back to "address"), so passing req
+                // straight through silently produced a ONE-BYTE body at the
+                // entry — and shrank an existing function to that byte.
+                JsonObject ranges = new JsonObject();
+                ranges.add("addressSet", req.getAsJsonArray("body"));
+                body = ctx.addressSet(ranges);
+            } else if (existing) {
+                // Ghidra's contract: body == null converts the existing
+                // function in place and keeps its body. A derived body would be
+                // applied with setBody() and could truncate the function.
+                body = null;
+            } else {
+                body = computeBody(entry, ctx);
+            }
+            if (body == null && !existing) {
                 return RpcResponse.error("Cannot determine a thunk body at " + entry
                     + ": expected a jump terminator (JMP, or CALL/terminator) within "
                     + MAX_BODY_INSTRUCTIONS + " instructions, optionally preceded by "

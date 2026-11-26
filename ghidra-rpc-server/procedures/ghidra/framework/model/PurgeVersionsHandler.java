@@ -138,7 +138,8 @@ public final class PurgeVersionsHandler implements RpcProcedure {
             if (blocked) {
                 return RpcResponse.error(
                     "cannot delete version " + targetVersion + " of '" + path
-                    + "': one or more clients hold a checkout on it.");
+                    + "': one or more clients hold a checkout on it."
+                    + " (" + deleted + " older version(s) were already deleted.)");
             }
 
             try {
@@ -147,6 +148,7 @@ public final class PurgeVersionsHandler implements RpcProcedure {
                 return RpcResponse.error(
                     "deleteItem('" + parentPath + "', '" + itemName + "', " + targetVersion
                     + "): " + e.getMessage()
+                    + " (" + deleted + " older version(s) were already deleted.)"
                     + (isAdmin ? ""
                         : " (caller is not a repo admin; can only delete versions they own)"));
             }
@@ -171,6 +173,11 @@ public final class PurgeVersionsHandler implements RpcProcedure {
         } catch (IOException e) {
             // Repo unreachable after the deletes? report what we know.
             after = new Version[0];
+        }
+        if (lastVersionDeleted) {
+            // The file is gone from the server; drop our cached Program so later
+            // requests fail with "no file" instead of editing a ghost.
+            ctx.forgetProgram(fullPath);
         }
         return new PurgeVersionsResponse(path, before.length, after.length, deleted,
             oldestDeleted, latestDeleted, lastVersionDeleted, isAdmin);

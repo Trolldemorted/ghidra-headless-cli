@@ -23,7 +23,9 @@ public final class ApplyFunctionDataTypesCmdHandler implements RpcProcedure {
         return ctx.applyCommand(new ApplyFunctionDataTypesCmd(
             managers, ctx.addressSet(req),
             ctx.sourceType(RpcContext.optStr(req, "source")),
-            RpcContext.reqBool(req, "createBookmarks"),
-            RpcContext.reqBool(req, "alwaysReplace")));
+            // Ghidra's order is (…, alwaysReplace, createBookmarksEnabled); these
+            // two were swapped until 2026-11.
+            RpcContext.reqBool(req, "alwaysReplace"),
+            RpcContext.reqBool(req, "createBookmarks")));
     }
 }

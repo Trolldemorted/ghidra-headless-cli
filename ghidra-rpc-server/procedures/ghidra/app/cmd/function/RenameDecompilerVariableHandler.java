@@ -13,7 +13,6 @@ import procedures.RpcResponse;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileResults;
 import ghidra.program.model.address.Address;
-import ghidra.program.model.data.DataType;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.VariableStorage;
 import ghidra.program.model.pcode.HighFunction;
@@ -213,13 +212,16 @@ public final class RenameDecompilerVariableHandler implements RpcProcedure {
         // splitOutMergeGroup swap), so read the type from `toWrite` to
         // preserve whatever the GUI would have written.
         final HighSymbol writeFinal = toWrite;
-        final DataType existingType = toWrite.getDataType();
         final String nameFinal = newName;
         final SourceType sourceFinal = source;
         final String targetName = target.getName();
         try {
             ctx.runWrite("Rename Decompiler Variable", () -> {
-                HighFunctionDBUtil.updateDBVariable(writeFinal, nameFinal, existingType, sourceFinal);
+                // dataType = null, exactly as the GUI's RenameVariableTask does.
+                // Passing the decompiler's inferred type made every rename
+                // also commit that guess as a USER_DEFINED type (and fail
+                // outright for non-fixed-length types).
+                HighFunctionDBUtil.updateDBVariable(writeFinal, nameFinal, null, sourceFinal);
             });
         } catch (Exception e) {
             return RpcResponse.error(
@@ -250,12 +252,36 @@ public final class RenameDecompilerVariableHandler implements RpcProcedure {
             if (pc == null) {
                 continue;
             }
-            if (pcSpec.equalsIgnoreCase(pc.toString())
-                    || pcSpec.equalsIgnoreCase("0x" + pc.toString())) {
+            if (samePc(pcSpec, pc)) {
                 return hs;
             }
         }
         return null;
+    }
+
+    /**
+     * Compare a client-supplied pc against an address by VALUE: optional
+     * {@code 0x} prefix, any amount of zero padding, either case. A plain
+     * string compare against {@code Address.toString()} (zero-padded, no
+     * prefix) rejected {@code 0x401000} for {@code 00401000}.
+     */
+    private static boolean samePc(String pcSpec, Address pc) {
+        return normalizeHex(pcSpec).equals(normalizeHex(pc.toString()));
+    }
+
+    private static String normalizeHex(String s) {
+        String t = s.trim().toLowerCase();
+        int colon = t.lastIndexOf(':');
+        String space = colon >= 0 ? t.substring(0, colon + 1) : "";
+        String off = colon >= 0 ? t.substring(colon + 1) : t;
+        if (off.startsWith("0x")) {
+            off = off.substring(2);
+        }
+        int i = 0;
+        while (i < off.length() - 1 && off.charAt(i) == '0') {
+            i++;
+        }
+        return space + off.substring(i);
     }
 
     /**

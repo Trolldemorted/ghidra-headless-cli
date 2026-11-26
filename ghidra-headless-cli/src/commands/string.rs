@@ -203,9 +203,11 @@ fn print_string_match(s: &Json) {
     let len = s.get("length").and_then(Json::as_f64).unwrap_or(0.0) as i64;
     let charset = s.get("charset").and_then(Json::as_str).unwrap_or("?");
     let dt = s.get("dataType").and_then(Json::as_str).unwrap_or("");
+    // Result rows are data: stdout, like every other list command (they
+    // used to go through the logger, i.e. stderr, so `> out.txt` was empty).
     if dt.is_empty() {
-        log::info!("  {}  {}  [{} bytes, {}]", addr, repr, len, charset);
+        println!("{}  {}  [{} bytes, {}]", addr, repr, len, charset);
     } else {
-        log::info!("  {}  {}  [{} bytes, {}, {}]", addr, repr, len, charset, dt);
+        println!("{}  {}  [{} bytes, {}, {}]", addr, repr, len, charset, dt);
     }
 }

@@ -231,12 +231,13 @@ pub struct UndefineArgs {
     #[arg(long, conflicts_with = "address_set")]
     pub address: Option<String>,
     /// Address range as START[:END] (repeatable). Clears everything in
-    /// `[START, END]` inclusive. --address is ignored when any --address-set
-    /// is given.
+    /// `[START, END)` — END is EXCLUSIVE, like every other --address-set.
+    /// Cannot be combined with --address.
     #[arg(long = "address-set", value_name = "START[:END]")]
     pub address_set: Vec<String>,
-    /// Also drop references and analysis context [default: false]. When
-    /// false, only the listing entries are removed; references are kept.
+    /// Also clear processor-context register values (e.g. ARM Thumb mode)
+    /// over the range [default: false]. Note: Ghidra removes references FROM
+    /// the cleared range in either case, and keeps comments in either case.
     #[arg(long)]
     pub clear_context: bool,
 }

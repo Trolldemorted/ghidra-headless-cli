@@ -141,6 +141,12 @@ public final class CreateDataTypeHandler implements RpcProcedure {
     private DataType createStruct(JsonObject req, String name, CategoryPath cp,
             DataTypeManager dtm, RpcContext ctx) throws Exception {
         int size = RpcContext.optInt(req, "size", 0);
+        if (size < 0 || size > DataTypeOps.MAX_STRUCT_SIZE) {
+            // A non-packed struct of N bytes holds N undefined components;
+            // size=2000000000 allocated two billion of them.
+            throw new IllegalArgumentException("'size' must be 0.." + DataTypeOps.MAX_STRUCT_SIZE
+                + " bytes (got " + size + ").");
+        }
         StructureDataType s = new StructureDataType(cp, name, size, dtm);
         if (req.has("fields") && req.get("fields").isJsonArray()) {
             for (DataTypeOps.FieldPair fp : DataTypeOps.fieldList(req.getAsJsonArray("fields"))) {

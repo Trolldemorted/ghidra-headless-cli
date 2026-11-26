@@ -46,7 +46,7 @@ public final class ListLabelsHandler implements RpcProcedure {
             ? java.util.regex.Pattern.compile(query, ignoreCase ? java.util.regex.Pattern.CASE_INSENSITIVE : 0)
             : null;
         final Predicate<String> matches = isRegex
-            ? s -> pattern.matcher(s).find()
+            ? procedures.StringQuery.boundedFind(pattern)
             : (isCaseInsensitive
                 ? s -> s.toLowerCase().contains(needle)
                 : s -> s.contains(needle));

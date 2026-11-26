@@ -25,6 +25,9 @@
 // Configuration (environment variables):
 //   RPC_BIND            interface to bind   (default 0.0.0.0)
 //   RPC_PORT            TCP port to listen  (default 18000)
+//   RPC_MAX_REQUEST_BYTES  max length of one request line (default 268435456).
+//                       A longer line gets one error response and the
+//                       connection is closed.
 //   GHIDRA_RPC_WRITE_PASSWORD  shared secret for mutating requests (default unset).
 //                       When set, every procedure that returns true from
 //                       RpcProcedure.mutates() must carry a matching "password"
@@ -44,10 +47,10 @@
 //                       procedure whose RpcProcedure.requiresAdmin() returns
 //                       true must carry a matching "adminPassword" field;
 //                       a wrong/missing value returns an error before any
-//                       project tree or repository access. When unset, the
-//                       gate is off and admin-flagged procedures accept any
-//                       request (they still need the write password if they
-//                       also mutate). Logged on startup as either
+//                       project tree or repository access. When unset,
+//                       admin-flagged procedures are DISABLED (fail closed):
+//                       they are destructive, so they are never left open.
+//                       Logged on startup as either
 //                       "GHIDRA_RPC_ADMIN_PASSWORD is set (admin-only procedures are
 //                       gated)" or "...unset (no admin gate)"; the value itself
 //                       is never logged.
@@ -115,6 +118,15 @@ public class RpcServer extends GhidraScript {
     // bursty workloads).
     private final AtomicLong requestIds = new AtomicLong();
 
+    /**
+     * Upper bound on one request line, in chars. Imports carry a whole binary
+     * as base64 on one line, so the default is generous (256 MiB of base64 is
+     * a 192 MiB binary); lower it with RPC_MAX_REQUEST_BYTES on small heaps.
+     */
+    private static final int DEFAULT_MAX_REQUEST_CHARS = 256 * 1024 * 1024;
+
+    private final int maxRequestChars = configuredMaxRequestChars();
+
     private RpcContext context;
     private ExecutorService clientPool;
 
@@ -172,7 +184,7 @@ public class RpcServer extends GhidraScript {
         if (adminPw != null) {
             Msg.info(this, "GHIDRA_RPC_ADMIN_PASSWORD is set (admin-only procedures are gated).");
         } else {
-            Msg.info(this, "GHIDRA_RPC_ADMIN_PASSWORD is unset (no admin gate).");
+            Msg.info(this, "GHIDRA_RPC_ADMIN_PASSWORD is unset (admin-only procedures are disabled).");
         }
         // Self-heal for the OOM-kill stale-checkout recovery gap. When enabled,
         // acquireCheckoutWithRetry will terminate our own user's stale checkout
@@ -581,8 +593,18 @@ public class RpcServer extends GhidraScript {
             s.setTcpNoDelay(true);
             OutputStream out = s.getOutputStream();
             String line;
-            while ((line = in.readLine()) != null) {
+            while ((line = readBoundedLine(in, maxRequestChars)) != null) {
                 if (stopping || monitor.isCancelled()) {
+                    break;
+                }
+                if (line == OVERSIZED) {
+                    // The rest of the oversized line is still in flight and
+                    // cannot be resynchronised cheaply: answer once and drop
+                    // the connection.
+                    Msg.warn(this, "Client " + peer + " sent a request line over "
+                        + maxRequestChars + " chars; closing connection.");
+                    writeLine(out, gson.toJson(RpcResponse.error("Request line exceeds "
+                        + maxRequestChars + " characters (RPC_MAX_REQUEST_BYTES).")));
                     break;
                 }
                 if (line.trim().isEmpty()) {
@@ -597,6 +619,50 @@ public class RpcServer extends GhidraScript {
         }
     }
 
+    private int configuredMaxRequestChars() {
+        try {
+            int configured = Integer.parseInt(
+                env("RPC_MAX_REQUEST_BYTES", String.valueOf(DEFAULT_MAX_REQUEST_CHARS)));
+            return configured > 0 ? configured : DEFAULT_MAX_REQUEST_CHARS;
+        } catch (NumberFormatException e) {
+            Msg.warn(this, "Ignoring unparseable RPC_MAX_REQUEST_BYTES; using "
+                + DEFAULT_MAX_REQUEST_CHARS);
+            return DEFAULT_MAX_REQUEST_CHARS;
+        }
+    }
+
+    /** Sentinel returned by {@link #readBoundedLine} for a line over the limit (compared by identity). */
+    private static final String OVERSIZED = new String("<oversized>");
+
+    /**
+     * {@link BufferedReader#readLine} with an upper bound. The stock method
+     * buffers until it sees a newline, so one client streaming bytes without
+     * one grows the heap until the JVM dies (and with
+     * {@code -XX:+ExitOnOutOfMemoryError} takes every checkout with it) — no
+     * authentication required. Returns null at EOF, {@link #OVERSIZED} once
+     * {@code max} chars arrive without a line terminator. Accepts LF and CRLF.
+     */
+    private static String readBoundedLine(BufferedReader in, int max) throws IOException {
+        StringBuilder sb = new StringBuilder(256);
+        while (true) {
+            int c = in.read();
+            if (c < 0) {
+                return sb.length() == 0 ? null : sb.toString();
+            }
+            if (c == '\n') {
+                int n = sb.length();
+                if (n > 0 && sb.charAt(n - 1) == '\r') {
+                    sb.setLength(n - 1);
+                }
+                return sb.toString();
+            }
+            if (sb.length() >= max) {
+                return OVERSIZED;
+            }
+            sb.append((char) c);
+        }
+    }
+
     /** Parse one request line, dispatch to its handler, produce a response. */
     private RpcResponse process(String line) {
         JsonObject request;
@@ -608,10 +674,16 @@ public class RpcServer extends GhidraScript {
         if (!request.has("procedure") || request.get("procedure").isJsonNull()) {
             return RpcResponse.error("Missing required field 'procedure'.");
         }
+        // A non-string "procedure" ({}, [1,2]) makes getAsString() throw; that
+        // used to escape process() and drop the connection with no response.
+        if (!request.get("procedure").isJsonPrimitive()) {
+            return RpcResponse.error("Field 'procedure' must be a string.");
+        }
         String procedure = request.get("procedure").getAsString();
         RpcProcedure handler = resolve(procedure);
         if (handler == null) {
-            return RpcResponse.error("Unknown procedure: " + procedure + ".");
+            return RpcResponse.error("Unknown procedure: "
+                + (procedure.length() <= 100 ? procedure : procedure.substring(0, 100) + "...") + ".");
         }
         // Log the call (procedure + brief args) on entry, then the outcome on exit,
         // so every request shows up as a pair of lines in the server log. The args
@@ -626,15 +698,29 @@ public class RpcServer extends GhidraScript {
         RpcResponse response;
         try {
             response = context.dispatch(handler, request); // serializes program access
-        } catch (Exception e) {
-            String msg = e.getMessage();
-            response = RpcResponse.error(msg != null ? msg
-                : "Internal error: " + e.getClass().getSimpleName());
+            if (response == null) {
+                response = RpcResponse.error("Internal error: handler returned no response.");
+            }
+        } catch (OutOfMemoryError oom) {
+            throw oom; // let the OOM exit path (installOomExitHandler / JVM flag) take over
+        } catch (Exception | StackOverflowError | LinkageError | AssertionError e) {
+            response = errorFor(e);
+        } catch (Error e) {
+            // Parser-generated Errors (e.g. Ghidra's CParser TokenMgrError) are
+            // input errors, not JVM failures. dispatch has already rolled back
+            // and released the lock in its finally blocks.
+            response = errorFor(e);
         }
         Msg.info(this, "Rpc #" + reqId
                 + " done " + procedure + " " + (response.success ? "ok" : "error")
                 + (response.success ? "" : ": " + briefError(response)));
         return response;
+    }
+
+    private static RpcResponse errorFor(Throwable t) {
+        String msg = t.getMessage();
+        return RpcResponse.error(msg != null && !msg.isEmpty() ? msg
+            : "Internal error: " + t.getClass().getSimpleName());
     }
 
     /** Trim an error message for the done-line log (don't echo multi-KB messages). */
@@ -643,7 +729,7 @@ public class RpcServer extends GhidraScript {
             return "";
         }
         String s = r.error;
-        return s.length() <= 200 ? s : s.substring(0, 200) + "...";
+        return RpcContext.logSafe(s.length() <= 200 ? s : s.substring(0, 200) + "...");
     }
 
     /** Pre-registered handler, else reflectively load <pkg>.<procedure>Handler. */

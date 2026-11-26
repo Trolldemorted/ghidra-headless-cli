@@ -92,6 +92,25 @@ public final class ReplaceDataTypeHandler implements RpcProcedure {
             cp = DataTypeOps.normalizePath(RpcContext.optStr(req, "category"));
         }
 
+        // Built-ins are off limits, exactly as for edit/delete/set-field.
+        // REPLACE_HANDLER on a built-in renames it aside and substitutes the
+        // new type everywhere it is used: `replace --name int --kind struct`
+        // turned every `int` in the program into that struct.
+        // A built-in only has a record in the program's own manager once
+        // something uses it, so also ask the built-in manager directly:
+        // otherwise a not-yet-used `int` could be shadowed by a user type of
+        // the same name and path.
+        DataType existingTarget = dtm.getDataType(cp, name);
+        boolean builtIn = existingTarget != null && DataTypeOps.isBuiltIn(ctx, existingTarget);
+        if (!builtIn && cp.isRoot()) {
+            builtIn = ghidra.program.model.data.BuiltInDataTypeManager.getDataTypeManager()
+                .getDataType(cp, name) != null;
+        }
+        if (builtIn) {
+            return RpcResponse.error("'" + cp.getPath() + (cp.isRoot() ? "" : "/") + name
+                + "' is a built-in data type and cannot be replaced.");
+        }
+
         // Fast path: a C snippet. The snippet's embedded name must match
         // the resolved `name` (and the snippet's natural category must
         // match `cp`, or both be root) so the parsed type lands at the
@@ -111,7 +130,17 @@ public final class ReplaceDataTypeHandler implements RpcProcedure {
             // `struct L_String { ... };` with --path /MyTest/L_String
             // would silently land at /L_String, which is surprising.)
             CategoryPath parsedCp = parsed.getCategoryPath();
-            if (!parsedCp.equals(cp) || !parsed.getName().equals(name)) {
+            boolean atTarget = parsedCp.equals(cp) && parsed.getName().equals(name);
+            if (!atTarget && dtm.contains(parsed)) {
+                // CParser hands back the LIVE database instance when the
+                // snippet merely names an existing type (`Victim x;`) or
+                // fills in an existing empty placeholder. Re-parenting that
+                // would move an unrelated type to the target path.
+                return RpcResponse.error("The C snippet resolves to the existing type '"
+                    + parsed.getPathName() + "' rather than defining a new one; it must "
+                    + "contain a full definition of '" + name + "'.");
+            }
+            if (!atTarget) {
                 try {
                     parsed.setNameAndCategory(cp, name);
                 } catch (Exception e) {
@@ -189,6 +218,12 @@ public final class ReplaceDataTypeHandler implements RpcProcedure {
     private DataType createStruct(JsonObject req, String name, CategoryPath cp,
             DataTypeManager dtm, RpcContext ctx) throws Exception {
         int size = RpcContext.optInt(req, "size", 0);
+        if (size < 0 || size > DataTypeOps.MAX_STRUCT_SIZE) {
+            // A non-packed struct of N bytes holds N undefined components;
+            // size=2000000000 allocated two billion of them.
+            throw new IllegalArgumentException("'size' must be 0.." + DataTypeOps.MAX_STRUCT_SIZE
+                + " bytes (got " + size + ").");
+        }
         StructureDataType s = new StructureDataType(cp, name, size, dtm);
         if (req.has("fields") && req.get("fields").isJsonArray()) {
             for (DataTypeOps.FieldPair fp : DataTypeOps.fieldList(req.getAsJsonArray("fields"))) {

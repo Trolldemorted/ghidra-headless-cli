@@ -7,6 +7,7 @@ import procedures.RpcContext;
 import procedures.RpcResponse;
 
 import ghidra.app.cmd.function.DecompilerParameterIdCmd;
+import ghidra.program.model.symbol.SourceType;
 
 /**
  * Procedure DecompilerParameterIdCmd: use the decompiler to identify parameters/return
@@ -18,7 +19,11 @@ public final class DecompilerParameterIdCmdHandler implements RpcProcedure {
         return ctx.applyCommand(new DecompilerParameterIdCmd(
             "DecompilerParameterId (RPC)",
             ctx.addressSet(req),
-            ctx.sourceType(RpcContext.optStr(req, "source")),
+            // This argument is Ghidra's sourceTypeClearLevel: signatures at or
+            // below it are RESET and re-derived from the decompiler. Default to
+            // ANALYSIS (what Ghidra's own analyzer uses); the generic
+            // USER_DEFINED default would wipe hand-made signatures.
+            ctx.sourceType(RpcContext.optStr(req, "source"), SourceType.ANALYSIS),
             RpcContext.reqBool(req, "commitDataTypes"),
             RpcContext.reqBool(req, "commitVoidReturn"),
             RpcContext.reqInt(req, "timeout")));

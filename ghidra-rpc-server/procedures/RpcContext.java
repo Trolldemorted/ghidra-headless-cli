@@ -103,28 +103,38 @@ public class RpcContext {
      * LinkedHashMap#removeEldestEntry} override below for the dirty-program
      * guard.
      */
-    private final Map<String, Program> open = new LinkedHashMap<>(16, 0.75f, true) {
-        @Override
-        protected boolean removeEldestEntry(Map.Entry<String, Program> eldest) {
-            if (size() <= MAX_OPEN_PROGRAMS) {
-                return false;
-            }
-            // Pin dirty programs (see MAX_OPEN_PROGRAMS Javadoc). Re-checked
-            // on every eviction — once the program saves+checkins cleanly,
-            // isChanged() flips false and the next eviction wave releases it.
-            Program p = eldest.getValue();
-            if (p.isChanged()) {
-                return false;
+    private final Map<String, Program> open = new LinkedHashMap<>(16, 0.75f, true);
+
+    /**
+     * Insert {@code p} into the open-program cache and, when the cache is over
+     * {@link #MAX_OPEN_PROGRAMS}, release the least-recently-used CLEAN entries
+     * until it fits. Dirty programs are skipped (see MAX_OPEN_PROGRAMS Javadoc)
+     * but do not block eviction of younger clean ones — the previous
+     * {@code removeEldestEntry} override only ever looked at the single eldest
+     * entry, so one pinned program let the cache grow without bound. The entry
+     * just inserted is never evicted. Called only under {@link #lock}.
+     */
+    private void cacheProgram(String key, Program p) {
+        open.put(key, p);
+        if (open.size() <= MAX_OPEN_PROGRAMS) {
+            return;
+        }
+        java.util.Iterator<Map.Entry<String, Program>> it = open.entrySet().iterator();
+        while (it.hasNext() && open.size() > MAX_OPEN_PROGRAMS) {
+            Map.Entry<String, Program> e = it.next();
+            Program candidate = e.getValue();
+            if (candidate == p || candidate.isChanged()) {
+                continue;
             }
             try {
-                p.release(RpcContext.this);
+                candidate.release(this);
             } catch (Exception ignored) {
-                // best-effort; release is idempotent and the server-side
-                // checkout is unaffected (the DomainFile, not the Program, owns it).
+                // best-effort; the server-side checkout is unaffected
+                // (the DomainFile, not the Program, owns it).
             }
-            return true;
+            it.remove();
         }
-    };
+    }
 
     /**
      * Callback invoked when a write to the Ghidra Server surfaces "Not connected
@@ -514,6 +524,13 @@ public class RpcContext {
      */
     private final Set<DomainFile> dirtyLocalFiles = new HashSet<>();
 
+    /**
+     * Set by {@link #closeAll} under {@link #lock}. A request that was queued on
+     * the lock while shutdown ran must not reopen (and re-checkout) programs
+     * after they were released.
+     */
+    private volatile boolean closed;
+
     /** Serializes the whole request lifecycle (see class doc). Reentrant for nested runWrite. */
     private final ReentrantLock lock = new ReentrantLock();
 
@@ -842,6 +859,9 @@ public class RpcContext {
             // exit on EVERY RPC and can grep for "SEVERE server issue".
             // Extracted into preflightGates to keep dispatch under the
             // 200-line MethodLength cap; see 2026-08-27 note.
+            if (closed) {
+                return RpcResponse.error("Server is shutting down.");
+            }
             RpcResponse preflightErr = preflightGates(procedure, request);
             if (preflightErr != null) {
                 return preflightErr;
@@ -1065,19 +1085,41 @@ public class RpcContext {
     private RpcResponse checkPasswordGates(RpcProcedure procedure, JsonObject request) {
         if (writePassword != null && procedure.mutates()) {
             String supplied = optStr(request, "password");
-            if (supplied == null || !writePassword.equals(supplied)) {
+            if (!secretEquals(writePassword, supplied)) {
                 return RpcResponse.error("Missing or invalid 'password' field; "
                     + "mutating requests require GHIDRA_RPC_WRITE_PASSWORD.");
             }
         }
-        if (adminPassword != null && procedure.requiresAdmin()) {
+        if (procedure.requiresAdmin()) {
+            // Fail closed: admin-only procedures are destructive (version
+            // purge), so an unset GHIDRA_RPC_ADMIN_PASSWORD disables them
+            // rather than leaving them open to anyone who can reach the port.
+            if (adminPassword == null) {
+                return RpcResponse.error("This request requires admin rights, but "
+                    + "GHIDRA_RPC_ADMIN_PASSWORD is not set on the server; "
+                    + "admin-only procedures are disabled.");
+            }
             String supplied = optStr(request, "adminPassword");
-            if (supplied == null || !adminPassword.equals(supplied)) {
+            if (!secretEquals(adminPassword, supplied)) {
                 return RpcResponse.error("Missing or invalid 'adminPassword' field; "
                     + "this request requires GHIDRA_RPC_ADMIN_PASSWORD.");
             }
         }
         return null;
+    }
+
+    /**
+     * Constant-time comparison of a configured secret against a client-supplied
+     * value, so response timing does not reveal how many leading characters
+     * matched. A null {@code supplied} never matches.
+     */
+    private static boolean secretEquals(String expected, String supplied) {
+        if (expected == null || supplied == null) {
+            return false;
+        }
+        return java.security.MessageDigest.isEqual(
+            expected.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+            supplied.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     /**
@@ -1216,6 +1258,10 @@ public class RpcContext {
         }
         String key = normalize(df.getPathname());
         Program cached = open.get(key);
+        df = recoverLostCheckout(df, key, path);
+        if (cached != null && open.get(key) != cached) {
+            cached = null; // recoverLostCheckout dropped the stale instance
+        }
         // Lazy reset: this file is dirty from a previous failed checkin
         // (markDirty was called in checkin's catch block). The cached
         // Program's in-memory state is the post-mutation that didn't land
@@ -1303,8 +1349,95 @@ public class RpcContext {
         // okToUpgrade=true (open older DB versions). okToRecover is parameterized — see
         // the Javadoc above.
         Program p = (Program) df.getDomainObject(this, true, okToRecover, monitor);
-        open.put(key, p); // removeEldestEntry fires here; eldest clean entry is released
+        cacheProgram(key, p); // evicts least-recently-used clean entries past the cap
         return p;
+    }
+
+    /**
+     * Detect and repair a checkout that was terminated behind our back.
+     *
+     * <p>When another session terminates our checkout (a second RPC server's
+     * startup scan under the same Ghidra user, an admin using "Terminate
+     * Checkout" in the GUI, {@code CleanCheckouts}), Ghidra demotes the local
+     * checkout copy to a private file that shadows the server's versioned file
+     * (a "hijack"): {@code isVersioned()} turns false, so the old code skipped
+     * checkout, opened the private copy and reported every later write as
+     * success while nothing reached the server. Verified 2026-11-26 against
+     * Ghidra 12.1.2.
+     *
+     * <p>Recovery matches the dirty-file policy ("reset to server state"):
+     * release the cached Program, delete the private copy (which reveals the
+     * versioned file again — {@code GhidraFileData.delete}, hijack branch) and
+     * re-resolve, so the normal path below takes a fresh checkout. Unpushed
+     * local edits in the private copy are discarded; every successful mutating
+     * request had already been pushed before the checkout was lost, and
+     * {@link #checkin} now fails the request that would have been lost.
+     *
+     * <p>No-op for local (non-shared) projects and for files that are simply
+     * private (never added to version control).
+     */
+    private DomainFile recoverLostCheckout(DomainFile df, String key, String path) throws Exception {
+        if (project.getRepository() == null || !df.isHijacked()) {
+            return df;
+        }
+        Msg.warn(this, "Checkout of '" + df.getPathname() + "' was terminated by another "
+            + "session; discarding the local private copy and reopening from the server.");
+        Program stale = open.remove(key);
+        if (stale != null) {
+            try {
+                stale.release(this);
+            } catch (Exception ignored) {
+                // best-effort; we drop the cache entry regardless
+            }
+        }
+        dirtyLocalFiles.remove(df);
+        df.delete(); // hijack branch: removes only the private file
+        DomainFile fresh = project.getProjectData().getFile(normalize(path));
+        if (fresh == null) {
+            throw new IllegalArgumentException("No file at '" + path
+                + "' after discarding a private copy whose checkout had been terminated.");
+        }
+        return fresh;
+    }
+
+    /**
+     * Drop this server's hold on {@code df} so a project-level procedure can
+     * delete it: release and uncache the open Program, then undo our checkout
+     * (discarding the local copy). {@code DomainFile.delete()} refuses files
+     * that are open or checked out, and this server keeps every file it has
+     * touched in exactly that state. Called under {@link #lock} from
+     * project-level handlers (DeleteFile, PurgeVersions).
+     */
+    public void releaseFile(DomainFile df) throws java.io.IOException {
+        String key = normalize(df.getPathname());
+        Program cached = open.remove(key);
+        if (cached != null) {
+            try {
+                cached.release(this);
+            } catch (Exception ignored) {
+                // best-effort; the cache entry is gone either way
+            }
+        }
+        dirtyLocalFiles.remove(df);
+        if (df.isVersioned() && df.isCheckedOut()) {
+            df.undoCheckout(false, false);
+        }
+    }
+
+    /**
+     * Forget a cached Program whose file no longer exists (deleted on the
+     * server by a version purge). Never touches the repository. Called under
+     * {@link #lock}.
+     */
+    public void forgetProgram(String pathname) {
+        Program cached = open.remove(normalize(pathname));
+        if (cached != null) {
+            try {
+                cached.release(this);
+            } catch (Exception ignored) {
+                // best-effort
+            }
+        }
     }
 
     /**
@@ -2504,13 +2637,25 @@ public class RpcContext {
         // and proceed, accepting that the in-flight request will crash
         // when its program is released.
         drainInFlight(CLOSE_ALL_DRAIN_MS);
-        // Revert any dirty local files BEFORE releasing programs: undoCheckout
-        // needs the DomainFile reachable, and once we release the cached
-        // Program + its checkout, the server-side lock disappears and the
-        // revert path becomes ambiguous.
-        revertDirtyLocalFiles();
-        lock.lock();
+        // Bounded lock acquisition: if a dispatch is genuinely stuck (the
+        // drain above timed out), an unconditional lock() would hang shutdown
+        // behind it — the old code logged "releasing programs anyway" and then
+        // blocked forever. Give up instead; JVM exit releases transient
+        // checkouts via the repository disconnect.
+        boolean locked = false;
         try {
+            locked = lock.tryLock(CLOSE_ALL_LOCK_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+        }
+        if (!locked) {
+            closed = true;
+            Msg.warn(this, "closeAll: dispatch lock still held by a stuck request; "
+                + "skipping program release.");
+            return;
+        }
+        try {
+            closed = true; // requests queued on the lock must not reopen programs
             for (Program p : open.values()) {
                 try {
                     p.release(this);
@@ -2519,10 +2664,20 @@ public class RpcContext {
                 }
             }
             open.clear();
+            // Revert dirty local files AFTER releasing programs:
+            // DomainFile.undoCheckout throws FileInUseException while the
+            // file's domain object is open (GhidraFileData.checkInUse), so the
+            // previous revert-then-release order could never succeed. The
+            // checkout lives on the DomainFile, not the Program, so it is
+            // still there to undo. The lock is reentrant.
+            revertDirtyLocalFiles();
         } finally {
             lock.unlock();
         }
     }
+
+    /** Max time {@link #closeAll} waits for the dispatch lock after the drain. */
+    private static final long CLOSE_ALL_LOCK_MS = 2_000;
 
     /**
      * Spin-wait up to {@code timeoutMs} for any in-flight dispatch to
@@ -2588,6 +2743,19 @@ public class RpcContext {
                 df.save(monitor);
             }
             if (!df.isVersioned()) {
+                if (project.getRepository() != null && df.isHijacked()) {
+                    // Shared project, and the server has a versioned file of
+                    // this name that we no longer hold a checkout on: our
+                    // checkout was terminated by another session. The save
+                    // above went to a private copy nobody else can see, so
+                    // this is a FAILED push, not a success. openProgram's
+                    // recoverLostCheckout resets the file on the next request.
+                    markDirty(program);
+                    return RpcResponse.error("Check-in/push failed: the checkout of '"
+                        + df.getPathname() + "' was terminated by another session, so this "
+                        + "change did not reach the Ghidra Server. Retry the request; the "
+                        + "file will be reopened from the server.");
+                }
                 clearDirty(program); // local non-versioned: save is the persistence
                 return null;
             }
@@ -3379,7 +3547,7 @@ public class RpcContext {
     /** Read an optional int field; {@code dflt} when missing/null. */
     public static int optInt(JsonObject req, String field, int dflt) {
         return (req.has(field) && !req.get(field).isJsonNull())
-            ? req.get(field).getAsInt() : dflt;
+            ? exactInt(req, field) : dflt;
     }
 
     /** Read an optional boolean field; {@code dflt} when missing/null. */
@@ -3435,7 +3603,23 @@ public class RpcContext {
         if (!req.has(field) || req.get(field).isJsonNull()) {
             throw new IllegalArgumentException("Missing required field '" + field + "'.");
         }
-        return req.get(field).getAsInt();
+        return exactInt(req, field);
+    }
+
+    /**
+     * Read {@code field} as a 32-bit integer, rejecting anything that is not
+     * exactly one. gson's {@code getAsInt()} silently truncates: {@code 4294967296}
+     * becomes {@code 0} and {@code 1.9} becomes {@code 1}, which turned
+     * {@code keep=4294967296} into "keep nothing" on the version-purge path.
+     */
+    private static int exactInt(JsonObject req, String field) {
+        try {
+            return req.get(field).getAsBigDecimal().intValueExact();
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException("Field '" + field
+                + "' must be a 32-bit integer (got " + truncate(String.valueOf(req.get(field)))
+                + ").");
+        }
     }
 
     // ---------------------------------------------------------------------------
@@ -3475,12 +3659,47 @@ public class RpcContext {
                 : briefValue(e.getValue()));
         }
         boolean first = true;
+        int shown = 0;
         for (java.util.Map.Entry<String, String> e : sorted.entrySet()) {
+            if (shown++ >= BRIEF_MAX_FIELDS) {
+                sb.append(" ...(+").append(sorted.size() - BRIEF_MAX_FIELDS).append(" more)");
+                break;
+            }
             if (!first) sb.append(' ');
             first = false;
-            sb.append(e.getKey()).append('=').append(e.getValue());
+            sb.append(logSafe(truncate(e.getKey()))).append('=').append(logSafe(e.getValue()));
         }
         return sb.toString();
+    }
+
+    /** Cap on the number of request fields echoed into one log line. */
+    private static final int BRIEF_MAX_FIELDS = 40;
+
+    /**
+     * Make client-supplied text safe for a single log line: control characters
+     * (notably CR/LF, which would let a request forge extra log lines) are
+     * replaced with a visible backslash-u escape.
+     */
+    public static String logSafe(String s) {
+        if (s == null) {
+            return "";
+        }
+        StringBuilder sb = null;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            boolean bad = c < 0x20 || c == 0x7f || c == 0x85 || c == 0x2028 || c == 0x2029;
+            if (bad && sb == null) {
+                sb = new StringBuilder(s.length() + 16).append(s, 0, i);
+            }
+            if (sb != null) {
+                if (bad) {
+                    sb.append(String.format("\\u%04x", (int) c));
+                } else {
+                    sb.append(c);
+                }
+            }
+        }
+        return sb == null ? s : sb.toString();
     }
 
     /** Render one JSON value as a brief log fragment; never throws, never null. */

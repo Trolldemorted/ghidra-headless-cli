@@ -15,6 +15,7 @@ public final class RemoveFunctionTagCmdHandler implements RpcProcedure {
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
         String tag = RpcContext.reqStr(req, "tag");
         Address entry = ctx.requireAddress(RpcContext.reqStr(req, "address"));
+        ctx.requireFunctionAt(entry); // the Ghidra command NPEs when there is no function
         return ctx.applyCommand(new RemoveFunctionTagCmd(tag, entry));
     }
 }

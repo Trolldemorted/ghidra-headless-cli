@@ -23,6 +23,7 @@ import ghidra.framework.model.Project;
 import ghidra.program.model.lang.LanguageNotFoundException;
 import ghidra.program.model.listing.Program;
 import ghidra.util.exception.VersionException;
+import ghidra.util.Msg;
 import ghidra.util.task.TaskMonitor;
 
 /**
@@ -86,6 +87,9 @@ public final class ProgramLoaderHandler implements RpcProcedure {
         }
 
         MessageLog log = new MessageLog();
+        boolean shared = project.getRepository() != null;
+        List<DomainFile> notShared = new ArrayList<>();
+        RpcResponse response;
         // Give the ByteProvider a name: the source(byte[]) overload leaves it null, which
         // NPEs loaders that sniff by filename (GZF/GDT/Tenet). name() sets the program name.
         try (ByteProvider provider = new ByteArrayProvider(name, bytes);
@@ -107,6 +111,14 @@ public final class ProgramLoaderHandler implements RpcProcedure {
                 if (df.canAddToRepository() && !df.isVersioned()) {
                     df.addToVersionControl(comment, false, monitor);
                 }
+                if (shared && !df.isVersioned()) {
+                    // canAddToRepository() swallows the reason (read-only
+                    // repository access, not connected, ...) and returns
+                    // false. The file is then private to this JVM's transient
+                    // project: no other client sees it and it is gone on
+                    // restart. That is a failed import, not a success.
+                    notShared.add(df);
+                }
                 imported.add(df.getPathname());
                 if (loaded == primaryLoaded) {
                     primary = df.getPathname();
@@ -118,11 +130,30 @@ public final class ProgramLoaderHandler implements RpcProcedure {
             if (primaryLoaded != null) {
                 primaryLoaded.apply(p -> format[0] = p.getExecutableFormat());
             }
-            return new ImportResponse(imported, primary, format[0]);
+            response = new ImportResponse(imported, primary, format[0]);
         } catch (LoadException | LanguageNotFoundException | VersionException e) {
             String detail = log.hasMessages() ? " [" + log.toString().trim() + "]" : "";
             return RpcResponse.error("Import failed for '" + name + "': " + message(e) + detail);
         }
+        if (notShared.isEmpty()) {
+            return response;
+        }
+        // The programs are closed now (try-with-resources), so the private
+        // files can be removed; leaving them would block a retry with
+        // "already exists".
+        StringBuilder paths = new StringBuilder();
+        for (DomainFile df : notShared) {
+            paths.append(paths.length() == 0 ? "" : ", ").append(df.getPathname());
+            try {
+                df.delete();
+            } catch (Exception e) {
+                Msg.warn(this, "Could not remove unshared import '" + df.getPathname()
+                    + "': " + message(e));
+            }
+        }
+        return RpcResponse.error("Import failed for '" + name + "': the file could not be added "
+            + "to version control on the Ghidra Server (" + paths + "). Check that the server "
+            + "user has write access to the repository.");
     }
 
     /** Project-wide operation: no per-request program. */
@@ -131,10 +162,17 @@ public final class ProgramLoaderHandler implements RpcProcedure {
         return false;
     }
 
-    /** Persistence (save + add-to-version-control) is handled here, not by dispatch. */
+    /**
+     * Importing writes to the shared repository, so it must pass the
+     * write-password gate. Persistence (save + add-to-version-control) is
+     * still handled here: dispatch only opens a transaction / checks in when a
+     * program was opened for the request, and {@link #needsProgram()} is false.
+     * (This returned false until 2026-11: anyone who could reach the port could
+     * import without the password.)
+     */
     @Override
     public boolean mutates() {
-        return false;
+        return true;
     }
 
     /** The program name is a plain file name; drop any directory part a client included. */

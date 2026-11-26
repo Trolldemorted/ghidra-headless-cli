@@ -32,6 +32,14 @@ final class CommentOps {
         POST(CommentType.POST, false),
         REPEATABLE(CommentType.REPEATABLE, false),
         PLATE(CommentType.PLATE, false),
+        /**
+         * Function-level comment via {@code Function.get/setComment}. NOTE: in
+         * Ghidra this IS the PLATE comment at the function's entry point
+         * ({@code FunctionDB.setComment} writes {@code CommentType.PLATE}), so
+         * DECOMPILER ops and PLATE ops at the entry read and overwrite the
+         * same text. The only difference is addressing: any address inside the
+         * function resolves to it.
+         */
         DECOMPILER(null, true);
 
         final CommentType cuType;
@@ -59,14 +67,21 @@ final class CommentOps {
         return new CommentResponse(type.name(), addr, null, cu.getComment(type.cuType));
     }
 
-    /** Set the comment at the address (empty string clears it). */
-    static RpcResponse set(Address addr, Type type, String text, RpcContext ctx) throws Exception {
+    /**
+     * Set the comment at the address. A null or empty {@code text} REMOVES the
+     * comment: Ghidra distinguishes a null comment (no record) from an empty
+     * one (a record holding ""), and storing "" left a phantom comment behind
+     * that made a later append start with the separator and pushed a new
+     * repository version for a no-op clear.
+     */
+    static RpcResponse set(Address addr, Type type, String rawText, RpcContext ctx) throws Exception {
+        final String text = (rawText == null || rawText.isEmpty()) ? null : rawText;
         if (type.functionLevel) {
             Function fn = requireFunction(addr, ctx);
             String previous = fn.getComment();
             String[] result = {previous};
             ctx.runWrite("Set " + type + " Comment", () -> {
-                fn.setComment(text == null ? "" : text);
+                fn.setComment(text);
                 result[0] = fn.getComment();
             });
             return new CommentResponse(type.name(), addr, fn.getName(), result[0], previous);
@@ -74,7 +89,7 @@ final class CommentOps {
         CodeUnit cu = requireCodeUnit(addr, ctx);
         String previous = cu.getComment(type.cuType);
         RpcResponse r = ctx.applyCommand(
-            new SetCommentCmd(addr, type.cuType, text == null ? "" : text));
+            new SetCommentCmd(addr, type.cuType, text));
         if (!r.success) return r;
         return new CommentResponse(type.name(), addr, null, cu.getComment(type.cuType), previous);
     }
@@ -103,9 +118,9 @@ final class CommentOps {
         return new CommentResponse(type.name(), addr, null, cu.getComment(type.cuType), previous);
     }
 
-    /** Clear the comment at the address (set it to empty string). */
+    /** Clear (remove) the comment at the address. */
     static RpcResponse clear(Address addr, Type type, RpcContext ctx) throws Exception {
-        return set(addr, type, "", ctx);
+        return set(addr, type, null, ctx);
     }
 
     private static CodeUnit requireCodeUnit(Address addr, RpcContext ctx) {

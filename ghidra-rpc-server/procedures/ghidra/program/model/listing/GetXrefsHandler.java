@@ -122,7 +122,9 @@ public final class GetXrefsHandler implements RpcProcedure {
                     while (dests.hasNext()) {
                         ctx.monitor().checkCancelled();
                         Address dest = dests.next();
-                        if (dest.equals(cu.getAddress())) continue;
+                        // An interior target is itself inside [min+1, max] and was
+                        // already emitted by the exact-address pass above.
+                        if (dest.equals(target)) continue;
                         ReferenceIterator inner = rm.getReferencesTo(dest);
                         while (inner.hasNext()) {
                             addRef(refs, inner.next(), fm, includeOffcut, true, dest,
@@ -149,7 +151,10 @@ public final class GetXrefsHandler implements RpcProcedure {
         // `includeOffcut` is about the reference's FROM address (a ref whose
         // source is mid-instruction). It is deliberately independent of the
         // composite walk below, which is about where the target lands.
-        if (!includeOffcut && ref.isOffsetReference()) return;
+        // (This used to drop ref.isOffsetReference() rows when includeOffcut
+        // was false. An OffsetReference is a base+offset reference — common
+        // from relocations — and says nothing about offcut-ness, so exact
+        // xrefs went missing.)
         Address from = ref.getFromAddress();
         Function fromFn = fm.getFunctionContaining(from);
         out.add(new XrefMatch(

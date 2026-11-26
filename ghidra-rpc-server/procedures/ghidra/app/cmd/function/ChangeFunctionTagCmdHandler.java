@@ -18,7 +18,13 @@ public final class ChangeFunctionTagCmdHandler implements RpcProcedure {
         String tagName = RpcContext.reqStr(req, "tagName");
         String value = RpcContext.reqStr(req, "value");
         String field = RpcContext.optStr(req, "field");
-        int type = "comment".equalsIgnoreCase(field)
+        // Only the two documented values: a typo such as "coment" used to fall
+        // through to a rename, replacing the tag's NAME with the comment text.
+        boolean isComment = "comment".equalsIgnoreCase(field);
+        if (!isComment && field != null && !field.isEmpty() && !"name".equalsIgnoreCase(field)) {
+            return RpcResponse.error("Invalid 'field' '" + field + "': must be name or comment.");
+        }
+        int type = isComment
             ? ChangeFunctionTagCmd.TAG_COMMENT_CHANGED
             : ChangeFunctionTagCmd.TAG_NAME_CHANGED;
         return ctx.applyCommand(new ChangeFunctionTagCmd(tagName, value, type));

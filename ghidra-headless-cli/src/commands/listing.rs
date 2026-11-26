@@ -36,8 +36,14 @@ pub struct Cmd {
     #[arg(long = "address-set", value_name = "START[:END]")]
     pub address_set: Vec<String>,
 
-    /// Include raw instruction/data bytes (hex) [default: true]
-    #[arg(long, default_value_t = true)]
+    /// Include raw instruction/data bytes (hex); pass `--bytes false` to omit them [default: true]
+    #[arg(
+        long,
+        default_value_t = true,
+        action = clap::ArgAction::Set,
+        num_args = 0..=1,
+        default_missing_value = "true"
+    )]
     pub bytes: bool,
 
     /// Emit the raw RPC JSON response instead of formatted text [default: false]
@@ -124,7 +130,8 @@ fn print_unit(u: &Json) {
     let label = u.get("label").and_then(Json::as_str).unwrap_or("");
     let bytes = u.get("bytes").and_then(Json::as_str).unwrap_or("");
     let repr = u.get("representation").and_then(Json::as_str).unwrap_or("");
-    let depth = u.get("depth").and_then(Json::as_f64).unwrap_or(0.0) as usize;
+    // Clamp: the depth is server-controlled and feeds an allocation.
+    let depth = (u.get("depth").and_then(Json::as_f64).unwrap_or(0.0) as usize).min(64);
     let indent = "  ".repeat(depth);
 
     let line = match kind {

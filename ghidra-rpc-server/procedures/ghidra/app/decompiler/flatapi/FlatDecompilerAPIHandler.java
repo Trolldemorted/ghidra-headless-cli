@@ -27,6 +27,11 @@ import ghidra.program.model.listing.Function;
  */
 public final class FlatDecompilerAPIHandler implements RpcProcedure {
 
+    /** Used when the client sends {@code timeoutSecs <= 0} (previously: unlimited). */
+    static final int DEFAULT_TIMEOUT_SECS = 300;
+    /** Upper bound on a client-supplied timeout. */
+    static final int MAX_TIMEOUT_SECS = 3600;
+
     @Override
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
         // `address` accepts either a hex address or an exact function name
@@ -41,9 +46,11 @@ public final class FlatDecompilerAPIHandler implements RpcProcedure {
         FlatProgramAPI flat = new FlatProgramAPI(ctx.program(), ctx.monitor());
         FlatDecompilerAPI api = new FlatDecompilerAPI(flat);
         try {
-            String c = (timeoutSecs > 0)
-                ? api.decompile(function, timeoutSecs)
-                : api.decompile(function);
+            // Always bounded: decompile(function) means "no timeout", and this
+            // read-only call (no write password) holds the server-wide lock.
+            int bounded = (timeoutSecs > 0) ? Math.min(timeoutSecs, MAX_TIMEOUT_SECS)
+                : DEFAULT_TIMEOUT_SECS;
+            String c = api.decompile(function, bounded);
             return new DecompileResponse(function.getName(),
                 function.getEntryPoint().toString(), c);
         } finally {

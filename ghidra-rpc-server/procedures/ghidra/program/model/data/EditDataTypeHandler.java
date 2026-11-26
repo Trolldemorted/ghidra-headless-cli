@@ -100,18 +100,36 @@ public final class EditDataTypeHandler implements RpcProcedure {
             }
             // Run rename/move/description first; the parsed snippet's
             // body replaces the target's body wholesale below.
-            boolean[] touched = {false};
+            DataType[] edited = {null};
             ctx.runWrite("EditDataType", () -> {
                 doEdits(req, target, ctx);              // rename, move first
-                ctx.program().getDataTypeManager().addDataType(parsed,
-                    DataTypeConflictHandler.REPLACE_HANDLER);
-                touched[0] = true;
+                DataTypeManager dtm = ctx.program().getDataTypeManager();
+                if (parsed != target) {
+                    if (dtm.contains(parsed)) {
+                        // CParser returned some OTHER live type (the snippet
+                        // only names it); re-keying it would move that type.
+                        throw new IllegalArgumentException("The C snippet resolves to the "
+                            + "existing type '" + parsed.getPathName() + "' rather than "
+                            + "defining '" + target.getName() + "'.");
+                    }
+                    // CParser builds the type in the ROOT category under the
+                    // snippet's name. REPLACE_HANDLER matches by category+name,
+                    // so without re-keying, a target in /Cat (or one just
+                    // renamed by doEdits) was left untouched while a stray
+                    // /Name was created or overwritten in root.
+                    parsed.setNameAndCategory(target.getCategoryPath(), target.getName());
+                }
+                edited[0] = dtm.addDataType(parsed, DataTypeConflictHandler.REPLACE_HANDLER);
             });
-            if (!touched[0]) return RpcResponse.error("Edit failed for '" + target.getName() + "'.");
+            if (edited[0] == null) {
+                return RpcResponse.error("Edit failed for '" + target.getName() + "'.");
+            }
+            // Report the instance that now lives at the path: a kind change
+            // (struct <-> union) replaces the object and deletes the old one.
             return appliedWarning(
                 new ShowDataTypeHandler.ConfirmResponse(
-                    ctx.program().getDataTypeManager(), target, "edited"),
-                target, ctx);
+                    ctx.program().getDataTypeManager(), edited[0], "edited"),
+                edited[0], ctx);
         }
 
         // Explicit-JSON path: rename / move / replaceFields / addFields / addEntries.

@@ -49,6 +49,8 @@ final class CDefinitionParser {
                 + "`struct Foo { int x; };` with an identifier.");
         }
 
+        checkBounds(snippet);
+
         CParser parser = new CParser(dtm);
         parser.setParseFileName("cdtm-snippet.c");
         DataType parsed;
@@ -56,6 +58,15 @@ final class CDefinitionParser {
             parsed = parser.parse(snippet);
         } catch (ParseException pe) {
             throw new IllegalArgumentException("C parse error: " + pe.getMessage());
+        } catch (StackOverflowError so) {
+            throw new IllegalArgumentException("C parse error: definition is nested too deeply.");
+        } catch (Error e) {
+            // JavaCC reports lexical errors as TokenMgrError (an Error, not an
+            // Exception); CParser rethrows it as-is.
+            if (e instanceof OutOfMemoryError) {
+                throw e;
+            }
+            throw new IllegalArgumentException("C parse error: " + e.getMessage());
         }
         if (parsed == null) {
             String msgs = parser.getParseMessages();
@@ -67,6 +78,47 @@ final class CDefinitionParser {
                 "C snippet must define a NAMED type (parsed result has no name).");
         }
         return parsed;
+    }
+
+    /** Longest accepted snippet. Real type definitions are far smaller. */
+    static final int MAX_SNIPPET_CHARS = 256 * 1024;
+    /** Deepest accepted parenthesis nesting (function-pointer types need 2-3). */
+    static final int MAX_PAREN_DEPTH = 8;
+    /** Deepest accepted brace/bracket nesting. */
+    static final int MAX_BLOCK_DEPTH = 64;
+
+    /**
+     * Reject input that makes Ghidra's CParser run away. The generated parser
+     * backtracks exponentially on nested parentheses — measured on 12.1.2:
+     * 20 levels = 4 s, 24 levels = 57 s, x4 per two more — it cannot be
+     * cancelled or interrupted, and it runs under the server-wide dispatch
+     * lock. Deep brace nesting overflows the stack instead.
+     */
+    private static void checkBounds(String snippet) {
+        if (snippet.length() > MAX_SNIPPET_CHARS) {
+            throw new IllegalArgumentException("C definition is too long (" + snippet.length()
+                + " chars; limit " + MAX_SNIPPET_CHARS + ").");
+        }
+        int paren = 0;
+        int block = 0;
+        for (int i = 0; i < snippet.length(); i++) {
+            char c = snippet.charAt(i);
+            if (c == '(') {
+                if (++paren > MAX_PAREN_DEPTH) {
+                    throw new IllegalArgumentException("C definition nests parentheses deeper "
+                        + "than " + MAX_PAREN_DEPTH + " levels.");
+                }
+            } else if (c == ')') {
+                paren = Math.max(0, paren - 1);
+            } else if (c == '{' || c == '[') {
+                if (++block > MAX_BLOCK_DEPTH) {
+                    throw new IllegalArgumentException("C definition nests braces/brackets "
+                        + "deeper than " + MAX_BLOCK_DEPTH + " levels.");
+                }
+            } else if (c == '}' || c == ']') {
+                block = Math.max(0, block - 1);
+            }
+        }
     }
 
     /**

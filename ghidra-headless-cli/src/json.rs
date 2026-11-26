@@ -130,6 +130,7 @@ impl Json {
         let mut parser = Parser {
             bytes: text.as_bytes(),
             pos: 0,
+            depth: 0,
         };
         parser.skip_ws();
         let value = parser.parse_value()?;
@@ -159,9 +160,13 @@ fn write_string(s: &str, out: &mut String) {
     out.push('"');
 }
 
+/// Deepest array/object nesting the parser accepts.
+const MAX_DEPTH: usize = 128;
+
 struct Parser<'a> {
     bytes: &'a [u8],
     pos: usize,
+    depth: usize,
 }
 
 impl<'a> Parser<'a> {
@@ -178,8 +183,8 @@ impl<'a> Parser<'a> {
     fn parse_value(&mut self) -> Result<Json, String> {
         self.skip_ws();
         match self.bytes.get(self.pos) {
-            Some(b'{') => self.parse_object(),
-            Some(b'[') => self.parse_array(),
+            Some(b'{') => self.nested(Self::parse_object),
+            Some(b'[') => self.nested(Self::parse_array),
             Some(b'"') => Ok(Json::Str(self.parse_string()?)),
             Some(b't') | Some(b'f') => self.parse_bool(),
             Some(b'n') => self.parse_null(),
@@ -187,6 +192,22 @@ impl<'a> Parser<'a> {
             Some(&b) => Err(format!("unexpected byte '{}' at {}", b as char, self.pos)),
             None => Err("unexpected end of input".to_string()),
         }
+    }
+
+    /// Run a container parser one nesting level down, refusing input nested
+    /// deeper than `MAX_DEPTH`. The parser is recursive, so without the bound
+    /// a response of 100k `[` overflows the stack and aborts the process.
+    fn nested(
+        &mut self,
+        parse: fn(&mut Self) -> Result<Json, String>,
+    ) -> Result<Json, String> {
+        if self.depth >= MAX_DEPTH {
+            return Err(format!("nesting deeper than {} at {}", MAX_DEPTH, self.pos));
+        }
+        self.depth += 1;
+        let result = parse(self);
+        self.depth -= 1;
+        result
     }
 
     fn parse_object(&mut self) -> Result<Json, String> {
@@ -445,5 +466,33 @@ impl Req {
     /// Finish building.
     pub fn build(self) -> Json {
         Json::Obj(self.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nesting_is_bounded() {
+        let ok = format!("{}1{}", "[".repeat(MAX_DEPTH), "]".repeat(MAX_DEPTH));
+        assert!(Json::parse(&ok).is_ok());
+        let deep = "[".repeat(200_000);
+        assert!(Json::parse(&deep).unwrap_err().contains("nesting"));
+    }
+
+    #[test]
+    fn encoded_strings_never_contain_a_raw_newline() {
+        let mut o = Json::Obj(Vec::new());
+        o.set("k", Json::Str("a\nb\r\u{0}\"\\".to_string()));
+        let line = o.to_string();
+        assert!(!line.contains('\n') && !line.contains('\r'));
+        let back = Json::parse(&line).unwrap();
+        assert_eq!(back.get("k").and_then(Json::as_str), Some("a\nb\r\u{0}\"\\"));
+    }
+
+    #[test]
+    fn trailing_garbage_is_rejected() {
+        assert!(Json::parse("{} x").is_err());
     }
 }

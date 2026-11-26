@@ -9,6 +9,25 @@ use std::net::TcpStream;
 
 use crate::json::Json;
 
+/// Upper bound on the TCP handshake with the server.
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Request fields that must never reach the trace log: the two gate secrets,
+/// and `bytes` (a whole binary as base64).
+const REDACTED_FIELDS: [&str; 3] = ["password", "adminPassword", "bytes"];
+
+/// Copy of `request` as a wire line with secret/bulk fields replaced by a
+/// length marker, for `-vv` tracing.
+fn redacted(request: &Json) -> String {
+    let mut copy = request.clone();
+    for field in REDACTED_FIELDS {
+        if let Some(len) = copy.get(field).and_then(Json::as_str).map(str::len) {
+            copy.set(field, Json::Str(format!("<redacted:{}>", len)));
+        }
+    }
+    copy.to_string()
+}
+
 /// Holds the resolved server endpoint and write-gate secret for the duration
 /// of one CLI run. `write_password` mirrors the `GHIDRA_RPC_WRITE_PASSWORD`
 /// environment variable: when `Some`, every outgoing request gets the secret
@@ -37,10 +56,11 @@ impl Client {
     /// Send a request and return the parsed response, or a transport/parse error.
     fn call(&self, request: &Json) -> Result<Json, String> {
         let line = request.to_string();
-        log::trace!("-> {}", line);
+        if log::log_enabled!(log::Level::Trace) {
+            log::trace!("-> {}", redacted(request));
+        }
 
-        let stream = TcpStream::connect(&self.host)
-            .map_err(|e| format!("connect to {}: {}", self.host, e))?;
+        let stream = self.connect()?;
         let mut writer = &stream;
         writer
             .write_all(line.as_bytes())
@@ -63,6 +83,24 @@ impl Client {
         log::trace!("<- {}", trimmed);
 
         Json::parse(trimmed).map_err(|e| format!("malformed response: {}", e))
+    }
+
+    /// Connect with a bounded handshake. There is deliberately no read
+    /// timeout: analysis and import calls legitimately run for many minutes.
+    fn connect(&self) -> Result<TcpStream, String> {
+        use std::net::ToSocketAddrs;
+        let addrs = self
+            .host
+            .to_socket_addrs()
+            .map_err(|e| format!("resolve {}: {}", self.host, e))?;
+        let mut last = format!("resolve {}: no addresses", self.host);
+        for addr in addrs {
+            match TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT) {
+                Ok(stream) => return Ok(stream),
+                Err(e) => last = format!("connect to {}: {}", self.host, e),
+            }
+        }
+        Err(last)
     }
 
     /// Send a request, log transport and server-side errors at the error level,

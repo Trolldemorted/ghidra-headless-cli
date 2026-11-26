@@ -59,7 +59,7 @@ public final class ReadBytesHandler implements RpcProcedure {
             return RpcResponse.error("Unreadable at " + addr + ": " + e.getMessage());
         }
 
-        String data = format.equals("hex") ? toHexLine(buf, n) : toHexDump(buf, n, addr.toString());
+        String data = format.equals("hex") ? toHexLine(buf, n) : toHexDump(buf, n, addr);
         return new ReadBytesResponse(addr.toString(), length, n, format, data);
     }
 
@@ -84,11 +84,14 @@ public final class ReadBytesHandler implements RpcProcedure {
      * {@code hexdump -C}-style output: 16 bytes per row, 8-byte half-rows with
      * a 2-space gutter, ASCII column on the right.
      */
-    private static String toHexDump(byte[] data, int n, String baseAddr) {
+    private static String toHexDump(byte[] data, int n, Address base) {
         StringBuilder sb = new StringBuilder(n * 4);
         for (int row = 0; row < n; row += 16) {
             int end = Math.min(row + 16, n);
-            sb.append(baseAddr);
+            // Each row carries its own address (this printed the start
+            // address on every row). addWrap: n bytes were read from here,
+            // so the row addresses exist.
+            sb.append(row == 0 ? base : base.addWrap(row));
             sb.append("  ");
             for (int col = row; col < end; col++) {
                 int b = data[col] & 0xff;
@@ -99,8 +102,11 @@ public final class ReadBytesHandler implements RpcProcedure {
             }
             // Pad a short last row so the ASCII column lines up.
             if (end - row < 16) {
+                // Each missing byte is "xx" plus one separator; the half-row
+                // gutter is one extra space, missing when the row stops at or
+                // before the 8th byte.
                 int shortBytes = 16 - (end - row);
-                int padSpaces = shortBytes * 3 + (shortBytes > 8 ? -1 : 0);
+                int padSpaces = shortBytes * 3 + (end - row <= 8 ? 1 : 0);
                 for (int p = 0; p < padSpaces; p++) sb.append(' ');
             }
             sb.append("  |");

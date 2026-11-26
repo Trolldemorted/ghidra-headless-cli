@@ -62,6 +62,63 @@ public final class StringQuery {
         return ignoreCase ? s -> s.equalsIgnoreCase(query) : s -> s.equals(query);
     }
 
+    /**
+     * Wall-clock budget for ONE request's regex matching, summed over every
+     * candidate string. Matching runs under the server-wide dispatch lock and a
+     * {@link java.util.regex.Matcher} cannot be interrupted, so an unbounded
+     * client-supplied pattern such as {@code (\w*a?){30}!} would stall every
+     * other client indefinitely — without needing the write password.
+     */
+    static final long REGEX_BUDGET_MS = 10_000;
+
+    /**
+     * A {@code find()} predicate for a client-supplied pattern that gives up
+     * once the request has spent {@link #REGEX_BUDGET_MS} matching. The input
+     * is wrapped in a {@link CharSequence} whose {@code charAt} checks the
+     * deadline, which is the only hook the regex engine offers into a running
+     * match. The predicate is created per request, so the budget is per request.
+     */
+    public static Predicate<String> boundedFind(Pattern pattern) {
+        long deadline = System.currentTimeMillis() + REGEX_BUDGET_MS;
+        return s -> pattern.matcher(new DeadlineCharSequence(s, deadline)).find();
+    }
+
+    /** {@link CharSequence} view that aborts regex matching once a deadline passes. */
+    private static final class DeadlineCharSequence implements CharSequence {
+        private final CharSequence inner;
+        private final long deadline;
+        private int ticks;
+
+        DeadlineCharSequence(CharSequence inner, long deadline) {
+            this.inner = inner;
+            this.deadline = deadline;
+        }
+
+        @Override
+        public char charAt(int index) {
+            if ((++ticks & 0xfff) == 0 && System.currentTimeMillis() > deadline) {
+                throw new IllegalArgumentException("Regex matching exceeded "
+                    + REGEX_BUDGET_MS + " ms; simplify the pattern.");
+            }
+            return inner.charAt(index);
+        }
+
+        @Override
+        public int length() {
+            return inner.length();
+        }
+
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            return new DeadlineCharSequence(inner.subSequence(start, end), deadline);
+        }
+
+        @Override
+        public String toString() {
+            return inner.toString();
+        }
+    }
+
     /** The regex predicate when {@code regex} is true, else null; throws on a bad pattern. */
     private static Predicate<String> regexOrNull(JsonObject req, String query, boolean ignoreCase) {
         if (!RpcContext.reqBool(req, "regex")) {
@@ -69,7 +126,7 @@ public final class StringQuery {
         }
         try {
             Pattern pattern = Pattern.compile(query, ignoreCase ? Pattern.CASE_INSENSITIVE : 0);
-            return s -> pattern.matcher(s).find();
+            return boundedFind(pattern);
         } catch (PatternSyntaxException e) {
             throw new IllegalArgumentException("Invalid regex: " + e.getMessage());
         }

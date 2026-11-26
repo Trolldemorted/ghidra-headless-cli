@@ -12,6 +12,11 @@ import ghidra.app.cmd.function.DeleteFunctionTagCmd;
 public final class DeleteFunctionTagCmdHandler implements RpcProcedure {
     @Override
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
-        return ctx.applyCommand(new DeleteFunctionTagCmd(RpcContext.reqStr(req, "name")));
+        String name = RpcContext.reqStr(req, "name");
+        // The Ghidra command returns true (a silent no-op) for an unknown tag.
+        if (ctx.program().getFunctionManager().getFunctionTagManager().getFunctionTag(name) == null) {
+            return RpcResponse.error("No function tag named '" + name + "'.");
+        }
+        return ctx.applyCommand(new DeleteFunctionTagCmd(name));
     }
 }

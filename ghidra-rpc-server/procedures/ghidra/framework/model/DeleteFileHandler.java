@@ -15,10 +15,12 @@ import procedures.RpcResponse;
  * only, mirroring {@link RpcContext#requireDomainFile}). Refuses to delete the
  * root folder.
  *
- * <p>If the file is currently checked out, the delete proceeds anyway and the
- * checked-out copy goes with it; the user must re-checkout to recover. On a
- * version-controlled repository the delete adds a new version that marks the
- * file as deleted (other clients see it disappear on refresh).
+ * <p>If this server has the file open or checked out, its cached Program is
+ * released and its own checkout undone first (Ghidra refuses to delete a file
+ * in either state). A checkout held by ANOTHER client still blocks the delete.
+ * On a version-controlled repository the file and all its versions are removed,
+ * which is why this is admin-only (see {@link #requiresAdmin()}): it is the
+ * same outcome as {@code PurgeVersions} with {@code keep = 0}.
  *
  * <p>Project-level ({@link #needsProgram()} = false): no {@code file} field
  * is required from the dispatcher (the path is consumed as the delete target,
@@ -38,6 +40,10 @@ public final class DeleteFileHandler implements RpcProcedure {
         String name = df.getName();
         String deletedPath = df.getPathname();
         try {
+            // This server keeps every file it has opened or imported open and
+            // checked out, and DomainFile.delete() refuses both states; without
+            // this the delete could only ever succeed on untouched files.
+            ctx.releaseFile(df);
             df.delete();
         } catch (Exception e) {
             return RpcResponse.error("delete '" + path + "': " + e.getMessage());
@@ -53,6 +59,11 @@ public final class DeleteFileHandler implements RpcProcedure {
     @Override
     public boolean mutates() {
         return true; // dispatcher check-in is gated on a non-null program, so this is safe
+    }
+
+    @Override
+    public boolean requiresAdmin() {
+        return true; // gated by GHIDRA_RPC_ADMIN_PASSWORD, like PurgeVersions
     }
 
     /** Minimal confirmation. The CLI prints one line: "deleted <name> (was <path>)". */

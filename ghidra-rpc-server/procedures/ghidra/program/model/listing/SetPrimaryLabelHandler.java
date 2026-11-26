@@ -41,7 +41,15 @@ public final class SetPrimaryLabelHandler implements RpcProcedure {
         }
 
         final Symbol fsym = sym;
-        ctx.runWrite("set-primary " + name, fsym::setPrimary);
+        // setPrimary() returns false (and changes nothing) for external
+        // symbols and when the current primary is a function symbol.
+        final boolean[] ok = { false };
+        ctx.runWrite("set-primary " + name, () -> { ok[0] = fsym.setPrimary(); });
+        if (!ok[0]) {
+            return RpcResponse.error("Could not make '" + name + "' the primary label at " + addr
+                + ": Ghidra refuses when the address is a function entry point (the function "
+                + "symbol stays primary) or an external location.");
+        }
         return new CreateLabelResponse(
             sym.getName(),
             sym.getAddress().toString(),

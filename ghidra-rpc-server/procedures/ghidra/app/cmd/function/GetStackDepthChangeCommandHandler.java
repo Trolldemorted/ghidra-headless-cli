@@ -46,4 +46,10 @@ public final class GetStackDepthChangeCommandHandler implements RpcProcedure {
             ctx.program(), addr);
         return new GetResponse(addr.toString(), value);
     }
+
+    /** Read-only: no write password, no transaction, no check-in. */
+    @Override
+    public boolean mutates() {
+        return false;
+    }
 }

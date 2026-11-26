@@ -58,11 +58,18 @@ pub enum Cmd {
         #[arg(long)]
         file: String,
     },
-    /// Delete a file from the project tree (irreversible; future versions will support folders)
+    /// Delete a file and all its versions from the project tree (irreversible;
+    /// future versions will support folders). Gated by the server's
+    /// GHIDRA_RPC_ADMIN_PASSWORD.
     Delete {
         /// Target file project path (e.g. /foo.exe)
         #[arg(long)]
         file: String,
+        /// Admin password (must match the server's GHIDRA_RPC_ADMIN_PASSWORD).
+        /// Prefer exporting $GHIDRA_RPC_ADMIN_PASSWORD instead: a flag value is
+        /// visible in `ps` and shell history
+        #[arg(long)]
+        admin_password: Option<String>,
     },
     /// Delete old revisions of a file, keeping the most recent N. Matches the
     /// Ghidra GUI's "Delete Version" action in the Version History dialog;
@@ -73,13 +80,32 @@ pub enum Cmd {
         /// Target file project path (e.g. /foo.exe)
         #[arg(long)]
         file: String,
-        /// Number of most-recent versions to keep [default: 1]
+        /// Number of most-recent versions to keep; 0 deletes the file entirely [default: 1]
         #[arg(long, default_value_t = 1)]
-        keep: i64,
-        /// Admin password (must match the server's GHIDRA_RPC_ADMIN_PASSWORD); required
+        keep: u32,
+        /// Admin password (must match the server's GHIDRA_RPC_ADMIN_PASSWORD).
+        /// Prefer exporting $GHIDRA_RPC_ADMIN_PASSWORD instead: a flag value is
+        /// visible in `ps` and shell history
         #[arg(long)]
-        admin_password: String,
+        admin_password: Option<String>,
     },
+}
+
+/// Flag wins; otherwise fall back to the environment so the secret need not
+/// appear on the command line at all.
+fn resolve_admin_password(flag: Option<String>) -> Result<String, ()> {
+    flag.or_else(|| {
+        std::env::var("GHIDRA_RPC_ADMIN_PASSWORD")
+            .ok()
+            .filter(|s| !s.is_empty())
+    })
+    .ok_or_else(|| {
+        common::log_arg_err(
+            "admin password required: set $GHIDRA_RPC_ADMIN_PASSWORD \
+             (preferred) or pass --admin-password"
+                .to_string(),
+        )
+    })
 }
 
 pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
@@ -159,8 +185,17 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             print_metadata(&response);
             Ok(())
         }
-        Cmd::Delete { file } => {
-            let response = client.invoke(Req::new("DeleteFile").str("file", file).build())?;
+        Cmd::Delete {
+            file,
+            admin_password,
+        } => {
+            let admin_password = resolve_admin_password(admin_password)?;
+            let response = client.invoke(
+                Req::new("DeleteFile")
+                    .str("file", file)
+                    .str("adminPassword", admin_password)
+                    .build(),
+            )?;
             let name = response.get("name").and_then(Json::as_str).unwrap_or("?");
             let path = response.get("path").and_then(Json::as_str).unwrap_or("?");
             log::info!("deleted {} (was {})", name, path);
@@ -171,10 +206,11 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             keep,
             admin_password,
         } => {
+            let admin_password = resolve_admin_password(admin_password)?;
             let response = client.invoke(
                 Req::new("PurgeVersions")
                     .str("file", file.clone())
-                    .int("keep", keep) // explicit; server REQUIRES 'keep'
+                    .int("keep", i64::from(keep)) // explicit; server REQUIRES 'keep'
                     .str("adminPassword", admin_password)
                     .build(),
             )?;

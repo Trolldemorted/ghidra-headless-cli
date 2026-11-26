@@ -228,12 +228,36 @@ public final class RetypeDecompilerVariableHandler implements RpcProcedure {
             if (pc == null) {
                 continue;
             }
-            if (pcSpec.equalsIgnoreCase(pc.toString())
-                    || pcSpec.equalsIgnoreCase("0x" + pc.toString())) {
+            if (samePc(pcSpec, pc)) {
                 return hs;
             }
         }
         return null;
+    }
+
+    /**
+     * Compare a client-supplied pc against an address by VALUE: optional
+     * {@code 0x} prefix, any amount of zero padding, either case. A plain
+     * string compare against {@code Address.toString()} (zero-padded, no
+     * prefix) rejected {@code 0x401000} for {@code 00401000}.
+     */
+    private static boolean samePc(String pcSpec, Address pc) {
+        return normalizeHex(pcSpec).equals(normalizeHex(pc.toString()));
+    }
+
+    private static String normalizeHex(String s) {
+        String t = s.trim().toLowerCase();
+        int colon = t.lastIndexOf(':');
+        String space = colon >= 0 ? t.substring(0, colon + 1) : "";
+        String off = colon >= 0 ? t.substring(colon + 1) : t;
+        if (off.startsWith("0x")) {
+            off = off.substring(2);
+        }
+        int i = 0;
+        while (i < off.length() - 1 && off.charAt(i) == '0') {
+            i++;
+        }
+        return space + off.substring(i);
     }
 
     /**

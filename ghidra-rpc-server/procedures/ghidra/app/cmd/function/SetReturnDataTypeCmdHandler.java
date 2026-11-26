@@ -14,6 +14,7 @@ public final class SetReturnDataTypeCmdHandler implements RpcProcedure {
     @Override
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
         Address entry = ctx.requireAddress(RpcContext.reqStr(req, "address"));
+        ctx.requireFunctionAt(entry); // the Ghidra command NPEs when there is no function
         return ctx.applyCommand(new SetReturnDataTypeCmd(entry,
             ctx.requireDataType(RpcContext.reqStr(req, "dataType")),
             ctx.sourceType(RpcContext.optStr(req, "source"))));

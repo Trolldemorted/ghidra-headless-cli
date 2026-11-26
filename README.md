@@ -19,8 +19,8 @@ The wrapper needs four env vars to authenticate against the Ghidra Server:
 
 Plus two optional RPC-server gates:
 
-- `GHIDRA_RPC_WRITE_PASSWORD` — if set, write requests must carry `writePassword`. See `notes/rpc-server.md`.
-- `GHIDRA_RPC_ADMIN_PASSWORD` — gates the `purge-versions` procedure (consolidating old revisions on the Ghidra Server). See `notes/rpc-server.md`.
+- `GHIDRA_RPC_WRITE_PASSWORD` — if set, write requests must carry a `password` field (the CLI reads the same env var and adds it). See `notes/rpc-server.md`.
+- `GHIDRA_RPC_ADMIN_PASSWORD` — gates the `PurgeVersions` and `DeleteFile` procedures (`file delete-version`, `file delete`; request field `adminPassword`). When unset, admin-only procedures are disabled. See `notes/rpc-server.md`.
 
 Plus one optional RPC-server tuning knob for the abrupt-exit stale-checkout recovery path (see `notes/checkin-rollback.md` "Known gaps"):
 

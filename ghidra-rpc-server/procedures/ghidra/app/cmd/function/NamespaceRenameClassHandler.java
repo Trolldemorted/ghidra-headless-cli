@@ -77,14 +77,11 @@ public final class NamespaceRenameClassHandler implements RpcProcedure {
         if (error[0] != null) {
             return RpcResponse.error(error[0]);
         }
-        // After rename, the GhidraClass wrapper around the symbol may still
-        // hold the old name. Re-resolve by path to get the post-rename view.
-        // (Re-resolution normally succeeds because the rename just ran;
-        // verbIsClass=true keeps the error hint consistent if it doesn't.)
-        String newPath = newName + (classPath.contains("/")
-            ? classPath.substring(0, classPath.lastIndexOf('/'))
-            : "");
-        Namespace after = NamespaceResolve.resolve(ctx, newPath, true);
+        // Read the post-rename view straight from the symbol we renamed.
+        // (This used to re-resolve by a path built as newName + parentPrefix —
+        // backwards — so renaming any nested class threw here and the dispatch
+        // rolled the rename back.)
+        Namespace after = (Namespace) sym.getObject();
         return new NamespaceRenameClassResponse(
             after.getName(true),
             after.getParentNamespace().getName(true));

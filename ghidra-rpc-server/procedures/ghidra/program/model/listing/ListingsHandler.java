@@ -92,6 +92,9 @@ public final class ListingsHandler implements RpcProcedure {
      * output size. */
     private static final int MAX_COMPOSITE_DEPTH = 8;
 
+    /** Largest first-start..last-end span one request may cover (1 MiB). */
+    private static final long MAX_SPAN_BYTES = 0x100000;
+
     @Override
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
         AddressSetView addrSet = ctx.addressSet(req);
@@ -108,6 +111,25 @@ public final class ListingsHandler implements RpcProcedure {
         AddressRange lastRange = addrSet.getLastRange();
         String startAddr = firstRange != null ? firstRange.getMinAddress().toString() : null;
         String endAddr = lastRange != null ? lastRange.getMaxAddress().toString() : null;
+
+        // Bound the work. This read-only call needs no write password and runs
+        // under the server-wide lock; the walk below visits every address from
+        // the first range's start to the last range's end (the gap emitter
+        // ignores holes between ranges), so the SPAN is what must be capped —
+        // [{start:0},{start:fffffffffffffff0}] is two addresses but ~2^60 gap
+        // rows.
+        if (firstRange != null) {
+            Address lo = firstRange.getMinAddress();
+            Address hi = lastRange.getMaxAddress();
+            if (!lo.getAddressSpace().equals(hi.getAddressSpace())) {
+                return RpcResponse.error("Listing ranges must all be in one address space.");
+            }
+            long span = hi.subtract(lo);
+            if (span < 0 || span >= MAX_SPAN_BYTES) {
+                return RpcResponse.error("Listing range too large: " + lo + ".." + hi
+                    + " spans more than " + MAX_SPAN_BYTES + " bytes. Request a smaller range.");
+            }
+        }
 
         List<Unit> units = new ArrayList<>();
         int emitted = 0;
@@ -442,8 +464,11 @@ public final class ListingsHandler implements RpcProcedure {
                     // destination, not the return value. Fill chunkLen bytes
                     // (or fewer at the tail of an uninitialized region, which
                     // throws below before we get here).
-                    memory.getBytes(cur, buf, 0, chunkLen);
-                    bytes = toHex(java.util.Arrays.copyOf(buf, chunkLen));
+                    // Use the returned count: a chunk that runs off the end
+                    // of an initialized block is a SHORT read, and buf still
+                    // holds the previous chunk's bytes past that point.
+                    int got = memory.getBytes(cur, buf, 0, chunkLen);
+                    bytes = toHex(java.util.Arrays.copyOf(buf, Math.max(got, 0)));
                 } catch (MemoryAccessException e) {
                     // Uninitialized memory block — GUI shows nothing here; skip.
                     // Still advance past it; the caller doesn't want raw zeros.

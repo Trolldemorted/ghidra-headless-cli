@@ -553,6 +553,9 @@ public final class DataTypeOps {
      * archive's {@link SourceArchive#getSourceArchiveID} against the manager's
      * BUILT_IN_ARCHIVE_UNIVERSAL_ID — that's the canonical Ghidra discriminator.
      */
+    /** Upper bound on an explicit struct {@code size}: one undefined component per byte. */
+    static final int MAX_STRUCT_SIZE = 0x100000;
+
     static boolean isBuiltIn(RpcContext ctx, DataType dt) {
         if (dt == null) return false;
         SourceArchive arc = dt.getSourceArchive();
