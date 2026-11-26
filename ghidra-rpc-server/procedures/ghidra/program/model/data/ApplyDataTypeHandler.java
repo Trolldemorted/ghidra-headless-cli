@@ -42,9 +42,10 @@ import procedures.RpcResponse;
  * consumes more than one byte (the user-reported {@code 17×16-byte struct
  * over a 16-byte range} bug).
  *
- * <p>Reads-then-mutates: existing code units are cleared first (so an
- * instruction doesn't fight the new data), then {@link Listing#createData}
- * lays the type. Built-in-only types like {@code int} work fine;
+ * <p>A data item that starts at the address is replaced (as in the GUI),
+ * then {@link Listing#createData} lays the type. An instruction there, or a
+ * unit that starts earlier and reaches the address, is a conflict (see
+ * {@code force}). Built-in-only types like {@code int} work fine;
  * user-defined types work too.
  *
  * <p><b>{@code force} (default false).</b> When the new type would
@@ -109,7 +110,9 @@ public final class ApplyDataTypeHandler implements RpcProcedure {
         List<String> underCoverage = new ArrayList<>();
         for (AddressRange r : ranges) {
             boolean isSingle = r.start.equals(r.end);
-            if (isSingle) continue;
+            // len <= 0: a Dynamic type sized by Ghidra from the bytes (e.g. a
+            // terminated string); its consumption is only known once laid.
+            if (isSingle || len <= 0) continue;
             long rangeBytes = r.end.subtract(r.start) + 1;
             if (len > rangeBytes) {
                 return RpcResponse.error(
@@ -131,7 +134,17 @@ public final class ApplyDataTypeHandler implements RpcProcedure {
         ctx.runWrite("ApplyDataType", () -> {
             Listing listing = ctx.program().getListing();
             for (AddressRange r : ranges) {
-                listing.clearCodeUnits(r.start, r.start, false);
+                // Re-typing a data item that starts here replaces it, as in
+                // the GUI. Anything else at the start (an instruction, or a
+                // unit that begins earlier and merely reaches this address)
+                // is a conflict: createData reports it and only --force
+                // clears it.
+                Data existing = listing.getDefinedDataAt(r.start);
+                if (existing != null) {
+                    listing.clearCodeUnits(r.start, r.start, false);
+                }
+                // What the type will cover, for messages and --force.
+                final Address consumedEnd = len > 0 ? r.start.addNoWrap(len - 1) : r.end;
                 Data d;
                 try {
                     d = listing.createData(r.start, dt, len);
@@ -160,11 +173,10 @@ public final class ApplyDataTypeHandler implements RpcProcedure {
                         // (e.g. "001001c200"), so the user can copy-paste
                         // the example command without hand-converting
                         // hex.
-                        Address consumedEnd = r.start.addNoWrap(Math.max(0, len - 1));
                         String hint =
                             ". Fix: clear the conflicting range first with "
                             + "`memory undefine --file /<file> --address-set "
-                            + r.start + ":" + consumedEnd
+                            + r.start + ":" + exclusiveEnd(consumedEnd)
                             + "` (the struct's internal fields overlap with "
                             + "previously-typed bytes; apply-type will not "
                             + "silently clobber them). Or pass --force "
@@ -182,7 +194,6 @@ public final class ApplyDataTypeHandler implements RpcProcedure {
                     // --force — the user's struct is bigger than one
                     // byte and the conflicting fields sit somewhere
                     // inside it.
-                    Address consumedEnd = r.start.addNoWrap(Math.max(0, len - 1));
                     listing.clearCodeUnits(r.start, consumedEnd, false);
                     try {
                         d = listing.createData(r.start, dt, len);
@@ -205,6 +216,11 @@ public final class ApplyDataTypeHandler implements RpcProcedure {
                 if (d != null) {
                     created[0]++;
                     bytes[0] += d.getLength();
+                    long rangeBytes = r.end.subtract(r.start) + 1;
+                    if (len <= 0 && rangeBytes > 1 && d.getLength() != rangeBytes) {
+                        underCoverage.add(r.start + ":" + r.end + " (type consumes "
+                            + d.getLength() + " of " + rangeBytes + " bytes)");
+                    }
                 }
             }
         });
@@ -225,6 +241,12 @@ public final class ApplyDataTypeHandler implements RpcProcedure {
             o.add("warnings", warns);
         }
         return new ApplyResponse(o, underCoverage, anyForced[0]);
+    }
+
+    /** The CLI's {@code START:END} takes an exclusive END. */
+    private static String exclusiveEnd(Address inclusiveEnd) {
+        Address next = inclusiveEnd.next();
+        return next == null ? inclusiveEnd.toString() : next.toString();
     }
 
     /** Internal (start, end) pair, inclusive. */

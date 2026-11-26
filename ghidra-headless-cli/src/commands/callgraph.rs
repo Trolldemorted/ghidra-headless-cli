@@ -51,7 +51,7 @@ fn print_callgraph(response: &Json) {
         .and_then(|o| obj_get(o, "name"))
         .and_then(Json::as_str)
         .unwrap_or("?");
-    let depth = response.get("depth").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+    let depth = response.get("depth").and_then(Json::as_i64).unwrap_or(0);
     let truncated = response
         .get("truncated")
         .and_then(Json::as_bool)
@@ -98,8 +98,8 @@ fn print_callgraph(response: &Json) {
                 .and_then(Json::as_str)
                 .unwrap_or("?");
             let d = obj_get_pairs(n, "depth")
-                .and_then(Json::as_f64)
-                .unwrap_or(0.0) as i64;
+                .and_then(Json::as_i64)
+                .unwrap_or(0);
             let ext = obj_get_pairs(n, "isExternal")
                 .and_then(Json::as_bool)
                 .unwrap_or(false);
@@ -115,8 +115,8 @@ fn print_callgraph(response: &Json) {
                 .unwrap_or("?");
             let to = obj_get_pairs(e, "to").and_then(Json::as_str).unwrap_or("?");
             let d = obj_get_pairs(e, "depth")
-                .and_then(Json::as_f64)
-                .unwrap_or(0.0) as i64;
+                .and_then(Json::as_i64)
+                .unwrap_or(0);
             let rt = obj_get_pairs(e, "refType")
                 .and_then(Json::as_str)
                 .unwrap_or("?");

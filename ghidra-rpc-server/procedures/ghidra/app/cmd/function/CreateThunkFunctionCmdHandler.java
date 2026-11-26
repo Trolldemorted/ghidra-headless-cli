@@ -1,8 +1,5 @@
 package procedures.ghidra.app.cmd.function;
 
-import java.util.ArrayList;
-import java.util.List;
-
 import com.google.gson.JsonObject;
 
 import ghidra.app.cmd.function.CreateThunkFunctionCmd;
@@ -83,6 +80,10 @@ public final class CreateThunkFunctionCmdHandler implements RpcProcedure {
             }
             cmd = new CreateThunkFunctionCmd(entry, body, ref);
         } else {
+            // The wire field is called "checkExisting" for historical reasons;
+            // it is Ghidra's `checkForSideEffects` (reject code that stores to
+            // memory etc. and so is not a pure thunk). It has nothing to do
+            // with an existing function at the entry.
             cmd = new CreateThunkFunctionCmd(entry, RpcContext.reqBool(req, "checkExisting"));
         }
         return ctx.applyCommand(cmd);

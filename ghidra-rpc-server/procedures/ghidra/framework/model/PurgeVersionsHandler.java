@@ -101,7 +101,7 @@ public final class PurgeVersionsHandler implements RpcProcedure {
         } catch (IOException e) {
             me = null;
         }
-        boolean isAdmin = (me != null) && me.isAdmin();
+        boolean isAdmin = me != null && me.isAdmin();
 
         int deleted = 0;
         int oldestDeleted = -1;

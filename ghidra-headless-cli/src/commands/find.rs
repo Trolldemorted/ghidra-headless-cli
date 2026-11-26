@@ -98,7 +98,7 @@ pub fn run_find(args: FindArgs, client: &Client) -> Result<(), ()> {
             .build(),
     )?;
 
-    let count = response.get("count").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+    let count = response.get("count").and_then(Json::as_i64).unwrap_or(0);
     let truncated = response
         .get("truncated")
         .and_then(Json::as_bool)
@@ -127,7 +127,7 @@ pub fn run_find(args: FindArgs, client: &Client) -> Result<(), ()> {
             println!(
                 "{}",
                 Json::Obj(vec![
-                    ("count".to_string(), Json::Num(count as f64)),
+                    ("count".to_string(), Json::Int(count)),
                     ("truncated".to_string(), Json::Bool(truncated)),
                     ("functions".to_string(), Json::Arr(functions.clone())),
                 ])

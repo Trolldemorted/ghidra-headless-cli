@@ -28,6 +28,11 @@ public final class CDeclarationFilterTest {
         testStructBodyWithDescription();
         testStructBodyWithCppDescription();
         testUnionBodyWithDescription();
+        testBracesInComments();
+        testRegexCharsInName();
+        testDefineEnum();
+        testEnumBlock();
+        testTypedefForms();
 
         if (failures == 0) {
             System.out.println("ALL PASS");
@@ -214,6 +219,95 @@ public final class CDeclarationFilterTest {
         check("union-desc emits body header",
             out.contains("union Variant { /* mutually-exclusive payload */"), out);
         check("union-desc emits fields", out.contains("float f;"), out);
+    }
+
+    /** Braces inside descriptions / field comments must not move the depth. */
+    private static void testBracesInComments() {
+        String raw = String.join("\n",
+            "typedef struct Dep Dep, *PDep;",
+            "",
+            "struct Dep { /* closes early } */",
+            "    int a;",
+            "};",
+            "",
+            "typedef struct S S, *PS;",
+            "",
+            "struct S { /* see {link",
+            "   continued } } */",
+            "    int x; /* } */",
+            "    int y; // {",
+            "    int z;",
+            "};",
+            "",
+            "struct After {",
+            "    int no;",
+            "};");
+        String out = CDeclarationFilter.filter(raw, "struct", "S");
+        check("comment braces: body complete",
+            out.contains("int x;") && out.contains("int y;") && out.contains("int z;"), out);
+        check("comment braces: ends at own close", out.trim().endsWith("};"), out);
+        check("comment braces: dep body skipped", !out.contains("int a;"), out);
+        check("comment braces: nothing after", !out.contains("After"), out);
+    }
+
+    /** A name containing regex syntax (even \E) is matched literally. */
+    private static void testRegexCharsInName() {
+        String name = "a\\E.b";
+        String raw = String.join("\n",
+            "struct aXEyb {",
+            "    int wrong;",
+            "};",
+            "struct " + name + " {",
+            "    int right;",
+            "};");
+        String out = CDeclarationFilter.filter(raw, "struct", name);
+        check("regex name: right body", out.contains("int right;") && !out.contains("int wrong;"), out);
+    }
+
+    private static void testDefineEnum() {
+        String raw = String.join("\n",
+            "typedef unsigned char byte;",
+            "#define OTHER 7",
+            "",
+            "#define FOO 5",
+            "");
+        String out = CDeclarationFilter.filter(raw, "enum", "define_FOO");
+        check("define enum: only its line", out.equals("#define FOO 5"), out);
+    }
+
+    private static void testEnumBlock() {
+        String raw = String.join("\n",
+            "typedef enum A {",
+            "    X=0",
+            "} A;",
+            "",
+            "typedef enum B {",
+            "    X=0",
+            "} B;");
+        String out = CDeclarationFilter.filter(raw, "enum", "B");
+        check("enum: own block only",
+            out.startsWith("typedef enum B {") && out.endsWith("} B;") && !out.contains("enum A"), out);
+    }
+
+    private static void testTypedefForms() {
+        String raw = String.join("\n",
+            "typedef unsigned char byte;",
+            "typedef Foo Other;",
+            "typedef int Arr[4];",
+            "typedef int (* Fp)(int);",
+            "typedef int Fn(int);",
+            "typedef struct S * Foo;",
+            "typedef FooBar Baz;");
+        check("typedef: pointer form, not as base type",
+            CDeclarationFilter.filter(raw, "typedef", "Foo").equals("typedef struct S * Foo;"),
+            CDeclarationFilter.filter(raw, "typedef", "Foo"));
+        check("typedef: array", CDeclarationFilter.filter(raw, "typedef", "Arr").equals("typedef int Arr[4];"),
+            CDeclarationFilter.filter(raw, "typedef", "Arr"));
+        check("typedef: function pointer",
+            CDeclarationFilter.filter(raw, "typedef", "Fp").equals("typedef int (* Fp)(int);"),
+            CDeclarationFilter.filter(raw, "typedef", "Fp"));
+        check("typedef: function", CDeclarationFilter.filter(raw, "functiondef", "Fn").equals("typedef int Fn(int);"),
+            CDeclarationFilter.filter(raw, "functiondef", "Fn"));
     }
 
     private static void check(String label, boolean cond, String ctx) {

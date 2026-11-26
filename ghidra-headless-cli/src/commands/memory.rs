@@ -68,9 +68,13 @@ pub struct CreateLabelArgs {
     /// Address to label (e.g. 0x401000)
     #[arg(long)]
     pub address: String,
-    /// Label name
+    /// Label name (bare; `A::b` is not split into a namespace)
     #[arg(long)]
     pub name: String,
+    /// Class or namespace to create the label in, as a slash path
+    /// (e.g. /Game/Player). It must already exist [default: global]
+    #[arg(long, value_name = "PATH")]
+    pub namespace: Option<String>,
     /// Symbol source type [default: user-defined]
     #[arg(long, value_enum)]
     pub source: Option<Source>,
@@ -248,6 +252,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             .str("file", a.program.clone())
             .str("address", a.address.clone())
             .str("name", a.name.clone())
+            .opt_str("namespace", a.namespace.clone())
             .opt_str("source", Source::opt(a.source))
             .build(),
         Cmd::RenameLabel(a) => Req::new("RenameLabel")
@@ -295,54 +300,25 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             .str("format", a.format.clone())
             .build(),
         Cmd::ApplyType(a) => {
-            let mut req = Req::new("ApplyDataType")
+            let req = Req::new("ApplyDataType")
                 .str("file", a.program.clone())
                 .str("type", a.type_name.clone())
                 .opt_int("length", a.length)
                 .bool("force", a.force);
-            if !a.address_set.is_empty() {
-                let items: Vec<Json> = a
-                    .address_set
-                    .iter()
-                    .map(|s| {
-                        let parts: Vec<&str> = s.splitn(2, ':').collect();
-                        let start = parts[0].to_string();
-                        let end = parts.get(1).map(|e| (*e).to_string());
-                        let mut fields = vec![("start".to_string(), Json::Str(start))];
-                        if let Some(e) = end {
-                            fields.push(("end".to_string(), Json::Str(e)));
-                        }
-                        Json::Obj(fields)
-                    })
-                    .collect();
-                req = req.opt_json("addressSet", Some(Json::Arr(items)));
-                req.build()
-            } else {
-                req.opt_str("address", a.address.clone()).build()
+            // Same parser (and the same END > START check) as every other
+            // --address-set.
+            match common::address_set(&a.address_set).map_err(common::log_arg_err)? {
+                Some(set) => req.opt_json("addressSet", Some(set)).build(),
+                None => req.opt_str("address", a.address.clone()).build(),
             }
         }
         Cmd::Undefine(a) => {
             let req = Req::new("ClearCodeUnits")
                 .str("file", a.program.clone())
                 .bool("clearContext", a.clear_context);
-            if !a.address_set.is_empty() {
-                let items: Vec<Json> = a
-                    .address_set
-                    .iter()
-                    .map(|s| {
-                        let parts: Vec<&str> = s.splitn(2, ':').collect();
-                        let start = parts[0].to_string();
-                        let end = parts.get(1).map(|e| (*e).to_string());
-                        let mut fields = vec![("start".to_string(), Json::Str(start))];
-                        if let Some(e) = end {
-                            fields.push(("end".to_string(), Json::Str(e)));
-                        }
-                        Json::Obj(fields)
-                    })
-                    .collect();
-                req.opt_json("addressSet", Some(Json::Arr(items))).build()
-            } else {
-                req.opt_str("address", a.address.clone()).build()
+            match common::address_set(&a.address_set).map_err(common::log_arg_err)? {
+                Some(set) => req.opt_json("addressSet", Some(set)).build(),
+                None => req.opt_str("address", a.address.clone()).build(),
             }
         }
     };
@@ -360,7 +336,10 @@ fn print_response(cmd: &Cmd, response: &Json) {
                     .and_then(Json::as_str)
                     .unwrap_or("?");
                 let src = response.get("source").and_then(Json::as_str).unwrap_or("?");
-                log::info!("label: {} @ {}  ({})", o, addr, src);
+                match response.get("namespace").and_then(Json::as_str) {
+                    Some(ns) => log::info!("label: {} @ {}  in {}  ({})", o, addr, ns, src),
+                    None => log::info!("label: {} @ {}  ({})", o, addr, src),
+                }
             }
         }
         Cmd::DeleteLabel(_) => {
@@ -376,7 +355,7 @@ fn print_response(cmd: &Cmd, response: &Json) {
             log::info!("deleted={} {} @ {}", d, n, a);
         }
         Cmd::ListLabel(_) => {
-            let count = response.get("count").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+            let count = response.get("count").and_then(Json::as_i64).unwrap_or(0);
             let truncated = response
                 .get("truncated")
                 .and_then(Json::as_bool)
@@ -393,7 +372,7 @@ fn print_response(cmd: &Cmd, response: &Json) {
             print_refs(response.get("refs"));
         }
         Cmd::LookupLabel(_) => {
-            let count = response.get("count").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+            let count = response.get("count").and_then(Json::as_i64).unwrap_or(0);
             log::info!("found {} symbol(s)", count);
             print_refs(response.get("refs"));
         }
@@ -427,7 +406,10 @@ fn print_response(cmd: &Cmd, response: &Json) {
                                     .and_then(Json::as_bool)
                                     .unwrap_or(false);
                                 let tag = if p { " (primary)" } else { "" };
-                                log::info!("  {}{}", n, tag);
+                                match entry.get("namespace").and_then(Json::as_str) {
+                                    Some(ns) => log::info!("  {}{}  in {}", n, tag, ns),
+                                    None => log::info!("  {}{}", n, tag),
+                                }
                             }
                         }
                     }
@@ -450,9 +432,9 @@ fn print_response(cmd: &Cmd, response: &Json) {
                 .unwrap_or("?");
             let n = response
                 .get("bytesRead")
-                .and_then(Json::as_f64)
-                .unwrap_or(0.0) as i64;
-            let req = response.get("length").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+                .and_then(Json::as_i64)
+                .unwrap_or(0);
+            let req = response.get("length").and_then(Json::as_i64).unwrap_or(0);
             log::info!("read {} of {} byte(s) from {}", n, req, addr);
             if let Some(d) = response.get("data").and_then(Json::as_str) {
                 for line in d.split('\n') {
@@ -463,9 +445,9 @@ fn print_response(cmd: &Cmd, response: &Json) {
         Cmd::ApplyType(_) => {
             let created = response
                 .get("created")
-                .and_then(Json::as_f64)
-                .unwrap_or(0.0) as i64;
-            let bytes = response.get("bytes").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+                .and_then(Json::as_i64)
+                .unwrap_or(0);
+            let bytes = response.get("bytes").and_then(Json::as_i64).unwrap_or(0);
             log::info!(
                 "applied {} ({} entries, {} bytes)",
                 response.get("type").and_then(Json::as_str).unwrap_or("?"),
@@ -496,11 +478,11 @@ fn print_response(cmd: &Cmd, response: &Json) {
             }
         }
         Cmd::Undefine(_) => {
-            let ranges = response.get("ranges").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+            let ranges = response.get("ranges").and_then(Json::as_i64).unwrap_or(0);
             let cleared = response
                 .get("cleared")
-                .and_then(Json::as_f64)
-                .unwrap_or(0.0) as i64;
+                .and_then(Json::as_i64)
+                .unwrap_or(0);
             log::info!(
                 "cleared {} code unit(s) across {} range(s)",
                 cleared,

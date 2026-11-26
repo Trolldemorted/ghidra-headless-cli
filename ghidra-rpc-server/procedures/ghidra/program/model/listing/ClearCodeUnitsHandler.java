@@ -8,8 +8,12 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressSet;
+import ghidra.program.model.listing.CodeUnit;
 import ghidra.program.model.listing.Data;
+import ghidra.program.model.listing.DataIterator;
 import ghidra.program.model.listing.Instruction;
+import ghidra.program.model.listing.InstructionIterator;
 import ghidra.program.model.listing.Listing;
 
 import procedures.RpcContext;
@@ -40,9 +44,9 @@ import procedures.RpcResponse;
  * byte). Bare {@code {start}} (no end) clears a single byte.
  *
  * <p>The third arg to {@link Listing#clearCodeUnits} is
- * {@code clearContext}: we pass {@code false} so references and analysis
- * state are preserved — only the listing entries are removed. Pass
- * {@code clearContext: true} via the request to also drop references.
+ * {@code clearContext}: it only controls whether context-register values
+ * over the range are reset as well. Ghidra always removes the references
+ * FROM the cleared units and never removes comments, whatever the flag says.
  *
  * <p>Mutating. Goes through {@link RpcContext#runWrite} so the
  * transaction, checkout and check-in happen via the standard path.
@@ -83,22 +87,29 @@ public final class ClearCodeUnitsHandler implements RpcProcedure {
         return new ClearResponse(ranges.size(), unitsCleared[0]);
     }
 
-    /** Count Data + Instruction units in [start, end] (inclusive). */
+    /**
+     * Count the defined Data + Instruction units that clearing [start, end]
+     * (inclusive) removes: every unit starting in the range, plus the unit
+     * that starts before {@code start} and reaches into it (Ghidra clears
+     * that one whole). Undefined bytes are not units and are not counted.
+     */
     private static int countUnits(Listing listing, Address start, Address end) {
         int n = 0;
-        Address a = start;
-        while (a != null && a.compareTo(end) <= 0) {
-            Data d = listing.getDataAt(a);
-            Instruction ins = listing.getInstructionAt(a);
-            if (d != null || ins != null) n++;
-            ghidra.program.model.listing.CodeUnit cu = listing.getCodeUnitAfter(a);
-            if (cu == null) break;
-            Address next = cu.getMinAddress();
-            // getCodeUnitAfter can return an address before `a` (when the
-            // next unit is at a higher address but there's an empty gap)
-            // — guard against infinite loop.
-            if (next.compareTo(a) <= 0) break;
-            a = next;
+        CodeUnit first = listing.getCodeUnitContaining(start);
+        if (first != null && first.getMinAddress().compareTo(start) < 0
+                && (first instanceof Instruction || ((Data) first).isDefined())) {
+            n++;
+        }
+        AddressSet set = new AddressSet(start, end);
+        InstructionIterator instructions = listing.getInstructions(set, true);
+        while (instructions.hasNext()) {
+            instructions.next();
+            n++;
+        }
+        DataIterator data = listing.getDefinedData(set, true);
+        while (data.hasNext()) {
+            data.next();
+            n++;
         }
         return n;
     }

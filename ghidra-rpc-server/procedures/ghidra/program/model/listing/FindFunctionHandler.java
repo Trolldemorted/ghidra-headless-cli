@@ -142,7 +142,7 @@ public final class FindFunctionHandler implements RpcProcedure {
                     String qualified = f.getName(true);
                     boolean hit = nameMatch.test(qualified)
                         || tagsOf(f).stream().anyMatch(tagMatch)
-                        || (addrHit != null && addrHit.equals(f));
+                        || addrHit != null && addrHit.equals(f);
                     if (hit) {
                         if (noThunks && f.isThunk()) continue;
                         results.add(FunctionMatch.from(f, true));

@@ -15,6 +15,7 @@ import ghidra.program.model.listing.GhidraClass;
 import ghidra.program.model.symbol.Namespace;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolTable;
+import ghidra.program.model.symbol.SymbolType;
 import ghidra.util.exception.DuplicateNameException;
 import ghidra.util.exception.InvalidInputException;
 
@@ -24,7 +25,9 @@ import ghidra.util.exception.InvalidInputException;
  * <p>Request: {@code { file, class }}.
  * {@code class} is the class's full path (e.g. "/Game/MyClass").
  *
- * <p>Removes only the class symbol. Does NOT delete the struct in the
+ * <p>Removes the class namespace, together with any sub-namespaces and
+ * sub-classes inside it. The functions and labels it contained are kept (see
+ * below). Does NOT delete the struct in the
  * program's Data Type Manager. Class and struct are independent — sharing
  * only a name — so deleting the class leaves the struct (and any
  * associated auto-stub or user-created struct) untouched. If the user
@@ -51,6 +54,10 @@ import ghidra.util.exception.InvalidInputException;
  * under the parent; sub-namespaces and sub-classes are deleted along
  * with the class. This matches the documented intent of the
  * {@code 0.1.0} quirks-log fix ("child functions survive as orphans").
+ *
+ * <p><b>Labels</b> inside the class (a {@code vftable} label, static data
+ * members, ...) are moved to the parent namespace the same way; Ghidra would
+ * otherwise delete them with the class.
  *
  * <p>Mutating. Runs in a transaction via {@link RpcContext#runWrite}.
  */
@@ -85,7 +92,9 @@ public final class NamespaceDeleteClassHandler implements RpcProcedure {
                     // 2) Now the class subtree has no function members;
                     //    removeSymbolSpecial deletes the class (and the
                     //    empty sub-namespaces / sub-classes).
-                    ctx.program().getSymbolTable().removeSymbolSpecial(sym);
+                    if (!ctx.program().getSymbolTable().removeSymbolSpecial(sym)) {
+                        error[0] = "Ghidra refused to remove class '" + classPath + "'.";
+                    }
                 } catch (Exception e) {
                     error[0] = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
                 }
@@ -101,7 +110,7 @@ public final class NamespaceDeleteClassHandler implements RpcProcedure {
 
     /**
      * Walk the namespace subtree rooted at {@code ns}; for every function
-     * found, re-parent to {@code reparentTo}. Recurses into sub-namespaces
+     * and label found, re-parent to {@code reparentTo}. Recurses into sub-namespaces
      * (plain AND class) so nested functions are preserved too. Sub-namespaces
      * themselves are not preserved — they're deleted along with the class
      * (the user's complaint is specifically about functions).
@@ -120,6 +129,8 @@ public final class NamespaceDeleteClassHandler implements RpcProcedure {
             Object obj = child.getObject();
             if (obj instanceof Function) {
                 ((Function) obj).setParentNamespace(reparentTo);
+            } else if (child.getSymbolType() == SymbolType.LABEL) {
+                child.setNamespace(reparentTo);
             } else if (obj instanceof Namespace) {
                 // Recurse into both plain sub-namespaces and sub-classes.
                 // Function members found deeper are still re-parented to

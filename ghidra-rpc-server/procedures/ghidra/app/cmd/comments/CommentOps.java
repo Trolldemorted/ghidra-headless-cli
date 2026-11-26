@@ -13,58 +13,91 @@ import procedures.RpcResponse;
 /**
  * Shared logic for the comment subcommands.
  *
- * Five CodeUnit-level types (EOL/PRE/POST/REPEATABLE/PLATE) operate on the
- * {@link CodeUnit} at the given address via {@link CodeUnit#setComment} and
- * {@link CodeUnit#getComment}. The decompiler comment is function-level and
- * is stored on {@link Function#getComment} / {@link Function#setComment}; the
- * request address resolves to the containing function.
+ * Five types (EOL/PRE/POST/REPEATABLE/PLATE) operate on the {@link CodeUnit}
+ * at the given address, named as in the GUI's "Comments" menu ("Set EOL
+ * Comment...", "Set Pre Comment...", ...).
  *
- * For mutating calls (Set/Append/Clear) the CodeUnit path uses
- * {@link SetCommentCmd} / {@link AppendCommentCmd} so undo/redo works; the
- * function path runs inside a transaction via {@link RpcContext#runWrite}.
+ * DECOMPILER is not a storage type. It does what "Comments &gt; Set..."
+ * (the {@code ;} key) does in the GUI's Decompiler window
+ * ({@code DecompilerCommentsActionFactory.DecompilerEditCommentsAction}):
+ * <ul>
+ *   <li>at a function's entry point it edits the <b>Plate Comment</b>, which
+ *       the decompiler prints as the function's header comment;</li>
+ *   <li>at any other address inside a function it edits the <b>Pre
+ *       Comment</b> of the code unit containing that address, which the
+ *       decompiler prints above the matching statement.</li>
+ * </ul>
+ * The response's {@code type} names the comment that was actually touched
+ * (PLATE or PRE) and {@code address} the code unit it is stored on.
+ *
+ * Mutating calls use {@link SetCommentCmd} / {@link AppendCommentCmd}, the
+ * same commands the GUI dialog issues.
  */
 final class CommentOps {
 
     /** Comment type enum mirrored to the wire (matches {@link CommentType#name()}). */
     enum Type {
-        EOL(CommentType.EOL, false),
-        PRE(CommentType.PRE, false),
-        POST(CommentType.POST, false),
-        REPEATABLE(CommentType.REPEATABLE, false),
-        PLATE(CommentType.PLATE, false),
-        /**
-         * Function-level comment via {@code Function.get/setComment}. NOTE: in
-         * Ghidra this IS the PLATE comment at the function's entry point
-         * ({@code FunctionDB.setComment} writes {@code CommentType.PLATE}), so
-         * DECOMPILER ops and PLATE ops at the entry read and overwrite the
-         * same text. The only difference is addressing: any address inside the
-         * function resolves to it.
-         */
-        DECOMPILER(null, true);
+        EOL(CommentType.EOL),
+        PRE(CommentType.PRE),
+        POST(CommentType.POST),
+        REPEATABLE(CommentType.REPEATABLE),
+        PLATE(CommentType.PLATE),
+        /** Decompiler-window comment: PLATE at a function entry, PRE elsewhere. */
+        DECOMPILER(null);
 
         final CommentType cuType;
-        final boolean functionLevel;
 
-        Type(CommentType cuType, boolean functionLevel) {
+        Type(CommentType cuType) {
             this.cuType = cuType;
-            this.functionLevel = functionLevel;
         }
+    }
+
+    /** A request resolved to the concrete comment slot it operates on. */
+    private static final class Target {
+        final Address addr;
+        final Type type;
+        final String function;   // set for DECOMPILER requests only
+        final CodeUnit cu;
+
+        Target(Address addr, Type type, String function, CodeUnit cu) {
+            this.addr = addr;
+            this.type = type;
+            this.function = function;
+            this.cu = cu;
+        }
+
+        String current() {
+            return cu.getComment(type.cuType);
+        }
+
+        CommentResponse response(String previous) {
+            return new CommentResponse(type.name(), addr, function, current(), previous);
+        }
+    }
+
+    private static Target resolve(Address addr, Type type, RpcContext ctx) {
+        if (type != Type.DECOMPILER) {
+            return new Target(addr, type, null, requireCodeUnit(addr, ctx));
+        }
+        Function fn = ctx.program().getFunctionManager().getFunctionContaining(addr);
+        if (fn == null) {
+            throw new IllegalArgumentException("No function contains address " + addr
+                + "; the decompiler only shows comments inside a function.");
+        }
+        if (addr.equals(fn.getEntryPoint())) {
+            return new Target(addr, Type.PLATE, fn.getName(), requireCodeUnit(addr, ctx));
+        }
+        // Like the GUI dialog, comment the code unit the address falls in.
+        CodeUnit cu = ctx.program().getListing().getCodeUnitContaining(addr);
+        if (cu == null) {
+            throw new IllegalArgumentException("No code unit at address " + addr + ".");
+        }
+        return new Target(cu.getMinAddress(), Type.PRE, fn.getName(), cu);
     }
 
     /** Read the comment at the address. */
     static RpcResponse get(Address addr, Type type, RpcContext ctx) {
-        if (type.functionLevel) {
-            Function fn = ctx.program().getFunctionManager().getFunctionContaining(addr);
-            if (fn == null) {
-                return RpcResponse.error("No function contains address " + addr + ".");
-            }
-            return new CommentResponse(type.name(), addr, fn.getName(), fn.getComment());
-        }
-        CodeUnit cu = ctx.program().getListing().getCodeUnitAt(addr);
-        if (cu == null) {
-            return RpcResponse.error("No code unit at address " + addr + ".");
-        }
-        return new CommentResponse(type.name(), addr, null, cu.getComment(type.cuType));
+        return resolve(addr, type, ctx).response(null);
     }
 
     /**
@@ -76,46 +109,22 @@ final class CommentOps {
      */
     static RpcResponse set(Address addr, Type type, String rawText, RpcContext ctx) throws Exception {
         final String text = (rawText == null || rawText.isEmpty()) ? null : rawText;
-        if (type.functionLevel) {
-            Function fn = requireFunction(addr, ctx);
-            String previous = fn.getComment();
-            String[] result = {previous};
-            ctx.runWrite("Set " + type + " Comment", () -> {
-                fn.setComment(text);
-                result[0] = fn.getComment();
-            });
-            return new CommentResponse(type.name(), addr, fn.getName(), result[0], previous);
-        }
-        CodeUnit cu = requireCodeUnit(addr, ctx);
-        String previous = cu.getComment(type.cuType);
-        RpcResponse r = ctx.applyCommand(
-            new SetCommentCmd(addr, type.cuType, text));
+        Target t = resolve(addr, type, ctx);
+        String previous = t.current();
+        RpcResponse r = ctx.applyCommand(new SetCommentCmd(t.addr, t.type.cuType, text));
         if (!r.success) return r;
-        return new CommentResponse(type.name(), addr, null, cu.getComment(type.cuType), previous);
+        return t.response(previous);
     }
 
     /** Append text to the existing comment, separated by {@code separator} (default newline). */
     static RpcResponse append(Address addr, Type type, String text, String separator,
             RpcContext ctx) throws Exception {
         String sep = (separator == null || separator.isEmpty()) ? "\n" : separator;
-        if (type.functionLevel) {
-            Function fn = requireFunction(addr, ctx);
-            String previous = fn.getComment();
-            String[] result = {previous};
-            ctx.runWrite("Append " + type + " Comment", () -> {
-                String combined = previous == null || previous.isEmpty()
-                    ? text : previous + sep + text;
-                fn.setComment(combined);
-                result[0] = fn.getComment();
-            });
-            return new CommentResponse(type.name(), addr, fn.getName(), result[0], previous);
-        }
-        CodeUnit cu = requireCodeUnit(addr, ctx);
-        String previous = cu.getComment(type.cuType);
-        RpcResponse r = ctx.applyCommand(
-            new AppendCommentCmd(addr, type.cuType, text, sep));
+        Target t = resolve(addr, type, ctx);
+        String previous = t.current();
+        RpcResponse r = ctx.applyCommand(new AppendCommentCmd(t.addr, t.type.cuType, text, sep));
         if (!r.success) return r;
-        return new CommentResponse(type.name(), addr, null, cu.getComment(type.cuType), previous);
+        return t.response(previous);
     }
 
     /** Clear (remove) the comment at the address. */
@@ -131,25 +140,13 @@ final class CommentOps {
         return cu;
     }
 
-    private static Function requireFunction(Address addr, RpcContext ctx) {
-        Function fn = ctx.program().getFunctionManager().getFunctionContaining(addr);
-        if (fn == null) {
-            throw new IllegalArgumentException("No function contains address " + addr + ".");
-        }
-        return fn;
-    }
-
     /** Common response shape; gson drops null fields. */
     static final class CommentResponse extends RpcResponse {
         final String type;
         final String address;
-        final String function;   // function-level only (DECOMPILER)
+        final String function;   // Decompiler* procedures only
         final String comment;
         final String previous;   // mutating ops only
-
-        CommentResponse(String type, Address address, String function, String comment) {
-            this(type, address, function, comment, null);
-        }
 
         CommentResponse(String type, Address address, String function, String comment,
                 String previous) {

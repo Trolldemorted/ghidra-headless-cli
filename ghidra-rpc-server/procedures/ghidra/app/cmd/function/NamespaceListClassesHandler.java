@@ -14,6 +14,7 @@ import ghidra.program.model.listing.GhidraClass;
 import ghidra.program.model.symbol.Namespace;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolTable;
+import ghidra.program.model.symbol.SymbolType;
 
 /**
  * Procedure NamespaceListClasses: list class namespaces under a parent.
@@ -23,9 +24,7 @@ import ghidra.program.model.symbol.SymbolTable;
  *   <li>{@code parent} — path of the namespace to start from; null/empty/"/"
  *       defaults to the program's global namespace.</li>
  *   <li>{@code recursive} — when true (default), descend into plain
- *       namespaces to find classes nested deeper. Stops descending into
- *       classes themselves (the GUI's Symbol Tree flattens class members
- *       but recurses into their sub-classes via the same logic).</li>
+ *       namespaces and into classes to find classes nested deeper.</li>
  *   <li>{@code limit} — cap on the number of classes returned. 0 (default)
  *       means unlimited. When the cap is hit, {@code truncated} is true
  *       and the walk stops early.</li>
@@ -76,11 +75,23 @@ public final class NamespaceListClassesHandler implements RpcProcedure {
             return;
         }
         SymbolTable st = ctx.program().getSymbolTable();
-        // Iterate children; emit classes, descend into plain namespaces.
-        List<Namespace> plainChildren = new ArrayList<>();
+        // Iterate children; emit classes, then descend into classes and
+        // plain namespaces alike (a class nested in a class is still a
+        // class). Functions are namespaces too, but they cannot contain
+        // classes, so they are never walked: that would visit every symbol
+        // of every function in the program.
+        List<Namespace> children = new ArrayList<>();
         for (Symbol sym : st.getSymbols(ns)) {
             ctx.monitor().checkCancelled();
+            SymbolType type = sym.getSymbolType();
+            if (type != SymbolType.CLASS && type != SymbolType.NAMESPACE
+                    && type != SymbolType.LIBRARY) {
+                continue;
+            }
             Object obj = sym.getObject();
+            if (!(obj instanceof Namespace)) {
+                continue;
+            }
             if (obj instanceof GhidraClass) {
                 Namespace gc = (Namespace) obj;
                 out.add(new ClassEntry(gc.getName(), slashPath(gc), slashPath(ns)));
@@ -88,21 +99,18 @@ public final class NamespaceListClassesHandler implements RpcProcedure {
                     truncated[0] = true;
                     return;
                 }
-            } else if (recursive && obj instanceof Namespace) {
-                // Plain namespace child — descend into it later.
-                plainChildren.add((Namespace) obj);
+            }
+            if (recursive) {
+                children.add((Namespace) obj);
             }
         }
-        if (recursive && !truncated[0]) {
-            // Recurse into plain namespace children so nested classes are
-            // found. We sort children by name for deterministic output.
-            plainChildren.sort(Comparator.comparing(Namespace::getName));
-            for (Namespace child : plainChildren) {
-                if (truncated[0]) {
-                    return;
-                }
-                walk(child, recursive, limit, out, truncated, ctx);
+        // Sorted by name for deterministic output.
+        children.sort(Comparator.comparing(Namespace::getName));
+        for (Namespace child : children) {
+            if (truncated[0]) {
+                return;
             }
+            walk(child, recursive, limit, out, truncated, ctx);
         }
     }
 

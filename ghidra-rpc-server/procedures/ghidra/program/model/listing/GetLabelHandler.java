@@ -6,11 +6,13 @@ import java.util.List;
 import com.google.gson.JsonObject;
 
 import ghidra.program.model.address.Address;
+import ghidra.program.model.symbol.Namespace;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolIterator;
 import ghidra.program.model.symbol.SymbolTable;
 
 import procedures.RpcContext;
+import procedures.ghidra.app.cmd.function.NamespaceResolve;
 import procedures.RpcProcedure;
 import procedures.RpcResponse;
 
@@ -31,13 +33,19 @@ public final class GetLabelHandler implements RpcProcedure {
         SymbolIterator it = st.getSymbolsAsIterator(addr);
         while (it.hasNext()) {
             Symbol s = it.next();
-            all.add(new LabelAtAddress(s.getName(), s.isPrimary()));
+            all.add(new LabelAtAddress(s.getName(), s.isPrimary(), namespaceOf(s)));
         }
         return new GetLabelResponse(
             addr.toString(),
             primary == null ? null : primary.getName(),
             all
         );
+    }
+
+    /** Slash path of a symbol's namespace, or null when it is global. */
+    static String namespaceOf(Symbol s) {
+        Namespace ns = s.getParentNamespace();
+        return ns == null || ns.isGlobal() ? null : NamespaceResolve.slashPath(ns);
     }
 
     @Override

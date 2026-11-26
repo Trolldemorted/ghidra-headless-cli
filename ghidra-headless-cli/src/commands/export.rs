@@ -32,7 +32,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
 }
 
 fn print_exports(response: &Json) {
-    let count = response.get("count").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+    let count = response.get("count").and_then(Json::as_i64).unwrap_or(0);
     let truncated = response
         .get("truncated")
         .and_then(Json::as_bool)

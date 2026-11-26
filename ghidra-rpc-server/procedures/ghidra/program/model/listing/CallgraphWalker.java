@@ -4,8 +4,10 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressRange;
@@ -56,6 +58,10 @@ final class CallgraphWalker {
     private final int maxDepth;
     private final boolean includeRefs;
     private final int maxEdges;
+    /** Node of every function seen so far (edges refer to nodes, not names). */
+    private final Map<Function, CallgraphNode> nodeOf = new HashMap<>();
+    /** Edges already emitted: one per (from, to, refType), however many call sites. */
+    private final Set<String> edgeKeys = new HashSet<>();
 
     CallgraphWalker(RpcContext ctx, ReferenceManager rm, FunctionManager fm,
             String direction, int maxDepth, boolean includeRefs, int maxEdges) {
@@ -77,6 +83,8 @@ final class CallgraphWalker {
         // detection) and to look up a node's depth when emitting an edge.
         Map<Function, Integer> visited = new HashMap<>();
         Deque<Function> queue = new ArrayDeque<>();
+        nodeOf.clear();
+        edgeKeys.clear();
 
         visited.put(root, 0);
         queue.add(root);
@@ -150,9 +158,9 @@ final class CallgraphWalker {
                     if (extName == null) {
                         continue;
                     }
-                    addLeaf(visited, queue, nodes, extName, ref.getToAddress().toString(),
+                    CallgraphNode leaf = addLeaf(nodes, extName, ref.getToAddress().toString(),
                         nextDepth, true);
-                    if (appendEdge(edges, truncated, from.getName(), extName,
+                    if (appendEdge(edges, truncated, nodeOf.get(from), leaf,
                             nextDepth, ref.getReferenceType().getName())) {
                         return;
                     }
@@ -161,7 +169,7 @@ final class CallgraphWalker {
                 if (visited.containsKey(callee)) {
                     // Cycle: emit the edge so the cycle is visible, but
                     // don't re-enqueue.
-                    if (appendEdge(edges, truncated, from.getName(), callee.getName(),
+                    if (appendEdge(edges, truncated, nodeOf.get(from), nodeOf.get(callee),
                             nextDepth, ref.getReferenceType().getName())) {
                         return;
                     }
@@ -172,7 +180,7 @@ final class CallgraphWalker {
                 if (nextDepth < maxDepth) {
                     queue.add(callee);
                 }
-                if (appendEdge(edges, truncated, from.getName(), callee.getName(),
+                if (appendEdge(edges, truncated, nodeOf.get(from), nodeOf.get(callee),
                         nextDepth, ref.getReferenceType().getName())) {
                     return;
                 }
@@ -199,7 +207,7 @@ final class CallgraphWalker {
                 continue;
             }
             if (visited.containsKey(caller)) {
-                if (appendEdge(edges, truncated, caller.getName(), to.getName(),
+                if (appendEdge(edges, truncated, nodeOf.get(caller), nodeOf.get(to),
                         nextDepth, ref.getReferenceType().getName())) {
                     return;
                 }
@@ -210,16 +218,25 @@ final class CallgraphWalker {
             if (nextDepth < maxDepth) {
                 queue.add(caller);
             }
-            if (appendEdge(edges, truncated, caller.getName(), to.getName(),
+            if (appendEdge(edges, truncated, nodeOf.get(caller), nodeOf.get(to),
                         nextDepth, ref.getReferenceType().getName())) {
                 return;
             }
         }
     }
 
-    /** @return true when the edge cap is hit (signals the caller to stop). */
+    /**
+     * Add the edge unless the same (from, to, refType) was already emitted:
+     * a function that calls another from ten call sites is one edge of the
+     * graph, and ten copies used to eat the edge cap.
+     *
+     * @return true when the edge cap is hit (signals the caller to stop).
+     */
     private boolean appendEdge(List<CallgraphEdge> edges, boolean[] truncated,
-            String from, String to, int depth, String refType) {
+            CallgraphNode from, CallgraphNode to, int depth, String refType) {
+        if (!edgeKeys.add(from.address + ">" + to.address + ">" + refType)) {
+            return false;
+        }
         edges.add(new CallgraphEdge(from, to, depth, refType));
         if (edges.size() >= maxEdges) {
             truncated[0] = true;
@@ -228,8 +245,11 @@ final class CallgraphWalker {
         return false;
     }
 
-    private static CallgraphNode makeNode(Function f, int depth) {
-        return new CallgraphNode(f.getName(), f.getEntryPoint().toString(), depth, f.isExternal());
+    private CallgraphNode makeNode(Function f, int depth) {
+        CallgraphNode n = new CallgraphNode(f.getName(), f.getEntryPoint().toString(), depth,
+            f.isExternal());
+        nodeOf.put(f, n);
+        return n;
     }
 
     /**
@@ -237,16 +257,16 @@ final class CallgraphWalker {
      * External functions aren't Function objects, so we can't use the
      * Function-keyed {@code visited} map; we name-de-duplicate instead.
      */
-    private void addLeaf(Map<Function, Integer> visited, Deque<Function> queue,
-            List<CallgraphNode> nodes, String name, String address, int depth, boolean isExternal) {
+    private CallgraphNode addLeaf(List<CallgraphNode> nodes, String name, String address,
+            int depth, boolean isExternal) {
         for (CallgraphNode n : nodes) {
-            if (n.name.equals(name)) {
-                return;
+            if (n.isExternal && n.name.equals(name)) {
+                return n;
             }
         }
-        nodes.add(new CallgraphNode(name, address, depth, isExternal));
-        // External leaves are not enqueued: we don't recurse into EXTERNAL
-        // space (we'd need a Function object and there isn't one).
+        CallgraphNode n = new CallgraphNode(name, address, depth, isExternal);
+        nodes.add(n);
+        return n;
     }
 
     /**

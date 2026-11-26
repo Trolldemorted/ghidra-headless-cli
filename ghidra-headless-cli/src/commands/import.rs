@@ -32,11 +32,11 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
 }
 
 fn print_imports(response: &Json) {
-    let count = response.get("count").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+    let count = response.get("count").and_then(Json::as_i64).unwrap_or(0);
     let lib_count = response
         .get("libraryCount")
-        .and_then(Json::as_f64)
-        .unwrap_or(0.0) as i64;
+        .and_then(Json::as_i64)
+        .unwrap_or(0);
     let truncated = response
         .get("truncated")
         .and_then(Json::as_bool)
@@ -55,7 +55,7 @@ fn print_imports(response: &Json) {
     if let Some(libs) = response.get("libraries").and_then(Json::as_array) {
         for lib in libs {
             let name = lib.get("name").and_then(Json::as_str).unwrap_or("?");
-            let c = lib.get("count").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+            let c = lib.get("count").and_then(Json::as_i64).unwrap_or(0);
             println!("  {} ({})", name, c);
             if let Some(entries) = lib.get("entries").and_then(Json::as_array) {
                 for e in entries {

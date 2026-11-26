@@ -65,7 +65,8 @@ public final class SetDataTypeFieldTypeHandler implements RpcProcedure {
             // every consumer. Point the caller at `datatype show
             // --path /X` to discover the underlying struct's path.
             String hint = (target instanceof TypeDef)
-                ? " Use `datatype show --path /" + target.getName() + "` to discover the underlying struct's path, then call set-field-type on that path."
+                ? " Use `datatype show --path /" + target.getName()
+                    + "` to discover the underlying struct's path, then call set-field-type on that path."
                 : "";
             return RpcResponse.error("Field retypes are only supported on struct/union types; '"
                 + path + "' is a " + target.getClass().getSimpleName() + "." + hint);
@@ -89,7 +90,10 @@ public final class SetDataTypeFieldTypeHandler implements RpcProcedure {
         final int prevLength = pre.getLength();
         final String prevTypePath = DataTypeSerializer.pathOf(pre.getDataType());
         final String prevComment = pre.getComment();
-        if (prevFieldName == null) {
+        // Undefined filler (a byte of an unpacked struct with no field yet)
+        // has no name and cannot be given one; typing it is how it becomes a
+        // field, so it is let through with a null name.
+        if (prevFieldName == null && !pre.isUndefined()) {
             // An unnamed component can't be retyped because the 5-arg
             // Structure.replace would set its name to "" (which Ghidra
             // normalizes to "(unnamed)" but is still a visible change).
@@ -97,6 +101,15 @@ public final class SetDataTypeFieldTypeHandler implements RpcProcedure {
             // set-field-name.
             return RpcResponse.error("Field at index " + index + " of '" + path
                 + "' is unnamed; give it a real name first with `set-field-name`.");
+        }
+        // Bitfields packed into the same storage unit overlap each other.
+        // Structure.replace clears everything the new component overlaps, so
+        // retyping one bitfield deletes its siblings.
+        if (pre.isBitFieldComponent() && !force) {
+            return RpcResponse.error("Field '" + prevFieldName + "' (index " + index + ") of '"
+                + path + "' is a bitfield. Retyping it replaces its whole storage unit and "
+                + "removes the other bitfields packed into the same bytes. Pass force=true if "
+                + "that is intended, or redefine the struct with `datatype edit`.");
         }
 
         // Resolve the new type OUTSIDE the transaction. If the new type
@@ -121,7 +134,8 @@ public final class SetDataTypeFieldTypeHandler implements RpcProcedure {
             return RpcResponse.error("New type '" + (newType.getPathName() != null
                 ? newType.getPathName() : newType.getName()) + "' (length " + newLength
                 + ") does not match existing component length " + prevLength
-                + " at field '" + prevFieldName + "' (index " + index + ") of '" + path
+                + " at field '" + (prevFieldName == null ? "(undefined)" : prevFieldName)
+                + "' (index " + index + ") of '" + path
                 + "'. Retype requires identical length; pass force=true to allow "
                 + "grow/shrink (may shift trailing components).");
         }

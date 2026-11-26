@@ -7,3 +7,9 @@
 .PHONY: lint
 lint:
 	@./tools/lint.sh
+
+# Compile the sources against a Ghidra install (GHIDRA_HOME=...). Nothing is
+# kept; this only proves the code matches the pinned Ghidra's API.
+.PHONY: compile
+compile:
+	@./tools/compile-check.sh

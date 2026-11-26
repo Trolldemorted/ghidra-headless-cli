@@ -49,7 +49,8 @@ public final class SetDataTypeFieldNameHandler implements RpcProcedure {
         }
         if (!(target instanceof Composite)) {
             String hint = (target instanceof TypeDef)
-                ? " Use `datatype show --path /" + target.getName() + "` to discover the underlying struct's path, then call set-field-name on that path."
+                ? " Use `datatype show --path /" + target.getName()
+                    + "` to discover the underlying struct's path, then call set-field-name on that path."
                 : "";
             return RpcResponse.error("Field renames are only supported on struct/union types; '"
                 + path + "' is a " + target.getClass().getSimpleName() + "." + hint);
@@ -71,11 +72,23 @@ public final class SetDataTypeFieldNameHandler implements RpcProcedure {
         final String currentTypePath = DataTypeSerializer.pathOf(currentType);
         final String currentComment = pre.getComment();
 
+        // Bytes of an unpacked struct that have no field yet are "undefined"
+        // filler components: Ghidra keeps no record for them, so setFieldName
+        // does nothing at all. Say so instead of reporting a rename.
+        if (pre.isUndefined()) {
+            return RpcResponse.error("Offset 0x" + Integer.toHexString(pre.getOffset()) + " of '"
+                + path + "' is undefined filler, not a field, and cannot be named. Give it a "
+                + "type first (`datatype set-field-type`; a type longer than one byte needs "
+                + "--force), then name it.");
+        }
+
         final boolean[] ok = {false};
+        final String[] stored = {null};
         try {
             ctx.runWrite("SetDataTypeFieldName", () -> {
                 DataTypeComponent comp = composite.getComponent(index);
                 comp.setFieldName(newName);
+                stored[0] = composite.getComponent(index).getFieldName();
                 ok[0] = true;
             });
         } catch (RuntimeException e) {
@@ -92,7 +105,13 @@ public final class SetDataTypeFieldNameHandler implements RpcProcedure {
             return RpcResponse.error("Rename failed for field at index " + index
                 + " of '" + path + "'.");
         }
-        return new FieldNameResponse(path, newName, currentTypePath, currentComment, prevName);
+        if (stored[0] == null || stored[0].isEmpty()) {
+            return RpcResponse.error("Ghidra did not store the name '" + newName
+                + "' for field at index " + index + " of '" + path + "'.");
+        }
+        // Report the name Ghidra actually stored: it rewrites whitespace
+        // (e.g. "my field" becomes "my_field").
+        return new FieldNameResponse(path, stored[0], currentTypePath, currentComment, prevName);
     }
 
     /** Response shape; gson drops null fields. */

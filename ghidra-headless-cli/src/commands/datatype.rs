@@ -623,7 +623,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             no_var_args,
             no_return,
         } => {
-            let add_entries_json = parse_opt_json("addEntries", add_entries)?;
+            let add_entries_json = parse_opt_json("add-entries", add_entries)?;
             // --definition takes the whole body. Reject redundant/explicit
             // struct/union/enum field flags rather than silently dropping
             // them — the server enforces this too, and a clear error is
@@ -653,7 +653,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                     return Err(());
                 }
             }
-            let add_fields_json = parse_opt_json("addFields", add_fields)?;
+            let add_fields_json = parse_opt_json("add-fields", add_fields)?;
             // --definition is NOT routed for FunctionDefinition targets —
             // the C snippet path is Composite/Enum/TypeDef only. Reject
             // client-side if combined with any of the funcdef structured
@@ -679,24 +679,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             // --parameters must parse as a JSON array (server-side
             // validation enforces it but client-side gives a clearer error
             // before the round-trip).
-            let parameters_json = match parameters.as_deref() {
-                None => None,
-                Some(text) => {
-                    let parsed = parse_opt_json("parameters", Some(text.to_string()))?;
-                    match parsed {
-                        None => None,
-                        Some(Json::Arr(_)) => Some(parsed.unwrap()),
-                        Some(_) => {
-                            common::log_arg_err(
-                                "--parameters must be a JSON array of \
-                                 {\"name\": \"...\", \"type\": \"...\"} objects."
-                                    .to_string(),
-                            );
-                            return Err(());
-                        }
-                    }
-                }
-            };
+            let parameters_json = parse_opt_json("parameters", parameters)?;
             // Map --var-args / --no-var-args presence flags to an
             // Option<bool>: clap rejects using both (conflicts_with), so
             // exactly one of var_args / no_var_args / neither is true.
@@ -904,6 +887,7 @@ fn run_create_or_replace(
         })?;
         let f = parse_opt_json("fields", fields)?;
         let e = parse_opt_json("entries", entries)?;
+        check_kind_flags(&k, &f, &e, &base)?;
         (Some(k), Some(n), f, e, base)
     };
     let parameters_json = parse_opt_json("parameters", parameters)?;
@@ -981,6 +965,7 @@ fn run_replace(
         })?;
         let f = parse_opt_json("fields", fields)?;
         let e = parse_opt_json("entries", entries)?;
+        check_kind_flags(&k, &f, &e, &base)?;
         (Some(k), None, f, e, base)
     } else {
         let k = kind.ok_or_else(|| {
@@ -991,6 +976,7 @@ fn run_replace(
         })?;
         let f = parse_opt_json("fields", fields)?;
         let e = parse_opt_json("entries", entries)?;
+        check_kind_flags(&k, &f, &e, &base)?;
         (Some(k), Some(n), f, e, base)
     };
     let parameters_json = parse_opt_json("parameters", parameters)?;
@@ -1017,13 +1003,59 @@ fn run_replace(
     Ok(())
 }
 
+/// Parse an optional flag value that must be a JSON ARRAY (`--fields`,
+/// `--entries`, `--add-fields`, `--add-entries`, `--parameters`).
+///
+/// Anything else is an error here: the server only looks at these fields
+/// when they are arrays, so `--fields '{"name":"x","type":"int"}'` (object,
+/// not a one-element array) used to be dropped and the command still
+/// reported success.
 fn parse_opt_json(name: &str, value: Option<String>) -> Result<Option<Json>, ()> {
-    match value {
-        None => Ok(None),
-        Some(text) => Json::parse(&text)
-            .map(Some)
-            .map_err(|e| common::log_arg_err(format!("invalid JSON for --{}: {}", name, e))),
+    let Some(text) = value else {
+        return Ok(None);
+    };
+    match Json::parse(&text) {
+        Ok(json @ Json::Arr(_)) => Ok(Some(json)),
+        Ok(_) => {
+            common::log_arg_err(format!(
+                "--{} must be a JSON array, e.g. '[{{...}}]' (got a single value)",
+                name
+            ));
+            Err(())
+        }
+        Err(e) => {
+            common::log_arg_err(format!("invalid JSON for --{}: {}", name, e));
+            Err(())
+        }
     }
+}
+
+/// Reject body flags that do not apply to `--kind`. The server reads only
+/// the one that matches the kind, so e.g. `--kind enum --fields [...]`
+/// created an empty enum and said nothing.
+fn check_kind_flags(
+    kind: &str,
+    fields: &Option<Json>,
+    entries: &Option<Json>,
+    base: &Option<String>,
+) -> Result<(), ()> {
+    let wrong = |flag: &str, applies_to: &str| {
+        common::log_arg_err(format!(
+            "--{} does not apply to --kind {} (it is for {})",
+            flag, kind, applies_to
+        ));
+        Err(())
+    };
+    if fields.is_some() && !matches!(kind, "struct" | "union") {
+        return wrong("fields", "struct and union");
+    }
+    if entries.is_some() && kind != "enum" {
+        return wrong("entries", "enum");
+    }
+    if base.is_some() && kind != "typedef" {
+        return wrong("base", "typedef");
+    }
+    Ok(())
 }
 
 fn print_list(
@@ -1034,7 +1066,7 @@ fn print_list(
     kind: Option<&str>,
     want_json: bool,
 ) -> Result<(), ()> {
-    let count = response.get("count").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+    let count = response.get("count").and_then(Json::as_i64).unwrap_or(0);
     let truncated = response
         .get("truncated")
         .and_then(Json::as_bool)
@@ -1147,7 +1179,7 @@ impl TypeRow {
                 .and_then(Json::as_str)
                 .unwrap_or("?")
                 .to_string(),
-            size: j.get("size").and_then(Json::as_f64).unwrap_or(0.0) as i64,
+            size: j.get("size").and_then(Json::as_i64).unwrap_or(0),
             path,
             source: j
                 .get("source")
@@ -1223,6 +1255,13 @@ impl TypeRow {
 /// `/Demangler/std` have direct rows. We synthesize their headers
 /// so the user can see the full path context.
 fn print_tree(rows: &[TypeRow], scope_root: &str) {
+    // Accept `X`, `/X` and `/X/` alike; row paths are always `/X/...`.
+    let trimmed = scope_root.trim_matches('/');
+    let scope_root = &if trimmed.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{}", trimmed)
+    };
     // Group by category path.
     let mut by_cat: BTreeMap<String, Vec<&TypeRow>> = BTreeMap::new();
     for r in rows {
@@ -1232,7 +1271,23 @@ fn print_tree(rows: &[TypeRow], scope_root: &str) {
     // Snapshot of all category paths the server returned. Used to
     // find children at deeper levels even when intermediate
     // categories have no direct rows.
-    let known_paths: Vec<String> = by_cat.keys().cloned().collect();
+    //
+    // Every ANCESTOR of a returned category is added as well: `/A/B/T`
+    // implies headers for `/A` and `/A/B` even when neither holds a type
+    // directly. Without them the walk below never reached `/A/B` (it only
+    // follows immediate children), and those types were not printed at all.
+    let mut all_paths: std::collections::BTreeSet<String> = by_cat.keys().cloned().collect();
+    for path in by_cat.keys() {
+        let mut p = path.as_str();
+        while let Some((parent, _)) = p.rsplit_once('/') {
+            if parent.is_empty() {
+                break;
+            }
+            all_paths.insert(parent.to_string());
+            p = parent;
+        }
+    }
+    let known_paths: Vec<String> = all_paths.into_iter().collect();
 
     // "Root" rows for this view: types whose category IS the scope
     // root. For the un-scoped (`scope_root == "/"`) case this is the
@@ -1431,7 +1486,7 @@ fn print_show(response: &Json, want_json: bool) -> Result<(), ()> {
     let kind = response.get("kind").and_then(Json::as_str).unwrap_or("?");
     let name = response.get("name").and_then(Json::as_str).unwrap_or("?");
     let path = response.get("path").and_then(Json::as_str).unwrap_or("?");
-    let size = response.get("size").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+    let size = response.get("size").and_then(Json::as_i64).unwrap_or(0);
 
     // --json path: stdout must be VALID JSON ONLY — nothing else. No TSV
     // headline, no `key: value` listing. Dump the whole server response as
@@ -1565,12 +1620,10 @@ fn print_confirm(response: &Json, name: &str, kind: &str, path: &str, size: i64)
     // is set in ConfirmResponse; gson omits the others.
     let field_count = response
         .get("fieldCount")
-        .and_then(Json::as_f64)
-        .map(|n| n as i64);
+        .and_then(Json::as_i64);
     let entry_count = response
         .get("entryCount")
-        .and_then(Json::as_f64)
-        .map(|n| n as i64);
+        .and_then(Json::as_i64);
     let base = response.get("base").and_then(Json::as_str);
 
     // size printed in hex for parity with Ghidra's Type Manager
@@ -1671,12 +1724,12 @@ fn print_field_typed(response: &Json) -> Result<(), ()> {
         .unwrap_or("?");
     let new_len = response
         .get("typeLength")
-        .and_then(Json::as_f64)
-        .unwrap_or(0.0) as i64;
+        .and_then(Json::as_i64)
+        .unwrap_or(0);
     let prev_len = response
         .get("previousLength")
-        .and_then(Json::as_f64)
-        .unwrap_or(0.0) as i64;
+        .and_then(Json::as_i64)
+        .unwrap_or(0);
     let comment = response.get("comment").and_then(Json::as_str);
     let prev_comment = response.get("previousComment").and_then(Json::as_str);
     let forced = response

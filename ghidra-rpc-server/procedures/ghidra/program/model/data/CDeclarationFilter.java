@@ -141,7 +141,7 @@ public final class CDeclarationFilter {
         // Anchored at start-of-line, then a literal '{' anywhere later
         // on that line — the brace tracker is what finds the close.
         Pattern bodyStart = Pattern.compile(
-            "^\\s*" + kind + "\\s+\\Q" + name + "\\E\\s*\\{");
+            "^\\s*" + kind + "\\s+" + Pattern.quote(name) + "\\s*\\{");
         // A single-line forward-declaration typedef, e.g.
         //   typedef struct Town Town, *PTown;
         //   typedef union U U, *PU;
@@ -149,17 +149,18 @@ public final class CDeclarationFilter {
             "^\\s*typedef\\s+(?:struct|union|enum)\\s+\\S.*;\\s*$");
         int depth = 0;
         boolean capturing = false;
+        BraceCounter braces = new BraceCounter();
         for (String line : lines) {
             if (capturing) {
                 out.append(line).append('\n');
-                depth += braceDelta(line);
+                depth += braces.delta(line);
                 if (depth == 0) break;             // matching `};` of requested body
                 continue;
             }
             if (depth == 0 && bodyStart.matcher(line).find()) {
                 capturing = true;
                 out.append(line).append('\n');
-                depth += braceDelta(line);
+                depth += braces.delta(line);
                 if (depth == 0) break;             // single-line body (defensive)
                 continue;
             }
@@ -169,63 +170,92 @@ public final class CDeclarationFilter {
             }
             // Step over other types' bodies (inlined deps) and drop the
             // builtins preamble / blank lines.
-            depth += braceDelta(line);
+            depth += braces.delta(line);
         }
         return out.length() == 0 ? raw : stripTrailingBlank(out);
     }
 
-    /** Net change in brace nesting contributed by one line. */
-    private static int braceDelta(String line) {
-        int d = 0;
-        for (int i = 0; i < line.length(); i++) {
-            char c = line.charAt(i);
-            if (c == '{') d++;
-            else if (c == '}') d--;
+    /**
+     * Counts brace nesting line by line, ignoring braces inside comments.
+     * The writer copies descriptions and field comments verbatim into
+     * {@code /* ... *&#47;} (or {@code // ...}) comments, and a description
+     * such as "see {link}" or one with an unbalanced brace used to end the
+     * captured body early or never. A block comment may span lines (a
+     * multi-line description), so the state is kept across calls.
+     */
+    private static final class BraceCounter {
+        private boolean inBlockComment;
+
+        /** Net change in brace nesting contributed by one line. */
+        int delta(String line) {
+            int d = 0;
+            for (int i = 0; i < line.length(); i++) {
+                char c = line.charAt(i);
+                char next = i + 1 < line.length() ? line.charAt(i + 1) : '\0';
+                if (inBlockComment) {
+                    if (c == '*' && next == '/') {
+                        inBlockComment = false;
+                        i++;
+                    }
+                } else if (c == '/' && next == '*') {
+                    inBlockComment = true;
+                    i++;
+                } else if (c == '/' && next == '/') {
+                    break;
+                } else if (c == '{') {
+                    d++;
+                } else if (c == '}') {
+                    d--;
+                }
+            }
+            return d;
         }
-        return d;
     }
 
     private static String filterEnum(String raw, String name) {
         // typedef enum Foo { ... } Foo;
-        // #define Foo v;  (single-value define_* enums)
+        // An enum named define_FOO with exactly one value is written as
+        //   #define FOO v
+        // (no "define_" prefix, no semicolon).
         String[] lines = raw.split("\n", -1);
+        String q = Pattern.quote(name);
+        Pattern start = Pattern.compile("^\\s*typedef\\s+enum\\s+" + q + "\\s*\\{");
+        Pattern end = Pattern.compile("^\\s*\\}\\s*" + q + "\\s*;\\s*$");
+        Pattern define = name.startsWith("define_") && name.length() > 7
+            ? Pattern.compile("^\\s*#define\\s+" + Pattern.quote(name.substring(7)) + "\\s")
+            : null;
         StringBuilder out = new StringBuilder();
-        Pattern start = Pattern.compile(
-            "^\\s*(typedef\\s+enum\\s+\\Q" + name + "\\E\\s*\\{|#define\\s+\\Q" + name
-            + "\\E\\s+)");
-        for (String line : lines) {
-            if (start.matcher(line).find()) {
-                out.append(line).append('\n');
-                // Single-line case: #define Foo v;  already complete.
-                if (line.trim().endsWith(";") && !line.contains("{")) {
+        for (int i = 0; i < lines.length; i++) {
+            if (define != null && define.matcher(lines[i]).find()) {
+                return lines[i];
+            }
+            if (!start.matcher(lines[i]).find()) {
+                continue;
+            }
+            // Keep everything up to the matching `} NAME;`.
+            for (int j = i; j < lines.length; j++) {
+                out.append(lines[j]).append('\n');
+                if (end.matcher(lines[j]).matches()) {
                     break;
                 }
-                // Multi-line: read until the matching `} NAME;`.
-                // We've already written the opening line. Keep going
-                // until we see `} NAME;` on a line.
-                int i = java.util.Arrays.asList(lines).indexOf(line);
-                for (int j = i + 1; j < lines.length; j++) {
-                    String l = lines[j];
-                    out.append(l).append('\n');
-                    if (l.matches("^\\s*\\}\\s*\\Q" + name + "\\E\\s*;\\s*$")) {
-                        return stripTrailingBlank(out);
-                    }
-                }
-                break;
             }
+            break;
         }
         return out.length() == 0 ? raw : stripTrailingBlank(out);
     }
 
     private static String filterTypedef(String raw, String name) {
-        // The writer emits `typedef <base> <name>;` for the typedef.
-        // The base may itself be a typedef (e.g. `typedef unsigned int
-        // uint32; typedef uint32 my_int;`) — but the writer emits only
-        // the requested typedef, so we just need the line ending in
-        // `; NAME;` (word-boundary).
+        // The writer emits one `typedef ...;` line in which NAME is the
+        // identifier being declared. Depending on the base type that is
+        //   typedef unsigned int NAME;        plain / pointer (`Foo * NAME;`)
+        //   typedef int NAME[4];              array
+        //   typedef int (* NAME)(int);        pointer to function
+        //   typedef int NAME(int);            function
+        // A line where NAME is only the BASE type (`typedef NAME Other;`)
+        // must not match, so NAME has to be followed by `;`, `[`, `(` or `)`.
         String[] lines = raw.split("\n", -1);
         Pattern singleTypedef = Pattern.compile(
-            "^\\s*typedef\\s+.*\\s+\\Q" + name + "\\E\\s*;\\s*$");
+            "^\\s*typedef\\s.*[\\s*(]" + Pattern.quote(name) + "\\s*(;|\\[.*;|\\(.*;|\\)\\s*\\(.*;)\\s*$");
         StringBuilder out = new StringBuilder();
         for (String line : lines) {
             if (singleTypedef.matcher(line).matches()) {

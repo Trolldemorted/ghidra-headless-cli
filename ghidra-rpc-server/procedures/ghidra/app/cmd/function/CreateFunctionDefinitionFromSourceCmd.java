@@ -1,5 +1,8 @@
 package procedures.ghidra.app.cmd.function;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import ghidra.framework.cmd.BackgroundCommand;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.data.CategoryPath;
@@ -184,20 +187,26 @@ public final class CreateFunctionDefinitionFromSourceCmd
             return function.getSignature(true).getArguments();
         }
 
-        ParameterDefinition[] out = new ParameterDefinition[sourceParams.length];
-        for (int i = 0; i < sourceParams.length; i++) {
-            Parameter p = sourceParams[i];
+        List<ParameterDefinition> out = new ArrayList<>();
+        for (Parameter p : sourceParams) {
             // setArguments wants ParameterDefinition (the data-side contract).
             // ParameterImpl implements the program-side Parameter interface,
             // not ParameterDefinition, so we build ParameterDefinitionImpl
             // directly. The funcdef stores name + type + comment; storage and
             // ordinal are reconstructed by the funcdef itself.
             String name = p.getName();
-            if (p.isAutoParameter() && p.getAutoParameterType() == AutoParameterType.THIS) {
+            if (p.isAutoParameter()) {
+                if (p.getAutoParameterType() != AutoParameterType.THIS) {
+                    // __return_storage_ptr__ and friends are injected by the
+                    // calling convention from the (struct) return type, which
+                    // the funcdef already carries. Copying one as an explicit
+                    // parameter would make it appear twice when applied.
+                    continue;
+                }
                 name = "this";
             }
-            out[i] = new ParameterDefinitionImpl(name, p.getDataType(), p.getComment());
+            out.add(new ParameterDefinitionImpl(name, p.getDataType(), p.getComment()));
         }
-        return out;
+        return out.toArray(new ParameterDefinition[0]);
     }
 }

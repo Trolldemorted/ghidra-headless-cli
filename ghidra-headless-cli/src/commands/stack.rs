@@ -87,7 +87,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             let depth = response.get("depthChange");
             match depth {
                 Some(crate::json::Json::Null) | None => println!("unset"),
-                Some(crate::json::Json::Num(n)) => println!("{}", *n as i64),
+                Some(n) if n.as_i64().is_some() => println!("{}", n.as_i64().unwrap_or(0)),
                 _ => println!("?"),
             }
             Ok(())

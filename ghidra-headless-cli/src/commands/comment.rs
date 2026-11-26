@@ -1,5 +1,6 @@
-//! Comment operations: manage EOL / PRE / POST / PLATE / REPEATABLE / DECOMPILER
-//! comments at an address (function-level for DECOMPILER).
+//! Comment operations: manage EOL / PRE / POST / PLATE / REPEATABLE comments
+//! at an address, plus DECOMPILER (the Decompiler window's "Comments > Set...":
+//! Plate Comment at a function entry, Pre Comment elsewhere).
 //!
 //! The user-facing explanation of which comment surfaces where lives on the
 //! `Comment` variant in `main.rs` — keep that as the single source of truth
@@ -40,7 +41,7 @@ pub enum Cmd {
     ///
     /// Visible in `function disassemble` as `plate: <text>`, and — when the
     /// address is a function entry — as the header comment in
-    /// `function decompile`. Same storage as `comment decompiler`.
+    /// `function decompile`.
     Plate {
         #[command(subcommand)]
         op: Op,
@@ -55,15 +56,14 @@ pub enum Cmd {
         #[command(subcommand)]
         op: Op,
     },
-    /// Function-level decompiler comment at an address (resolves to containing function)
+    /// Decompiler-window comment at an address inside a function
     ///
-    /// SAME STORAGE as `comment plate` on a function entry — Ghidra stores
-    /// a function's comment as the PLATE comment at its entry point, so
-    /// writing one overwrites the other. `Function.getComment()` is
-    /// `getComment(PLATE, entryPoint)`.
-    ///
-    /// Visible as the header comment in `function decompile`, and as
-    /// `plate: <text>` in `function disassemble`.
+    /// Same as "Comments > Set..." (`;`) in the GUI's Decompiler window: at
+    /// the function's entry point this is the Plate Comment (the header
+    /// comment in `function decompile`); at any other address it is the Pre
+    /// Comment of the instruction there (shown above the matching statement).
+    /// The reply names which one was touched. No separate storage: it is the
+    /// same text `comment plate` / `comment pre` see at that address.
     Decompiler {
         #[command(subcommand)]
         op: Op,

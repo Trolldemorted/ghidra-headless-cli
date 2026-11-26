@@ -56,7 +56,8 @@ public final class SetDataTypeVariantCommentHandler implements RpcProcedure {
             // caller at `datatype show --path /X` to discover the
             // underlying enum's path.
             String hint = (target instanceof ghidra.program.model.data.TypeDef)
-                ? " Use `datatype show --path /" + target.getName() + "` to discover the underlying enum's path, then call set-variant-comment on that path."
+                ? " Use `datatype show --path /" + target.getName()
+                    + "` to discover the underlying enum's path, then call set-variant-comment on that path."
                 : "";
             return RpcResponse.error("Variant comments are only supported on enum types; '"
                 + path + "' is a " + target.getClass().getSimpleName() + "." + hint);

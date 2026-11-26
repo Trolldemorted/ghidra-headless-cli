@@ -10,8 +10,8 @@ import procedures.RpcContext;
 import procedures.RpcResponse;
 
 import ghidra.program.model.address.Address;
-import ghidra.program.model.address.AddressOutOfBoundsException;
 import ghidra.program.model.address.AddressRange;
+import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.data.Composite;
 import ghidra.program.model.listing.CodeUnit;
@@ -21,6 +21,7 @@ import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.mem.Memory;
 import ghidra.program.model.mem.MemoryAccessException;
+import ghidra.program.model.mem.MemoryBlock;
 
 /**
  * Procedure Listings: dump the Listing-window view for an address range.
@@ -30,18 +31,19 @@ import ghidra.program.model.mem.MemoryAccessException;
  * {@code address} (resolved via {@link RpcContext#addressSet}), and the handler
  * yields every code unit the GUI's Listings window would render in that range.
  *
- * <p>{@link Listing#getCodeUnits(AddressSetView, boolean)} returns BOTH
- * {@link Instruction} and {@link Data} units in address order, which is
- * exactly the GUI's per-row content. Undefined bytes (gaps between defined
- * units, where memory IS initialized but no Instruction/Data has been
- * created) are emitted as {@code kind:"undefined"} rows so the output
- * mirrors what the GUI shows — gap rows in the Listing view, 16-byte rows
- * in the Hex view. Uninitialized memory (no MemoryBlock backing it, or a
- * block whose {@code isInitialized()} is false) yields no row at all —
- * matches the GUI, which shows nothing for uninitialized regions. Each
- * gap is split into {@link #UNDEFINED_CHUNK_BYTES}-byte chunks so a long
- * gap produces a grep-friendly sequence of short rows rather than one
- * 1024-byte line.
+ * <p>{@link Listing#getCodeUnits(AddressSetView, boolean)} returns
+ * {@link Instruction}s, defined {@link Data} and one single-byte undefined
+ * {@link Data} per remaining memory byte, in address order. Runs of undefined
+ * bytes are folded into {@code kind:"undefined"} rows of up to
+ * {@link #UNDEFINED_CHUNK_BYTES} bytes (the Hex view's row width) so a long
+ * run is a short sequence of rows rather than one row per byte. A run is cut
+ * at every labelled byte, so no label is hidden inside a row. Addresses with
+ * no memory block yield nothing, and neither do unlabelled undefined bytes in
+ * an uninitialized block (there is nothing to show for them).
+ *
+ * <p>A range that starts in the middle of a unit shows that unit (for a
+ * struct/union: its components that reach into the range), like the GUI does
+ * when you navigate into the middle of one.
  *
  * <p>Each unit is dispatched by type:
  * <ul>
@@ -62,8 +64,9 @@ import ghidra.program.model.mem.MemoryAccessException;
  *       struct whose body extends past the range doesn't dump hundreds of
  *       bytes the caller didn't ask for.</li>
  *   <li>Undefined bytes → {@code kind="undefined"} with {@code address},
- *       {@code bytes?}, empty {@code label}/{@code mnemonic}/{@code type}/
- *       {@code representation}. 16 bytes per row max.</li>
+ *       {@code label} (empty unless the first byte is labelled),
+ *       {@code bytes?}, and an empty {@code representation}. 16 bytes per row
+ *       max.</li>
  * </ul>
  *
  * <p>Read-only, like {@code Disassemble} and {@code FlatDecompilerAPI}:
@@ -71,10 +74,8 @@ import ghidra.program.model.mem.MemoryAccessException;
  * but not checked in (no mutation).
  *
  * <p>The {@code "start"} / {@code "end"} fields echo the first and last
- * requested addresses (normalized) so callers can detect the case where
- * {@code count} is much smaller than {@code end-start+1} (i.e. the range
- * spans unmapped bytes). Empty range (no defined units, no readable
- * memory) yields {@code count: 0}, not an error.
+ * requested addresses (normalized). A range with no memory behind it yields
+ * {@code count: 0}, not an error.
  */
 public final class ListingsHandler implements RpcProcedure {
 
@@ -92,8 +93,8 @@ public final class ListingsHandler implements RpcProcedure {
      * output size. */
     private static final int MAX_COMPOSITE_DEPTH = 8;
 
-    /** Largest first-start..last-end span one request may cover (1 MiB). */
-    private static final long MAX_SPAN_BYTES = 0x100000;
+    /** Most addresses one request may cover, summed over its ranges (1 MiB). */
+    private static final long MAX_ADDRESSES = 0x100000;
 
     @Override
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
@@ -112,147 +113,129 @@ public final class ListingsHandler implements RpcProcedure {
         String startAddr = firstRange != null ? firstRange.getMinAddress().toString() : null;
         String endAddr = lastRange != null ? lastRange.getMaxAddress().toString() : null;
 
-        // Bound the work. This read-only call needs no write password and runs
-        // under the server-wide lock; the walk below visits every address from
-        // the first range's start to the last range's end (the gap emitter
-        // ignores holes between ranges), so the SPAN is what must be capped —
-        // [{start:0},{start:fffffffffffffff0}] is two addresses but ~2^60 gap
-        // rows.
-        if (firstRange != null) {
-            Address lo = firstRange.getMinAddress();
-            Address hi = lastRange.getMaxAddress();
-            if (!lo.getAddressSpace().equals(hi.getAddressSpace())) {
-                return RpcResponse.error("Listing ranges must all be in one address space.");
-            }
-            long span = hi.subtract(lo);
-            if (span < 0 || span >= MAX_SPAN_BYTES) {
-                return RpcResponse.error("Listing range too large: " + lo + ".." + hi
-                    + " spans more than " + MAX_SPAN_BYTES + " bytes. Request a smaller range.");
-            }
+        // Bound the work: this read-only call needs no write password and
+        // runs under the server-wide lock.
+        if (addrSet.getNumAddresses() > MAX_ADDRESSES) {
+            return RpcResponse.error("Listing range too large: " + addrSet.getNumAddresses()
+                + " addresses requested, at most " + MAX_ADDRESSES
+                + " per request. Request a smaller range.");
         }
 
-        List<Unit> units = new ArrayList<>();
-        int emitted = 0;
-
-        // Walk the defined units in address order, emitting an undefined-row
-        // gap between each pair (and around the head/tail of the requested
-        // range). The cursor starts at the requested range's first address;
-        // each iteration either emits a defined unit and advances the cursor
-        // past it, or — when the cursor doesn't coincide with a unit — emits
-        // one or more undefined rows up to the next unit (or the end of the
-        // range). Because defined CodeUnits cannot overlap, the cursor is
-        // monotonically increasing and we never re-emit a row.
-        //
-        // For composite Data units (Struct/Union) we additionally emit one
-        // row per immediate component, indented by `depth >= 1`, so the CLI
-        // dump matches the GUI's "expanded" listing view. Components that are
-        // themselves composite recurse. The cursor still advances past the
-        // PARENT's max address — component rows are emitted at addresses
-        // INSIDE the parent, but we don't want to re-walk them as separate
-        // top-level units (they're not separate CodeUnits at the Listing
-        // level). Array components are NOT expanded (the GUI shows
-        // `int[10]`/`char[14]` as one row with a value-summary, not as ten
-        // primitive rows); only Struct and Union get the component expansion.
-        Address cursor = firstRange == null ? null : firstRange.getMinAddress();
-        Address rangeEnd = lastRange == null ? null : lastRange.getMaxAddress();
-        if (cursor != null) {
-            // Partial-parent handling: if the requested range starts in the
-            // MIDDLE of a composite Data unit (parent's min address is
-            // before the range, but its body extends into the range), the
-            // main getCodeUnits loop below won't include it — the parent
-            // isn't in the result. The GUI still shows the parent's
-            // visible components. Detect that case via getCodeUnitBefore
-            // and emit the visible components at depth=1 (no parent row,
-            // since the parent itself is outside the requested range).
-            // The returned address (if non-null) is where the cursor
-            // should advance to so the trailing gap doesn't re-emit
-            // addresses already covered by the partial-parent components.
-            Address partialEnd = emitPartialParentComponents(
-                listing, memory, units, cursor, addrSet, rangeEnd,
-                includeBytes, fmt, ctx, emitted);
-            if (partialEnd != null) {
-                cursor = partialEnd;
-            }
-            for (CodeUnit cu : listing.getCodeUnits(addrSet, true)) {
-                if ((emitted++ % CANCEL_CHECK_INTERVAL) == 0) {
-                    ctx.monitor().checkCancelled();
-                }
-                Address unitStart = cu.getMinAddress();
-                Address unitEnd = cu.getMaxAddress();
-                // Cursor lives strictly before this unit — gap to emit.
-                if (cursor.compareTo(unitStart) < 0) {
-                    Address gapEnd = unitStart.previous();
-                    emitted += emitUndefinedGap(memory, units, cursor, gapEnd,
-                        includeBytes, ctx, emitted);
-                }
-                // Emit the defined unit itself. The parent's bytes are
-                // clamped to the requested range (a struct whose body
-                // extends past the endAddr shouldn't dump bytes the caller
-                // didn't ask for); non-Data units and component rows are
-                // emitted as-is.
-                int parentRows = emitDataUnit(cu, includeBytes, fmt, memory, units, 0, addrSet, rangeEnd, ctx, emitted);
-                emitted += parentRows;
-                // Advance cursor past the parent (covers the parent's body
-                // AND all its components — the parent's max address is the
-                // bound of the whole struct).
-                cursor = unitEnd.next();
-            }
-            // Trailing gap (cursor up to and including rangeEnd).
-            if (cursor != null && rangeEnd != null && cursor.compareTo(rangeEnd) <= 0) {
-                emitted += emitUndefinedGap(memory, units, cursor, rangeEnd,
-                    includeBytes, ctx, emitted);
-            }
+        Walk walk = new Walk(listing, memory, fmt, includeBytes, ctx);
+        // Each requested range is walked on its own, so nothing between two
+        // ranges leaks into the output.
+        for (AddressRange range : addrSet) {
+            walk.range(new AddressSet(range));
         }
-
-        return new ListingsResponse(startAddr, endAddr, units.size(), units);
+        return new ListingsResponse(startAddr, endAddr, walk.units.size(), walk.units);
     }
 
-    /** When the requested range starts in the MIDDLE of a composite Data unit,
-     * emit the parent's visible components as rows at depth=1, recursing for
-     * nested composites. No parent row — the parent's start address is
-     * outside the requested range, so the GUI's Listing view also has no
-     * parent header to show (the parent is just "scrolled off" above the
-     * visible range).
-     *
-     * <p>Returns the address the cursor should advance to after the partial
-     * expansion — specifically {@code parent.getMaxAddress().next()} — so
-     * the main loop's trailing gap doesn't re-emit addresses already
-     * covered by partial-parent components. Returns {@code null} when no
-     * expansion happened (no preceding composite parent, or the parent's
-     * body doesn't overlap the range).
-     *
-     * <p>Only fires when the code unit immediately preceding the range is a
-     * composite Data unit whose body overlaps the range start; otherwise this
-     * is a no-op.
-     */
-    private Address emitPartialParentComponents(Listing listing, Memory memory, List<Unit> units,
-            Address rangeStart, AddressSetView range, Address rangeEnd,
-            boolean includeBytes, CodeUnitFormat fmt, RpcContext ctx, int emittedSoFar)
-            throws Exception {
-        CodeUnit preceding = listing.getCodeUnitBefore(rangeStart);
-        if (!(preceding instanceof Data parent)) {
-            return null;
+    /** State of one request's walk over the listing. */
+    private final class Walk {
+        final Listing listing;
+        final Memory memory;
+        final CodeUnitFormat fmt;
+        final boolean includeBytes;
+        final RpcContext ctx;
+        final List<Unit> units = new ArrayList<>();
+
+        // Pending run of undefined bytes, not yet emitted.
+        private Address runStart;
+        private Address runEnd;
+        private String runLabel;
+        private int steps;
+
+        Walk(Listing listing, Memory memory, CodeUnitFormat fmt, boolean includeBytes,
+                RpcContext ctx) {
+            this.listing = listing;
+            this.memory = memory;
+            this.fmt = fmt;
+            this.includeBytes = includeBytes;
+            this.ctx = ctx;
         }
-        if (parent.getMaxAddress().compareTo(rangeStart) < 0) {
-            return null; // parent ends before our range; no overlap
+
+        void range(AddressSetView range) throws Exception {
+            Address rangeStart = range.getMinAddress();
+            Address rangeEnd = range.getMaxAddress();
+            // getCodeUnits only yields units that START inside the range. A
+            // unit that starts before it and reaches into it is shown too:
+            // a struct/union as its visible components (no parent row, the
+            // parent is "scrolled off" above), anything else as its own row.
+            CodeUnit head = listing.getCodeUnitContaining(rangeStart);
+            if (head != null && head.getMinAddress().compareTo(rangeStart) < 0) {
+                if (head instanceof Data parent && parent.getDataType() instanceof Composite) {
+                    expandComponents(parent, includeBytes, fmt, memory, units, 1, range,
+                        rangeEnd, ctx, units.size());
+                } else {
+                    emitDataUnit(head, includeBytes, fmt, memory, units, 0, range, rangeEnd,
+                        ctx, units.size());
+                }
+            }
+            for (CodeUnit cu : listing.getCodeUnits(range, true)) {
+                if ((steps++ % CANCEL_CHECK_INTERVAL) == 0) {
+                    ctx.monitor().checkCancelled();
+                }
+                if (cu instanceof Data data && !data.isDefined()) {
+                    undefined(cu);
+                    continue;
+                }
+                flush();
+                // The parent's bytes are clamped to the requested range (a
+                // struct whose body extends past the end shouldn't dump
+                // bytes the caller didn't ask for).
+                emitDataUnit(cu, includeBytes, fmt, memory, units, 0, range, rangeEnd, ctx,
+                    units.size());
+            }
+            flush();
         }
-        if (!(parent.getDataType() instanceof Composite)) {
-            return null; // arrays / primitives / typedefs — no per-component rows
+
+        /** Add one undefined byte to the pending run, starting a new run when
+         * it is labelled, not adjacent, or the run is full. */
+        private void undefined(CodeUnit cu) {
+            Address a = cu.getMinAddress();
+            String label = cu.getLabel();
+            boolean extend = runStart != null && label == null
+                && runEnd.isSuccessor(a)
+                && runEnd.subtract(runStart) + 1 < UNDEFINED_CHUNK_BYTES;
+            if (extend) {
+                runEnd = a;
+                return;
+            }
+            flush();
+            runStart = a;
+            runEnd = a;
+            runLabel = label == null ? "" : label;
         }
-        // Parent overlaps and is composite — walk its components. For each
-        // component, emit it at depth=1 if any part of its address range
-        // overlaps the requested range (NOT just minAddress — a component
-        // that starts before the range but extends into it is still shown
-        // by the GUI; e.g. a `CDrawable_vftable base` sub-struct that
-        // contains scalarDtor at parent+0 and getClassName at parent+4
-        // shows getClassName when the range starts at parent+2).
-        expandComponents(parent, includeBytes, fmt, memory, units,
-            1, range, rangeEnd, ctx, emittedSoFar);
-        // Cursor advance: the main loop must skip the parent's entire body
-        // (all addresses within [parent.min, parent.max]) so it doesn't
-        // emit them as undefined gaps. parent.max+1 is correct regardless
-        // of where the range ends.
-        return parent.getMaxAddress().next();
+
+        /** Emit the pending run of undefined bytes as one row. */
+        private void flush() {
+            if (runStart == null) {
+                return;
+            }
+            Address start = runStart;
+            int len = (int) runEnd.subtract(runStart) + 1;
+            runStart = null;
+            MemoryBlock block = memory.getBlock(start);
+            boolean initialized = block != null && block.isInitialized();
+            if (!initialized && runLabel.isEmpty()) {
+                return; // nothing to show for bare uninitialized bytes
+            }
+            String bytes = null;
+            if (includeBytes && initialized) {
+                try {
+                    byte[] buf = new byte[len];
+                    int got = memory.getBytes(start, buf, 0, len);
+                    bytes = toHex(java.util.Arrays.copyOf(buf, Math.max(got, 0)));
+                } catch (MemoryAccessException e) {
+                    bytes = null;
+                }
+            }
+            units.add(new Unit("undefined", start.toString(), runLabel, bytes,
+                null,    // no mnemonic
+                null,    // no data type
+                "",      // no semantic content for undefined bytes
+                0));     // never nested under a composite
+        }
     }
 
     /** Walk the components of a composite Data unit, emitting one row per
@@ -320,13 +303,13 @@ public final class ListingsHandler implements RpcProcedure {
      *
      * <p>Component rows are emitted via {@link #expandComponents}, which
      * also handles the partial-parent case (range starts in the middle of
-     * a composite — called from {@link #emitPartialParentComponents}
-     * with the parent absent and depth=1).
+     * a composite: called with the parent absent and depth=1).
      */
     private int emitDataUnit(CodeUnit cu, boolean includeBytes, CodeUnitFormat fmt,
             Memory memory, List<Unit> units, int depth, AddressSetView range, Address rangeEnd,
             RpcContext ctx, int emittedSoFar) throws Exception {
-        Unit parent = buildUnit(cu, includeBytes, fmt, memory, depth, includeBytes ? clampEnd(cu, rangeEnd) : null);
+        Unit parent = buildUnit(cu, includeBytes, fmt, memory, depth,
+            includeBytes ? clampEnd(cu, rangeEnd) : null);
         if (parent == null) {
             return 0;
         }
@@ -429,68 +412,6 @@ public final class ListingsHandler implements RpcProcedure {
         // shows" which is exactly Instruction + Data + undefined; anything
         // else (shouldn't happen with stock Listing) is out of scope.
         return null;
-    }
-
-    /** Emit `kind:"undefined"` rows for the byte range [start, endInclusive].
-     * Returns the number of rows added. The range is chunked into
-     * {@link #UNDEFINED_CHUNK_BYTES}-byte rows so a long gap produces
-     * grep-friendly short lines. Skips bytes that fail to read (uninitialized
-     * memory — matches the GUI, which shows nothing for those regions). */
-    private static int emitUndefinedGap(Memory memory, List<Unit> units,
-            Address start, Address endInclusive, boolean includeBytes,
-            RpcContext ctx, int emittedSoFar) throws Exception {
-        int added = 0;
-        Address cur = start;
-        byte[] buf = new byte[UNDEFINED_CHUNK_BYTES];
-        while (cur.compareTo(endInclusive) <= 0) {
-            if ((emittedSoFar + added) % CANCEL_CHECK_INTERVAL == 0) {
-                ctx.monitor().checkCancelled();
-            }
-            // Compute chunk end: either +15 or endInclusive, whichever comes first.
-            Address chunkEnd;
-            try {
-                Address candidate = cur.addNoWrap(UNDEFINED_CHUNK_BYTES - 1);
-                chunkEnd = candidate.compareTo(endInclusive) > 0 ? endInclusive : candidate;
-            } catch (AddressOutOfBoundsException e) {
-                // Near the top of the address space — just clamp to endInclusive.
-                chunkEnd = endInclusive;
-            }
-            int chunkLen = (int) chunkEnd.subtract(cur) + 1;
-            String bytes = null;
-            if (includeBytes) {
-                try {
-                    // Memory.getBytes(Address, byte[], int, int) returns the
-                    // number of bytes actually read into buf — buf is the
-                    // destination, not the return value. Fill chunkLen bytes
-                    // (or fewer at the tail of an uninitialized region, which
-                    // throws below before we get here).
-                    // Use the returned count: a chunk that runs off the end
-                    // of an initialized block is a SHORT read, and buf still
-                    // holds the previous chunk's bytes past that point.
-                    int got = memory.getBytes(cur, buf, 0, chunkLen);
-                    bytes = toHex(java.util.Arrays.copyOf(buf, Math.max(got, 0)));
-                } catch (MemoryAccessException e) {
-                    // Uninitialized memory block — GUI shows nothing here; skip.
-                    // Still advance past it; the caller doesn't want raw zeros.
-                    cur = chunkEnd.next();
-                    continue;
-                }
-            }
-            // kind="undefined" row. No label, no mnemonic, no type, no
-            // representation — these are all properties of defined units.
-            units.add(new Unit(
-                "undefined",
-                cur.toString(),
-                "",      // empty label (no symbol here)
-                bytes,
-                null,    // no mnemonic
-                null,    // no data type
-                "",      // empty representation (no semantic content for undefined)
-                0));     // top-level (not nested under any composite)
-            added++;
-            cur = chunkEnd.next();
-        }
-        return added;
     }
 
     /** Listings does not change the program, so no check-in is required. */

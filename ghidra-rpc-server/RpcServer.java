@@ -221,41 +221,7 @@ public class RpcServer extends GhidraScript {
         // connection. monitor.cancel() is intentionally NOT called: the
         // in-script TaskMonitor is a no-op for this purpose and cancelling it
         // would not propagate to HeadlessAnalyzer's outer loop.
-        context.onConnectionLost(() -> {
-            Msg.error(this, "Ghidra Server connection lost (RpcContext detected "
-                + "'Not connected to repository server'); exiting so the "
-                + "orchestrator can restart the RPC server.");
-            stopping = true;
-            ServerSocket s = serverSocket;
-            if (s != null) {
-                try {
-                    s.close();
-                } catch (IOException ignored) {
-                    // already closed
-                }
-            }
-            Thread exitTimer = new Thread(() -> {
-                try {
-                    Thread.sleep(CONNECTION_LOST_EXIT_GRACE_MS);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
-                Msg.error(this, "Forcing JVM exit after "
-                    + CONNECTION_LOST_EXIT_GRACE_MS + "ms grace period "
-                    + "(analyzeHeadless did not unwind on its own).");
-                // Exit code 70 (matches the stuck-dispatch watchdog in
-                // RpcContext.watchdogLoop): signals "forced recovery, please
-                // restart" to any orchestrator. With docker --restart=
-                // unless-stopped the orchestrator restarts on any code; with
-                // --restart=on-failure the non-zero code is what triggers
-                // restart. System.exit runs the SIGTERM shutdown hook which
-                // releases the local checkout cleanly.
-                System.exit(70);
-            }, "rpc-connection-lost-exit");
-            exitTimer.setDaemon(true);
-            exitTimer.start();
-        });
+        context.onConnectionLost(this::exitOnConnectionLost);
         // Stuck-dispatch watchdog: fires onConnectionLost if a single dispatch
         // holds the dispatch lock for more than STUCK_DISPATCH_SECONDS. The
         // known trigger is df.save(monitor) / df.checkin(monitor) blocked on
@@ -352,6 +318,47 @@ public class RpcServer extends GhidraScript {
             context.closeAll(); // release programs we opened on demand (not the headless one)
             Msg.info(this, "Stopped.");
         }
+    }
+
+    /**
+     * Connection-lost callback (see the comment where it is installed in
+     * {@link #run()}): stop accepting, then force the JVM down after a grace
+     * period so the orchestrator restarts us.
+     */
+    private void exitOnConnectionLost() {
+        Msg.error(this, "Ghidra Server connection lost (RpcContext detected "
+            + "'Not connected to repository server'); exiting so the "
+            + "orchestrator can restart the RPC server.");
+        stopping = true;
+        ServerSocket s = serverSocket;
+        if (s != null) {
+            try {
+                s.close();
+            } catch (IOException ignored) {
+                // already closed
+            }
+        }
+        Thread exitTimer = new Thread(() -> {
+            try {
+                Thread.sleep(CONNECTION_LOST_EXIT_GRACE_MS);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            Msg.error(this, "Forcing JVM exit after "
+                + CONNECTION_LOST_EXIT_GRACE_MS + "ms grace period "
+                + "(analyzeHeadless did not unwind on its own).");
+            // Exit code 70 (matches the stuck-dispatch watchdog in
+            // RpcContext.watchdogLoop): signals "forced recovery, please
+            // restart" to any orchestrator. With docker --restart=
+            // unless-stopped the orchestrator restarts on any code; with
+            // --restart=on-failure the non-zero code is what triggers
+            // restart. System.exit runs the SIGTERM shutdown hook which
+            // releases the local checkout cleanly.
+            System.exit(70);
+        }, "rpc-connection-lost-exit");
+        exitTimer.setDaemon(true);
+        exitTimer.start();
     }
 
     /**
@@ -869,9 +876,9 @@ public class RpcServer extends GhidraScript {
 
         // Comment operations: 6 types x 4 ops = 24 procedures. Five CodeUnit-level
         // types (EOL/PRE/POST/REPEATABLE/PLATE) operate on the CodeUnit at the given
-        // address; DECOMPILER is function-level (Function.setComment) and resolves
-        // the address to the containing function. Set/Append use SetCommentCmd /
-        // AppendCommentCmd for proper undo/redo on the CodeUnit path.
+        // address; DECOMPILER mirrors the GUI Decompiler window's "Comments > Set..."
+        // (PLATE at a function entry, PRE elsewhere in a function). Set/Append use
+        // SetCommentCmd / AppendCommentCmd, like the GUI dialog.
         register("EolGet", new procedures.ghidra.app.cmd.comments.EolGetHandler());
         register("EolSet", new procedures.ghidra.app.cmd.comments.EolSetHandler());
         register("EolAppend", new procedures.ghidra.app.cmd.comments.EolAppendHandler());

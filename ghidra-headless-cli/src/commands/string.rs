@@ -126,7 +126,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
 fn print_response(cmd: &Cmd, response: &Json) {
     match cmd {
         Cmd::Search(_) => {
-            let count = response.get("count").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+            let count = response.get("count").and_then(Json::as_i64).unwrap_or(0);
             let truncated = response
                 .get("truncated")
                 .and_then(Json::as_bool)
@@ -166,7 +166,7 @@ fn print_response(cmd: &Cmd, response: &Json) {
                 .and_then(Json::as_str)
                 .unwrap_or("?");
             let kind = response.get("kind").and_then(Json::as_str).unwrap_or("?");
-            let len = response.get("length").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+            let len = response.get("length").and_then(Json::as_i64).unwrap_or(0);
             let charset = response
                 .get("charset")
                 .and_then(Json::as_str)
@@ -188,7 +188,7 @@ fn print_response(cmd: &Cmd, response: &Json) {
                 .get("dataType")
                 .and_then(Json::as_str)
                 .unwrap_or("?");
-            let len = response.get("length").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+            let len = response.get("length").and_then(Json::as_i64).unwrap_or(0);
             log::info!("deleted string at {} ({} bytes, {})", addr, len, dt);
         }
     }
@@ -200,7 +200,7 @@ fn print_string_match(s: &Json) {
         .get("representation")
         .and_then(Json::as_str)
         .unwrap_or("?");
-    let len = s.get("length").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+    let len = s.get("length").and_then(Json::as_i64).unwrap_or(0);
     let charset = s.get("charset").and_then(Json::as_str).unwrap_or("?");
     let dt = s.get("dataType").and_then(Json::as_str).unwrap_or("");
     // Result rows are data: stdout, like every other list command (they

@@ -234,7 +234,7 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
 /// Print one entry per line on stdout: folders as `<path>/`, files as
 /// `<path>  <contentType>  v<version>` (with a `[checked-out]` marker), count to stderr.
 fn print_listing(response: &Json) {
-    let count = response.get("count").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+    let count = response.get("count").and_then(Json::as_i64).unwrap_or(0);
     let truncated = response
         .get("truncated")
         .and_then(Json::as_bool)
@@ -257,7 +257,7 @@ fn print_listing(response: &Json) {
                 println!("{}/", path);
             } else {
                 let content_type = f.get("contentType").and_then(Json::as_str).unwrap_or("");
-                let version = f.get("version").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+                let version = f.get("version").and_then(Json::as_i64).unwrap_or(0);
                 let checked_out = f.get("checkedOut").and_then(Json::as_bool).unwrap_or(false);
                 println!(
                     "{}  {}  v{}{}",
@@ -285,8 +285,8 @@ fn print_metadata(response: &Json) {
         .unwrap_or("");
     let version = response
         .get("version")
-        .and_then(Json::as_f64)
-        .unwrap_or(0.0) as i64;
+        .and_then(Json::as_i64)
+        .unwrap_or(0);
     println!("{}\t{}\t{}\t{}", name, path, content_type, version);
     // Detail lines on stdout, in a stable order, so the rest of the output is
     // grep-friendly and predictable.
@@ -318,6 +318,8 @@ fn scalar(value: &Json) -> String {
         s.to_string()
     } else if let Some(b) = value.as_bool() {
         b.to_string()
+    } else if let Some(n) = value.as_i64() {
+        n.to_string()
     } else if let Some(n) = value.as_f64() {
         if n.fract() == 0.0 {
             (n as i64).to_string()
@@ -334,5 +336,5 @@ fn field_bool(response: &Json, key: &str) -> bool {
 }
 
 fn field_int(response: &Json, key: &str) -> i64 {
-    response.get(key).and_then(Json::as_f64).unwrap_or(0.0) as i64
+    response.get(key).and_then(Json::as_i64).unwrap_or(0)
 }

@@ -38,7 +38,7 @@
   <module name="LineLength">
     <property name="max" value="120"/>
     <property name="ignorePattern"
-              value="^.*\b(import|package)\b.*$|^.*\* .*https?://.*$"/>
+              value="^.*\b(import|package)\b.*$|^.*\* .*https?://.*$|^\s*register\(&quot;.*\);$"/>
   </module>
 
   <module name="TreeWalker">

@@ -55,7 +55,7 @@ fn print_xrefs(response: &Json) {
         let a = obj_get(t, "address").and_then(Json::as_str).unwrap_or("?");
         log::info!("target: {} '{}' -> {}", ty, q, a);
     }
-    let count = response.get("count").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+    let count = response.get("count").and_then(Json::as_i64).unwrap_or(0);
     let truncated = response
         .get("truncated")
         .and_then(Json::as_bool)
@@ -81,7 +81,7 @@ fn print_xrefs(response: &Json) {
             let from_fn = r.get("fromFunction").and_then(Json::as_str);
             let from_fn_entry = r.get("fromFunctionEntry").and_then(Json::as_str);
             let ref_type = r.get("refType").and_then(Json::as_str).unwrap_or("?");
-            let op = r.get("opIndex").and_then(Json::as_f64).unwrap_or(-1.0) as i64;
+            let op = r.get("opIndex").and_then(Json::as_i64).unwrap_or(-1);
             let is_ext = r.get("isExternal").and_then(Json::as_bool).unwrap_or(false);
             let is_off = r.get("isOffcut").and_then(Json::as_bool).unwrap_or(false);
             let comp = r
@@ -144,14 +144,53 @@ fn origin(from: &str, from_fn: Option<&str>, entry: Option<&str>) -> String {
     }
 }
 
-/// Byte distance between two hex address strings, if both parse.
-fn hex_delta(a: &str, b: &str) -> Option<i64> {
-    let pa = i64::from_str_radix(a.trim_start_matches("0x"), 16).ok()?;
-    let pb = i64::from_str_radix(b.trim_start_matches("0x"), 16).ok()?;
-    Some(pb - pa)
+/// How far `b` lies above `a`, for two hex address strings.
+///
+/// `None` when either does not parse or `b` is below `a` (a function whose
+/// body has a chunk before its entry point). Unsigned: addresses in the top
+/// half of a 64-bit space do not fit an `i64`, and used to be shown as if
+/// they were the entry itself.
+fn hex_delta(a: &str, b: &str) -> Option<u64> {
+    let parse = |s: &str| {
+        // Ghidra prints non-default spaces as `space:offset`.
+        let offset = s.rsplit(':').next().unwrap_or(s);
+        let digits = offset
+            .strip_prefix("0x")
+            .or_else(|| offset.strip_prefix("0X"))
+            .unwrap_or(offset);
+        u64::from_str_radix(digits, 16).ok()
+    };
+    parse(b)?.checked_sub(parse(a)?)
 }
 
 /// Look up a key in a `&[(String, Json)]` (the shape of `Json::as_object`).
 fn obj_get<'a>(pairs: &'a [(String, Json)], key: &str) -> Option<&'a Json> {
     pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hex_delta_is_unsigned_and_never_negative() {
+        assert_eq!(hex_delta("00401000", "00401010"), Some(0x10));
+        assert_eq!(hex_delta("ram:00401000", "ram:00401004"), Some(4));
+        assert_eq!(
+            hex_delta("ffffffff80000000", "ffffffff80000020"),
+            Some(0x20)
+        );
+        assert_eq!(hex_delta("00401010", "00401000"), None);
+        assert_eq!(hex_delta("zz", "00401000"), None);
+    }
+
+    #[test]
+    fn origin_shows_offset_only_inside_the_function() {
+        assert_eq!(
+            origin("ffffffff80000020", Some("f"), Some("ffffffff80000000")),
+            "ffffffff80000020+0x20 <f>"
+        );
+        assert_eq!(origin("00401000", Some("f"), Some("00401000")), "00401000 <f>");
+        assert_eq!(origin("00400ff0", Some("f"), Some("00401000")), "00400ff0 <f>");
+    }
 }

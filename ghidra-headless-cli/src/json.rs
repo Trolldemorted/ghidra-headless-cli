@@ -3,12 +3,14 @@
 //! Only what the RPC wire protocol needs: compact serialization of requests and
 //! lenient parsing of single-line responses. Object key order is preserved.
 
-/// A JSON value. Numbers are kept as `f64`; the wire protocol only carries
-/// integer counts, which serialize without a fractional part.
+/// A JSON value. Integers that fit an `i64` are kept exactly as `Int` (a
+/// 64-bit enum value or address does not survive a round trip through `f64`,
+/// which is exact only up to 2^53); everything else numeric is `Num`.
 #[derive(Debug, Clone)]
 pub enum Json {
     Null,
     Bool(bool),
+    Int(i64),
     Num(f64),
     Str(String),
     Arr(Vec<Json>),
@@ -29,8 +31,13 @@ impl Json {
         match self {
             Json::Null => out.push_str("null"),
             Json::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+            Json::Int(n) => out.push_str(&n.to_string()),
             Json::Num(n) => {
-                if n.is_finite() && n.fract() == 0.0 {
+                if !n.is_finite() {
+                    // NaN / inf have no JSON spelling; `NaN` would make the
+                    // whole line unparseable.
+                    out.push_str("null");
+                } else if n.fract() == 0.0 && n.abs() < 9.0e15 {
                     out.push_str(&(*n as i64).to_string());
                 } else {
                     out.push_str(&n.to_string());
@@ -86,7 +93,18 @@ impl Json {
 
     pub fn as_f64(&self) -> Option<f64> {
         match self {
+            Json::Int(n) => Some(*n as f64),
             Json::Num(n) => Some(*n),
+            _ => None,
+        }
+    }
+
+    /// The value as an exact integer: an `Int`, or a `Num` with no
+    /// fractional part that an `i64` can hold.
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            Json::Int(n) => Some(*n),
+            Json::Num(n) if n.fract() == 0.0 && n.abs() < 9.0e15 => Some(*n as i64),
             _ => None,
         }
     }
@@ -367,6 +385,11 @@ impl<'a> Parser<'a> {
             }
         }
         let text = std::str::from_utf8(&self.bytes[start..self.pos]).unwrap();
+        // Plain integers stay exact; fractions, exponents and anything too
+        // big for an i64 fall back to f64.
+        if let Ok(n) = text.parse::<i64>() {
+            return Ok(Json::Int(n));
+        }
         text.parse::<f64>()
             .map(Json::Num)
             .map_err(|_| format!("invalid number '{}'", text))
@@ -424,14 +447,14 @@ impl Req {
     /// Optional integer field.
     pub fn opt_int(mut self, key: &str, value: Option<i64>) -> Req {
         if let Some(v) = value {
-            self.0.push((key.to_string(), Json::Num(v as f64)));
+            self.0.push((key.to_string(), Json::Int(v)));
         }
         self
     }
 
     /// Required integer field.
     pub fn int(mut self, key: &str, value: i64) -> Req {
-        self.0.push((key.to_string(), Json::Num(value as f64)));
+        self.0.push((key.to_string(), Json::Int(value)));
         self
     }
 
@@ -494,5 +517,24 @@ mod tests {
     #[test]
     fn trailing_garbage_is_rejected() {
         assert!(Json::parse("{} x").is_err());
+    }
+
+    #[test]
+    fn integers_round_trip_exactly() {
+        for text in ["9223372036854775807", "-9223372036854775808", "9007199254740993", "0", "-1"] {
+            let v = Json::parse(text).unwrap();
+            assert_eq!(v.as_i64().map(|n| n.to_string()).as_deref(), Some(text));
+            assert_eq!(v.to_string(), text);
+        }
+        assert_eq!(Json::parse("1.5").unwrap().as_i64(), None);
+        assert_eq!(Json::parse("2.0").unwrap().as_i64(), Some(2));
+        assert_eq!(Json::parse("1e3").unwrap().as_i64(), Some(1000));
+    }
+
+    #[test]
+    fn non_finite_numbers_encode_as_null() {
+        assert_eq!(Json::Num(f64::NAN).to_string(), "null");
+        assert_eq!(Json::Num(f64::INFINITY).to_string(), "null");
+        assert_eq!(Json::Num(1.5).to_string(), "1.5");
     }
 }

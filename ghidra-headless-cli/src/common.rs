@@ -42,43 +42,86 @@ impl Source {
 /// is exactly one byte. `END <= START` (wire values, before subtraction) is
 /// rejected — use the bare-START form for a one-byte range, or
 /// `START:START+1` for an explicit one-byte range.
+///
+/// An address may carry an address-space prefix (`ram:401000`), so a colon is
+/// not always the range separator; see [`split_range`].
 pub fn address_set(ranges: &[String]) -> Result<Option<Json>, String> {
     if ranges.is_empty() {
         return Ok(None);
     }
     let mut out = Vec::with_capacity(ranges.len());
     for raw in ranges {
-        let mut fields = Vec::new();
-        match raw.split_once(':') {
-            Some((start, end)) => {
-                if start.is_empty() || end.is_empty() {
-                    return Err(format!("invalid range '{}': expected START:END", raw));
-                }
-                // Reject END <= START (hex-decoded). For non-hex literals (no
-                // 0x prefix), skip the check — Ghidra's address factory will
-                // surface a more specific parse error.
-                if let (Ok(s), Ok(e)) = (
-                    u64::from_str_radix(start.trim_start_matches("0x"), 16),
-                    u64::from_str_radix(end.trim_start_matches("0x"), 16),
-                ) && e <= s
-                {
-                    return Err(format!(
-                        "invalid range '{}': END must be strictly greater than START \
-                         (use bare START for a single-byte range, or START:START+1 \
-                          for an explicit one-byte range)",
-                        raw
-                    ));
-                }
-                fields.push(("start".to_string(), Json::Str(start.to_string())));
-                fields.push(("end".to_string(), Json::Str(end.to_string())));
-            }
-            None => {
-                fields.push(("start".to_string(), Json::Str(raw.to_string())));
-            }
+        let (start, end) = split_range(raw)?;
+        // Reject END <= START when both offsets are plain hex. Anything else
+        // is left to Ghidra's address factory, which gives a more specific
+        // parse error.
+        if let Some(end) = &end
+            && let (Some(s), Some(e)) = (hex_offset(&start), hex_offset(end))
+            && e <= s
+        {
+            return Err(format!(
+                "invalid range '{}': END must be strictly greater than START \
+                 (use bare START for a single-byte range, or START:START+1 \
+                  for an explicit one-byte range)",
+                raw
+            ));
+        }
+        let mut fields = vec![("start".to_string(), Json::Str(start))];
+        if let Some(end) = end {
+            fields.push(("end".to_string(), Json::Str(end)));
         }
         out.push(Json::Obj(fields));
     }
     Ok(Some(Json::Arr(out)))
+}
+
+/// Split one `START[:END]` range string into its addresses.
+///
+/// Ghidra addresses may be written `space:offset` (`ram:401000`), so the
+/// colons are told apart by whether the piece before them is a hex number:
+///
+/// | input                   | start        | end          |
+/// |-------------------------|--------------|--------------|
+/// | `401000`                | `401000`     |              |
+/// | `401000:401010`         | `401000`     | `401010`     |
+/// | `ram:401000`            | `ram:401000` |              |
+/// | `ram:401000:401010`     | `ram:401000` | `ram:401010` |
+/// | `ram:401000:ram:401010` | `ram:401000` | `ram:401010` |
+///
+/// (A space whose name is itself a hex number, such as `fe`, cannot be
+/// written this way; the number reading wins.)
+pub fn split_range(raw: &str) -> Result<(String, Option<String>), String> {
+    let bad = || format!("invalid range '{}': expected START or START:END", raw);
+    let parts: Vec<&str> = raw.split(':').collect();
+    if parts.iter().any(|p| p.is_empty()) {
+        return Err(bad());
+    }
+    let is_num = |p: &str| parse_hex(p).is_some();
+    match parts.as_slice() {
+        [a] => Ok((a.to_string(), None)),
+        [a, b] if is_num(a) => Ok((a.to_string(), Some(b.to_string()))),
+        [sp, a] => Ok((format!("{}:{}", sp, a), None)),
+        [sp, a, b] if !is_num(sp) => Ok((format!("{}:{}", sp, a), Some(format!("{}:{}", sp, b)))),
+        [sp, a, sp2, b] if !is_num(sp) && !is_num(sp2) => {
+            Ok((format!("{}:{}", sp, a), Some(format!("{}:{}", sp2, b))))
+        }
+        _ => Err(bad()),
+    }
+}
+
+/// Parse a hex number with an optional `0x` / `0X` prefix.
+fn parse_hex(s: &str) -> Option<u64> {
+    let digits = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .unwrap_or(s);
+    u64::from_str_radix(digits, 16).ok()
+}
+
+/// The numeric offset of an address, ignoring a `space:` prefix; `None` when
+/// it is not plain hex.
+fn hex_offset(addr: &str) -> Option<u64> {
+    parse_hex(addr.rsplit(':').next().unwrap_or(addr))
 }
 
 /// Require that a command targeting an address set received at least one of
@@ -175,4 +218,52 @@ pub fn parameters(params: &[String]) -> Result<Option<Json>, String> {
         out.push(parse_parameter(p)?);
     }
     Ok(Some(Json::Arr(out)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn set(ranges: &[&str]) -> Result<Option<Json>, String> {
+        address_set(&ranges.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn split_range_handles_space_prefixes() {
+        let r = |s: &str| split_range(s).unwrap();
+        assert_eq!(r("401000"), ("401000".to_string(), None));
+        assert_eq!(
+            r("0x401000:0x401010"),
+            ("0x401000".to_string(), Some("0x401010".to_string()))
+        );
+        assert_eq!(r("ram:401000"), ("ram:401000".to_string(), None));
+        assert_eq!(
+            r("ram:401000:401010"),
+            ("ram:401000".to_string(), Some("ram:401010".to_string()))
+        );
+        assert_eq!(
+            r("ram:401000:ram:401010"),
+            ("ram:401000".to_string(), Some("ram:401010".to_string()))
+        );
+        assert!(split_range("401000:").is_err());
+        assert!(split_range(":401000").is_err());
+        assert!(split_range("1:2:3").is_err());
+    }
+
+    #[test]
+    fn address_set_rejects_end_not_after_start() {
+        assert!(set(&["0x401010:0x401000"]).is_err());
+        assert!(set(&["0x401000:0x401000"]).is_err());
+        // The upper-case prefix used to slip past the check.
+        assert!(set(&["0X401010:0X401000"]).is_err());
+        assert!(set(&["ram:401010:ram:401000"]).is_err());
+        assert!(set(&["0x401000:0x401010"]).unwrap().is_some());
+        assert!(set(&[]).unwrap().is_none());
+    }
+
+    #[test]
+    fn address_set_keeps_a_space_prefixed_single_address_whole() {
+        let json = set(&["ram:401000"]).unwrap().unwrap().to_string();
+        assert_eq!(json, r#"[{"start":"ram:401000"}]"#);
+    }
 }

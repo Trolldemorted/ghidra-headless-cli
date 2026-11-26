@@ -32,15 +32,11 @@ public final class DeleteDataTypeHandler implements RpcProcedure {
         if (DataTypeOps.isBuiltIn(ctx, dt)) {
             return RpcResponse.error("Cannot delete built-in type '" + dt.getName() + "'.");
         }
-        // For archive-resolved types we let Ghidra decide: if the type lives
-        // in a real upstream archive (BuiltInTypes, Mapeditor.exe, ...),
-        // dtm.remove() will either no-op or throw — and we surface that as
-        // a clear error pointing at `datatype replace` as the right verb.
-        // We do NOT pre-check isLocalProgramType() because a freshly
-        // replaced type lives in the archive's domain (GUI Replace puts
-        // the new entry in the archive's local copy) and should still be
-        // deletable; only true upstream stubs are immutable.
+        // Types that came from an archive are ordinary, deletable entries of
+        // the program's data type manager; only if Ghidra refuses (the
+        // post-check below) do we point at `datatype replace`.
         final String errorRef = errorRefFor(ctx, dt, path);
+        final ghidra.program.model.data.DataTypePath deletedPath = dt.getDataTypePath();
 
         // Find program-DTM types that depend on `dt` BEFORE the delete —
         // once `dt` is gone its dependents will show `-BAD-` placeholders
@@ -62,13 +58,10 @@ public final class DeleteDataTypeHandler implements RpcProcedure {
         // Post-check: if the type is still there (Ghidra silently no-op'd),
         // the deletion didn't happen. This catches the "archive stub is
         // immutable" case that the GUI handles by disabling the menu item.
-        DataType stillThere = null;
-        try {
-            stillThere = DataTypeOps.requireDataTypeByPath(ctx, path);
-        } catch (IllegalArgumentException ignored) {
-            // Expected: the type is gone.
-        }
-        if (stillThere != null) {
+        // Look the exact type up again. (Not requireDataTypeByPath: its
+        // fallbacks may find some OTHER type and report a successful delete
+        // as a failure.)
+        if (ctx.program().getDataTypeManager().getDataType(deletedPath) != null) {
             return RpcResponse.error(errorRef);
         }
         JsonObject o = new JsonObject();

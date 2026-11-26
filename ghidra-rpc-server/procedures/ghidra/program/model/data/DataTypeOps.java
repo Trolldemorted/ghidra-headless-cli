@@ -76,9 +76,8 @@ public final class DataTypeOps {
      * any type with the same full path wins. The first tier dominates:
      * a literal category path never falls through to the
      * archive-qualified interpretation. The result may be an
-     * archive-resolved stub. Use {@link #isLocalProgramType} before
-     * mutating, and use {@link #archiveName} to surface the source in
-     * error messages.
+     * archive-resolved stub; use {@link #archiveName} to surface the source
+     * in error messages.
      */
     public static DataType requireDataTypeByPath(RpcContext ctx, String path) {
         if (path == null || path.trim().isEmpty()) {
@@ -157,13 +156,8 @@ public final class DataTypeOps {
             if (arc == null) continue;
             for (DataType t : dtm.getDataTypes(arc)) {
                 if (!name.equals(t.getName())) continue;
-                CategoryPath tcp = t.getCategoryPath();
-                if (tcp == null) continue;
-                String tCatPath = tcp.getName();
-                String tFullPath = (tCatPath == null || tCatPath.isEmpty())
-                    ? ("/" + t.getName())
-                    : (tCatPath + "/" + t.getName());
-                if (tFullPath.equals(p)) {
+                String tFullPath = pathOf(t);
+                if (p.equals(tFullPath)) {
                     stubMatch = t;
                     stubMatches++;
                     if (stubMatches > 1) break;
@@ -361,31 +355,6 @@ public final class DataTypeOps {
     }
 
     /**
-     * True when the type is a program-DTM type (user-defined or pulled in
-     * by analysis) — i.e. it has no source archive, or its source archive
-     * is the program's local archive. Archive-resolved stubs (from
-     * upstream archives or built-ins) return false.
-     */
-    static boolean isLocalProgramType(DataType dt) {
-        if (dt == null) return false;
-        SourceArchive arc = dt.getSourceArchive();
-        if (arc == null) return true;
-        // Built-ins (int, char, etc.) are NOT local: they live in the
-        // BUILT_IN_ARCHIVE_UNIVERSAL_ID archive.
-        ghidra.util.UniversalID builtInId =
-            ghidra.program.model.data.DataTypeManager.BUILT_IN_ARCHIVE_UNIVERSAL_ID;
-        if (arc.getSourceArchiveID().equals(builtInId)) {
-            return false;
-        }
-        // The program's local archive is identified by
-        // DataTypeManager.LOCAL_ARCHIVE_UNIVERSAL_ID. A type whose
-        // source archive is anything else is a non-local archive stub.
-        ghidra.util.UniversalID localId =
-            ghidra.program.model.data.DataTypeManager.LOCAL_ARCHIVE_UNIVERSAL_ID;
-        return arc.getSourceArchiveID().equals(localId);
-    }
-
-    /**
      * Render a source archive's display name (or "(program)" for local
      * types, "(built-in)" for the canonical built-in archive). Useful
      * for human-readable error messages.
@@ -407,13 +376,9 @@ public final class DataTypeOps {
      * Full path of a DataType (e.g. "/OpCodes/OpHeaderBytes"), or null if not resolvable.
      */
     private static String pathOf(DataType dt) {
-        if (dt == null) return null;
-        CategoryPath cp = dt.getCategoryPath();
-        String cat = (cp == null) ? "" : cp.getName();
-        if (cat == null || cat.isEmpty() || cat.equals("/")) {
-            return "/" + dt.getName();
-        }
-        return cat + "/" + dt.getName();
+        // CategoryPath.getPath(), not getName(): getName() is only the LEAF
+        // category, which made /A/X/T and /B/X/T indistinguishable.
+        return dt == null || dt.getCategoryPath() == null ? null : DataTypeSerializer.pathOf(dt);
     }
 
     /**
@@ -540,6 +505,9 @@ public final class DataTypeOps {
         return arc.getSourceArchiveID().equals(builtInArc.getSourceArchiveID());
     }
 
+    /** Upper bound on an explicit struct {@code size}: one undefined component per byte. */
+    static final int MAX_STRUCT_SIZE = 0x100000;
+
     /**
      * A type is built-in iff its source archive is the program's
      * {@link DataTypeManager#BUILT_IN_ARCHIVE_UNIVERSAL_ID} archive (the
@@ -553,10 +521,20 @@ public final class DataTypeOps {
      * archive's {@link SourceArchive#getSourceArchiveID} against the manager's
      * BUILT_IN_ARCHIVE_UNIVERSAL_ID — that's the canonical Ghidra discriminator.
      */
-    /** Upper bound on an explicit struct {@code size}: one undefined component per byte. */
-    static final int MAX_STRUCT_SIZE = 0x100000;
-
     static boolean isBuiltIn(RpcContext ctx, DataType dt) {
+        // `int *` / `char[4]` are derived from a built-in and carry no source
+        // archive of their own; deleting one turns every field that uses it
+        // into -BAD-, exactly like deleting the built-in itself would.
+        while (dt instanceof ghidra.program.model.data.Pointer
+                || dt instanceof ghidra.program.model.data.Array) {
+            DataType base = dt instanceof ghidra.program.model.data.Pointer
+                ? ((ghidra.program.model.data.Pointer) dt).getDataType()
+                : ((ghidra.program.model.data.Array) dt).getDataType();
+            if (base == null) {
+                return true; // the generic `pointer`
+            }
+            dt = base;
+        }
         if (dt == null) return false;
         SourceArchive arc = dt.getSourceArchive();
         if (arc == null) return false;
@@ -714,12 +692,12 @@ public final class DataTypeOps {
      */
     private static Integer tryParseOffset(String s) {
         if (s == null || s.length() < 3) return null;
-        if (s.charAt(0) != '0' || (s.charAt(1) != 'x' && s.charAt(1) != 'X')) {
+        if (s.charAt(0) != '0' || s.charAt(1) != 'x' && s.charAt(1) != 'X') {
             return null;
         }
         for (int i = 2; i < s.length(); i++) {
             char c = s.charAt(i);
-            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
+            if (!(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F')) {
                 return null;
             }
         }

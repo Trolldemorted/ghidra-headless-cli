@@ -257,7 +257,7 @@ fn run_list_class(
             .build(),
     )?;
 
-    let count = response.get("count").and_then(Json::as_f64).unwrap_or(0.0) as i64;
+    let count = response.get("count").and_then(Json::as_i64).unwrap_or(0);
     let truncated = response
         .get("truncated")
         .and_then(Json::as_bool)
@@ -305,6 +305,7 @@ fn get_string(response: &Json, key: &str) -> String {
     match response.get(key) {
         Some(Json::Str(s)) => s.clone(),
         Some(Json::Bool(b)) => b.to_string(),
+        Some(Json::Int(n)) => n.to_string(),
         Some(Json::Num(n)) => {
             if n.fract() == 0.0 && n.abs() < 1e15 {
                 format!("{}", *n as i64)

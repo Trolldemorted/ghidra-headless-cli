@@ -86,8 +86,13 @@ pub enum Cmd {
         /// automatic walk does not model; it overrides that walk.
         #[arg(long, value_name = "START[:END]")]
         body: Option<String>,
-        /// Check existing function when auto-detecting [default: false]
-        #[arg(long)]
+        /// When auto-detecting the thunked function, refuse code with side
+        /// effects (e.g. a store to memory) that show it is not a pure thunk.
+        /// Ghidra's own analysis checks this; here it is off unless given
+        ///
+        /// `--check-existing` is the old, misleading name of this flag and
+        /// still works.
+        #[arg(long = "check-side-effects", alias = "check-existing")]
         check_existing: bool,
     },
     /// Create an external function in a library
@@ -464,6 +469,8 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
                     .str("address", address)
                     .opt_str("referencedFunctionAddress", referenced_function_address)
                     .opt_json("body", set)
+                    // Wire name is historical: Ghidra's parameter is
+                    // `checkForSideEffects`.
                     .bool("checkExisting", check_existing)
                     .build(),
             )
@@ -769,7 +776,7 @@ fn print_show_function(response: &Json) {
         } else {
             println!("  parameters:");
             for p in params {
-                let ord = p.get("ordinal").and_then(Json::as_f64).unwrap_or(-1.0) as i64;
+                let ord = p.get("ordinal").and_then(Json::as_i64).unwrap_or(-1);
                 let pname = p.get("name").and_then(Json::as_str).unwrap_or("?");
                 let ptype = p.get("dataType").and_then(Json::as_str).unwrap_or("?");
                 let storage = p.get("storage").and_then(Json::as_str).unwrap_or("?");

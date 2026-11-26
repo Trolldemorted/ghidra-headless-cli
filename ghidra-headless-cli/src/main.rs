@@ -84,12 +84,16 @@ enum Command {
     },
     /// Comment operations (EOL/PRE/POST/PLATE/REPEATABLE/DECOMPILER)
     ///
-    /// The banner above a function in `function decompile` is the PLATE
-    /// comment at that entry — nothing else. `comment decompiler` and
-    /// `comment plate` are the same storage: Ghidra keeps a function's
-    /// comment as the plate comment at its entry, so
-    /// `Function.getComment()` is `getComment(PLATE, entryPoint)` and
-    /// setting either one changes the banner.
+    /// Names follow the GUI's "Comments" menu (Set EOL / Pre / Post / Plate /
+    /// Repeatable Comment).
+    ///
+    /// `comment decompiler` does what "Comments > Set..." (the `;` key) does
+    /// in the GUI's Decompiler window: at a function's entry point it edits
+    /// the Plate Comment (the banner above the function in `function
+    /// decompile`), at any other address inside a function it edits the Pre
+    /// Comment there (printed above the matching statement). It has no
+    /// storage of its own: `comment plate` / `comment pre` at the same
+    /// address read and write the same text.
     ///
     /// `comment repeatable` is a different feature and never renders in a
     /// decompile. It annotates every line that REFERENCES the address in
@@ -148,7 +152,32 @@ enum Command {
     },
 }
 
+/// Exit quietly when stdout goes away (`... | head -1`).
+///
+/// `println!` panics on a write error, which printed a panic message and a
+/// backtrace hint for what is ordinary pipeline use. Rust ignores SIGPIPE,
+/// and restoring the default action instead would also kill the process
+/// without any message when the *server* socket closes mid-request, so the
+/// closed pipe is recognised in the panic hook. 141 is the conventional
+/// status of a process ended by SIGPIPE (128 + 13).
+fn exit_quietly_on_closed_stdout() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let payload = info.payload();
+        let message = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap_or("");
+        if message.starts_with("failed printing to stdout") {
+            std::process::exit(141);
+        }
+        default_hook(info);
+    }));
+}
+
 fn main() {
+    exit_quietly_on_closed_stdout();
     let cli = Cli::parse();
 
     let level = match cli.verbose {

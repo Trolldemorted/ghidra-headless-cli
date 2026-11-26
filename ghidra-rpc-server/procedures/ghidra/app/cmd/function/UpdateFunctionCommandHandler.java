@@ -147,8 +147,7 @@ public final class UpdateFunctionCommandHandler implements RpcProcedure {
             if (base == null || !base.success) {
                 return base;
             }
-        }
-        else {
+        } else {
             // Narrow path: touch only what was passed. Parameters are left
             // exactly as stored. runWrite nests inside the dispatcher
             // transaction and rolls back on throw, so a rejected calling

@@ -78,12 +78,13 @@ public final class GetXrefsHandler implements RpcProcedure {
 
         FunctionManager fm = ctx.program().getFunctionManager();
         ReferenceManager rm = ctx.program().getReferenceManager();
+        Listing listing = ctx.program().getListing();
         List<XrefMatch> refs = new ArrayList<>();
         boolean truncated = false;
         ReferenceIterator it = rm.getReferencesTo(target);
         while (it.hasNext()) {
             ctx.monitor().checkCancelled();
-            addRef(refs, it.next(), fm, includeOffcut, false, null, null);
+            addRef(refs, it.next(), fm, listing, false, null, null);
             if (limit > 0 && refs.size() >= limit) {
                 truncated = true;
                 break;
@@ -106,7 +107,6 @@ public final class GetXrefsHandler implements RpcProcedure {
         // is true only for instances of the OffsetReference class, unrelated
         // to whether a target is interior to a data item.
         if (!truncated && includeOffcut) {
-            Listing listing = ctx.program().getListing();
             CodeUnit cu = listing.getCodeUnitContaining(target);
             if (cu != null && cu.getLength() > 1) {
                 if (cu instanceof Data) {
@@ -127,7 +127,7 @@ public final class GetXrefsHandler implements RpcProcedure {
                         if (dest.equals(target)) continue;
                         ReferenceIterator inner = rm.getReferencesTo(dest);
                         while (inner.hasNext()) {
-                            addRef(refs, inner.next(), fm, includeOffcut, true, dest,
+                            addRef(refs, inner.next(), fm, listing, true, dest,
                                 componentFieldName(cu, dest));
                             if (limit > 0 && refs.size() >= limit) {
                                 truncated = true;
@@ -146,15 +146,8 @@ public final class GetXrefsHandler implements RpcProcedure {
     }
 
     private static void addRef(List<XrefMatch> out, Reference ref, FunctionManager fm,
-            boolean includeOffcut, boolean compositeMatch, Address component,
+            Listing listing, boolean compositeMatch, Address component,
             String componentField) {
-        // `includeOffcut` is about the reference's FROM address (a ref whose
-        // source is mid-instruction). It is deliberately independent of the
-        // composite walk below, which is about where the target lands.
-        // (This used to drop ref.isOffsetReference() rows when includeOffcut
-        // was false. An OffsetReference is a base+offset reference — common
-        // from relocations — and says nothing about offcut-ness, so exact
-        // xrefs went missing.)
         Address from = ref.getFromAddress();
         Function fromFn = fm.getFunctionContaining(from);
         out.add(new XrefMatch(
@@ -164,11 +157,26 @@ public final class GetXrefsHandler implements RpcProcedure {
             ref.getReferenceType().getName(),
             ref.getOperandIndex(),
             ref.isExternalReference(),
-            ref.isOffsetReference(),
+            isOffcut(ref, listing),
             compositeMatch,
             component == null ? null : component.toString(),
             componentField
         ));
+    }
+
+    /**
+     * True when the reference lands inside a code unit rather than on its
+     * first byte, which is what Ghidra calls an offcut reference (the GUI
+     * marks such labels {@code LAB_...+n}). Not to be confused with
+     * {@link Reference#isOffsetReference()}, a base+offset reference.
+     */
+    private static boolean isOffcut(Reference ref, Listing listing) {
+        Address to = ref.getToAddress();
+        if (to == null || !to.isMemoryAddress()) {
+            return false;
+        }
+        CodeUnit cu = listing.getCodeUnitContaining(to);
+        return cu != null && !cu.getMinAddress().equals(to);
     }
 
     /**

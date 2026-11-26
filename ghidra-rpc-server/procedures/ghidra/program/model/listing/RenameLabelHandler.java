@@ -52,7 +52,8 @@ public final class RenameLabelHandler implements RpcProcedure {
         LabelLookup lookup = LabelLookup.byName(ctx, name, addr);
         if (lookup.match == null) {
             if (lookup.candidates != null && !lookup.candidates.isEmpty()) {
-                StringBuilder sb = new StringBuilder("Multiple labels match '" + name + "'; pass --address to disambiguate:");
+                StringBuilder sb = new StringBuilder("Multiple labels match '" + name
+                    + "'; pass --address to disambiguate:");
                 for (Symbol s : lookup.candidates) {
                     sb.append("\n  ").append(LabelLookup.formatSymbol(s));
                 }

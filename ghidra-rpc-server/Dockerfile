@@ -35,6 +35,10 @@ ENTRYPOINT ["/opt/ghidra/server/ghidraSvr","console"]
 FROM ghidra AS ghidra-rpc
 ARG GHIDRA_VERSION
 COPY . /opt/ghidra-rpc
+# The script host compiles these sources only when the server starts. Compile
+# them now so an API mismatch with this Ghidra fails the build, not the
+# deployment.
+RUN GHIDRA_HOME=/opt/ghidra /opt/ghidra-rpc/tools/compile-check.sh
 ENV GHIDRA_INSTALL=/opt/ghidra \
     GHIDRA_SCRIPTPATH=/opt/ghidra-rpc \
     GHIDRA_SCRIPT=RpcServer.java \

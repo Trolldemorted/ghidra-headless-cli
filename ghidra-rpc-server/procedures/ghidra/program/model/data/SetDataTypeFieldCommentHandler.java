@@ -54,7 +54,8 @@ public final class SetDataTypeFieldCommentHandler implements RpcProcedure {
             // caller at `datatype show --path /X` to discover the
             // underlying struct's path.
             String hint = (target instanceof ghidra.program.model.data.TypeDef)
-                ? " Use `datatype show --path /" + target.getName() + "` to discover the underlying struct's path, then call set-field-comment on that path."
+                ? " Use `datatype show --path /" + target.getName()
+                    + "` to discover the underlying struct's path, then call set-field-comment on that path."
                 : "";
             return RpcResponse.error("Field comments are only supported on struct/union types; '"
                 + path + "' is a " + target.getClass().getSimpleName() + "." + hint);
@@ -73,12 +74,27 @@ public final class SetDataTypeFieldCommentHandler implements RpcProcedure {
         String fieldName = composite.getComponent(index).getFieldName();
         String previous = composite.getComponent(index).getComment();
 
+        // Undefined filler bytes of an unpacked struct have no record to
+        // hold a comment; Ghidra's setComment silently does nothing there.
+        if (composite.getComponent(index).isUndefined() && !comment.isEmpty()) {
+            return RpcResponse.error("Offset 0x"
+                + Integer.toHexString(composite.getComponent(index).getOffset()) + " of '" + path
+                + "' is undefined filler, not a field, and cannot hold a comment. Give it a "
+                + "type first (`datatype set-field-type`).");
+        }
+
         final String[] applied = {null};
         ctx.runWrite("SetDataTypeFieldComment", () -> {
             DataTypeComponent comp = composite.getComponent(index);
             comp.setComment(comment);
-            applied[0] = comp.getComment();
+            // Re-read from the composite: the response must show what is
+            // stored, not what was asked for.
+            applied[0] = composite.getComponent(index).getComment();
         });
+        if (!comment.isEmpty() && (applied[0] == null || applied[0].isEmpty())) {
+            return RpcResponse.error("Ghidra did not store the comment for field '" + fieldName
+                + "' of '" + path + "'.");
+        }
 
         return new FieldCommentResponse(path, fieldName, applied[0], previous);
     }

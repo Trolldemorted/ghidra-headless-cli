@@ -6,9 +6,11 @@ import java.util.List;
 import procedures.RpcContext;
 
 import ghidra.app.util.NamespaceUtils;
+import ghidra.program.model.listing.Function;
 import ghidra.program.model.symbol.Namespace;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolTable;
+import ghidra.program.model.symbol.SymbolType;
 
 /**
  * Shared namespace resolver used by the Namespace* and
@@ -30,10 +32,10 @@ import ghidra.program.model.symbol.SymbolTable;
  * missing match visible to the caller instead of operating on the wrong
  * namespace.
  *
- * <p>Package-private by design: only the Namespace* and
- * FunctionSetClassAssociation handlers in this package use it.
+ * <p>Used by the Namespace* and FunctionSetClassAssociation handlers, and by
+ * {@code CreateLabel} for its optional {@code namespace}.
  */
-final class NamespaceResolve {
+public final class NamespaceResolve {
 
     /** Cap on the number of "did you mean" candidates surfaced. */
     private static final int MAX_CANDIDATES = 5;
@@ -56,7 +58,7 @@ final class NamespaceResolve {
      * {@code NamespaceCreateClass}'s {@code parent} argument) leave it
      * {@code false} because there's no class-creation contract to suggest.
      */
-    static Namespace resolve(RpcContext ctx, String path, boolean verbIsClass) {
+    public static Namespace resolve(RpcContext ctx, String path, boolean verbIsClass) {
         Namespace root = ctx.program().getGlobalNamespace();
         // Short-circuit the global namespace: NamespaceUtils.getNamespaceByPath
         // can't resolve "/" because SymbolPath("/") is non-empty.
@@ -74,7 +76,12 @@ final class NamespaceResolve {
         // well-intentioned request resolves.)
         String lookupPath = path.startsWith("/") ? path.substring(1) : path;
         lookupPath = lookupPath.replace("/", "::");
-        List<Namespace> matches = NamespaceUtils.getNamespaceByPath(ctx.program(), root, lookupPath);
+        List<Namespace> matches = new ArrayList<>(
+            NamespaceUtils.getNamespaceByPath(ctx.program(), root, lookupPath));
+        // A Function is a Namespace too (for its locals), so a function named
+        // like the class used to make '/Foo' "ambiguous" with itself, and a
+        // function could be handed to verbs that expect a class or namespace.
+        matches.removeIf(ns -> ns instanceof Function);
         if (matches.size() == 1) {
             return matches.get(0);
         }
@@ -104,6 +111,13 @@ final class NamespaceResolve {
             if (out.size() >= limit) {
                 return;
             }
+            // Only real containers: descending into every function would walk
+            // the whole symbol table for a typo in a read-only request.
+            SymbolType type = sym.getSymbolType();
+            if (type != SymbolType.CLASS && type != SymbolType.NAMESPACE
+                    && type != SymbolType.LIBRARY) {
+                continue;
+            }
             Object obj = sym.getObject();
             if (!(obj instanceof Namespace)) {
                 continue;
@@ -125,7 +139,7 @@ final class NamespaceResolve {
      * parent chain because {@code Namespace.getName(true)} returns
      * {@code "::"}-delimited paths that would surprise users.
      */
-    private static String slashPath(Namespace ns) {
+    public static String slashPath(Namespace ns) {
         if (ns.getParentNamespace() == null) {
             return "/";
         }

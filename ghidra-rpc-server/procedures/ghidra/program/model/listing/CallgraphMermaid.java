@@ -1,8 +1,11 @@
 package procedures.ghidra.program.model.listing;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Renders a {@link CallgraphWalker.Result} as a Mermaid {@code flowchart}.
@@ -21,54 +24,45 @@ final class CallgraphMermaid {
         sb.append(header).append('\n');
 
         // Preserve the BFS-discovery order so the Mermaid source is stable
-        // (and so parents naturally appear before their children).
-        Map<String, String> idByName = new LinkedHashMap<>();
+        // (and so parents naturally appear before their children). Nodes are
+        // identified by address: two functions may share a name. The id is
+        // the readable name where that is unique, name + address otherwise.
+        Map<String, String> idByAddress = new LinkedHashMap<>();
+        Set<String> usedIds = new HashSet<>();
         for (CallgraphNode n : nodes) {
-            idByName.putIfAbsent(n.name, sanitizeId(n.name));
-        }
-        for (Map.Entry<String, String> e : idByName.entrySet()) {
-            CallgraphNode node = findNode(nodes, e.getKey());
-            String label = node.isExternal ? e.getKey() : (e.getKey() + " @" + node.address);
-            sb.append("  ").append(e.getValue()).append("[\"").append(escapeLabel(label)).append("\"]\n");
+            if (idByAddress.containsKey(n.address)) {
+                continue;
+            }
+            String id = sanitizeId(n.name);
+            if (!usedIds.add(id)) {
+                id = sanitizeId(n.name + "_" + n.address);
+                usedIds.add(id);
+            }
+            idByAddress.put(n.address, id);
+            String label = n.isExternal ? n.name : (n.name + " @" + n.address);
+            sb.append("  ").append(id).append("[\"").append(escapeLabel(label)).append("\"]\n");
         }
         for (CallgraphEdge edge : edges) {
-            String fromId = idByName.get(edge.from);
-            String toId = idByName.get(edge.to);
+            String fromId = idByAddress.get(edge.fromAddress);
+            String toId = idByAddress.get(edge.toAddress);
             if (fromId == null || toId == null) {
                 continue;
             }
             sb.append("  ").append(fromId).append(" --> ").append(toId).append('\n');
         }
-        // ClassDef for external / leaf-style nodes.
-        boolean anyExternal = false;
+        // ClassDef for external / leaf-style nodes. Mermaid syntax is
+        // `class id1,id2 className` (one class name after the whole list).
+        List<String> external = new ArrayList<>();
         for (CallgraphNode n : nodes) {
             if (n.isExternal) {
-                anyExternal = true;
-                break;
+                external.add(idByAddress.get(n.address));
             }
         }
-        if (anyExternal) {
+        if (!external.isEmpty()) {
             sb.append("  classDef leaf fill:#fef,stroke:#333\n");
-            sb.append("  class ");
-            boolean first = true;
-            for (CallgraphNode n : nodes) {
-                if (!n.isExternal) continue;
-                if (!first) sb.append(',');
-                sb.append(idByName.get(n.name)).append(" leaf");
-                first = false;
-            }
-            sb.append('\n');
+            sb.append("  class ").append(String.join(",", external)).append(" leaf\n");
         }
         return sb.toString();
-    }
-
-    private static CallgraphNode findNode(List<CallgraphNode> nodes, String name) {
-        for (CallgraphNode n : nodes) {
-            if (n.name.equals(name)) {
-                return n;
-            }
-        }
-        return null;
     }
 
     private static String sanitizeId(String name) {
@@ -79,15 +73,33 @@ final class CallgraphMermaid {
         sb.append("n_");
         for (int i = 0; i < name.length(); i++) {
             char c = name.charAt(i);
-            sb.append((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_'
+            sb.append(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_'
                 ? c : '_');
         }
         return sb.toString();
     }
 
     private static String escapeLabel(String label) {
-        // Mermaid labels live between [" ... "] — escape the two terminators
-        // we care about: " and \n.
-        return label.replace("\"", "&quot;").replace("\n", "<br/>");
+        // Labels live between [" ... "] and are rendered as HTML, so a
+        // demangled name like `operator<<` or `vector<int>` needs escaping,
+        // not just the quote that would end the label.
+        StringBuilder sb = new StringBuilder(label.length() + 8);
+        for (int i = 0; i < label.length(); i++) {
+            char c = label.charAt(i);
+            if (c == '&') {
+                sb.append("&amp;");
+            } else if (c == '<') {
+                sb.append("&lt;");
+            } else if (c == '>') {
+                sb.append("&gt;");
+            } else if (c == '"') {
+                sb.append("&quot;");
+            } else if (c == '\n') {
+                sb.append("<br/>");
+            } else {
+                sb.append(c < 0x20 ? ' ' : c);
+            }
+        }
+        return sb.toString();
     }
 }
