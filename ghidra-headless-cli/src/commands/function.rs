@@ -751,15 +751,15 @@ fn print_show_function(response: &Json) {
     if let Some(s) = response.get("stackFrameSize").and_then(Json::as_f64) {
         println!("  stack frame size:   {}", s as i64);
     }
-    if let Some(b) = response.get("hasVarArgs").and_then(Json::as_bool) {
-        if b {
-            println!("  var-args:           yes");
-        }
+    if let Some(b) = response.get("hasVarArgs").and_then(Json::as_bool)
+        && b
+    {
+        println!("  var-args:           yes");
     }
-    if let Some(b) = response.get("noReturn").and_then(Json::as_bool) {
-        if b {
-            println!("  no-return:          yes");
-        }
+    if let Some(b) = response.get("noReturn").and_then(Json::as_bool)
+        && b
+    {
+        println!("  no-return:          yes");
     }
     // Presence, not the text: the decompiler render does not include plate
     // or repeatable comments, so this line is the only way to tell a

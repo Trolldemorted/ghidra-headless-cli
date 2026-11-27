@@ -21,7 +21,9 @@ import procedures.RpcResponse;
  * <p>Request: {@code { file: "<project path>", keep: <int> }}. Both fields
  * are mandatory; the server does NOT default {@code keep} (per policy "default
  * values defined in the client; server requires explicit values") so a missing
- * {@code keep} becomes a clear error. Caller must additionally carry an
+ * {@code keep} becomes a clear error. {@code keep} must be at least 1: removing
+ * every version removes the file, which is {@code DeleteFile}'s job (it also
+ * releases this server's checkout and cached program first). Caller must additionally carry an
  * {@code adminPassword} field matching the server's {@code GHIDRA_RPC_ADMIN_PASSWORD}
  * — see {@link #requiresAdmin()}.
  *
@@ -55,8 +57,9 @@ public final class PurgeVersionsHandler implements RpcProcedure {
     public RpcResponse execute(JsonObject req, RpcContext ctx) throws Exception {
         String path = RpcContext.reqStr(req, "file");
         int keep = RpcContext.reqInt(req, "keep");
-        if (keep < 0) {
-            return RpcResponse.error("'keep' must be >= 0 (got " + keep + ").");
+        if (keep < 1) {
+            return RpcResponse.error("'keep' must be at least 1 (got " + keep + "); to remove "
+                + "the file with all its versions use DeleteFile (`file delete`).");
         }
 
         DomainFile df = ctx.requireDomainFile(path);
@@ -106,16 +109,6 @@ public final class PurgeVersionsHandler implements RpcProcedure {
         int deleted = 0;
         int oldestDeleted = -1;
         int latestDeleted = -1;
-        // "lastVersionDeleted" reports whether the loop's final deleteItem
-        // call removed the last remaining version (i.e., the user requested
-        // keep=0 and the call succeeded). In that case Ghidra's
-        // LocalFolderItem.delete takes the minVersion==currentVersion branch
-        // and calls deleteContent(), which removes the file from the
-        // filesystem. The flag is informational — the repository's getVersions
-        // afterward is the canonical truth (it throws FileNotFoundException
-        // when the file is fully gone; an unversioned single-version file
-        // returns an empty Version[]).
-        boolean lastVersionDeleted = false;
         while (true) {
             Version[] current = repo.getVersions(parentPath, itemName);
             if (current.length <= keep) {
@@ -157,14 +150,6 @@ public final class PurgeVersionsHandler implements RpcProcedure {
                 oldestDeleted = targetVersion;
             }
             latestDeleted = targetVersion;
-            if (current.length - 1 == 0) {
-                // Last version removed; the next loop iteration's getVersions
-                // would either throw (file fully gone) or return [] (file
-                // demoted to a single unversioned version — also acceptable
-                // since the user asked for keep=0). Break out either way.
-                lastVersionDeleted = true;
-                break;
-            }
         }
 
         Version[] after;
@@ -174,13 +159,8 @@ public final class PurgeVersionsHandler implements RpcProcedure {
             // Repo unreachable after the deletes? report what we know.
             after = new Version[0];
         }
-        if (lastVersionDeleted) {
-            // The file is gone from the server; drop our cached Program so later
-            // requests fail with "no file" instead of editing a ghost.
-            ctx.forgetProgram(fullPath);
-        }
         return new PurgeVersionsResponse(path, before.length, after.length, deleted,
-            oldestDeleted, latestDeleted, lastVersionDeleted, isAdmin);
+            oldestDeleted, latestDeleted, isAdmin);
     }
 
     @Override
@@ -208,14 +188,11 @@ public final class PurgeVersionsHandler implements RpcProcedure {
         final int oldestDeletedVersion;
         /** Version number of the last (most recent) revision removed; -1 if none. */
         final int latestDeletedVersion;
-        /** True iff purge removed the last remaining version (the file itself is gone). */
-        final boolean fileDeleted;
         /** True iff the calling Ghidra user is a repository admin. */
         final boolean isAdmin;
 
         PurgeVersionsResponse(String file, int before, int after, int deleted,
-                int oldestDeletedVersion, int latestDeletedVersion,
-                boolean fileDeleted, boolean isAdmin) {
+                int oldestDeletedVersion, int latestDeletedVersion, boolean isAdmin) {
             this.success = true;
             this.file = file;
             this.before = before;
@@ -223,7 +200,6 @@ public final class PurgeVersionsHandler implements RpcProcedure {
             this.deleted = deleted;
             this.oldestDeletedVersion = oldestDeletedVersion;
             this.latestDeletedVersion = latestDeletedVersion;
-            this.fileDeleted = fileDeleted;
             this.isAdmin = isAdmin;
         }
     }

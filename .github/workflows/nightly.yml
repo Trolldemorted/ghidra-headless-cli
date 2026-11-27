@@ -33,6 +33,25 @@ jobs:
           cd ghidra-headless-cli
           cargo test
 
+      # End-to-end tests (tests/e2e/README.md), driven through the CLI: a real
+      # RPC server on a throwaway local project, then one launched through
+      # ghidra-headless.sh against a throwaway Ghidra Server (started from the
+      # same download, on 127.0.0.1). Uses the Ghidra release the Dockerfile
+      # pins.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: End-to-end tests
+        run: |
+          ver=$(sed -n 's/^ARG GHIDRA_VERSION=//p' ghidra-rpc-server/Dockerfile)
+          date=$(sed -n 's/^ARG GHIDRA_DATE=//p' ghidra-rpc-server/Dockerfile)
+          curl -fsSL -o /tmp/ghidra.zip \
+            "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${ver}_build/ghidra_${ver}_PUBLIC_${date}.zip"
+          unzip -q /tmp/ghidra.zip -d /tmp
+          GHIDRA_HOME="/tmp/ghidra_${ver}_PUBLIC" tests/e2e/run.sh
+
       - name: Push image to GitHub Container Registry
         run: |
           cd ghidra-rpc-server

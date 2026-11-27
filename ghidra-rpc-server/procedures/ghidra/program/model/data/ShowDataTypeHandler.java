@@ -31,7 +31,7 @@ import procedures.RpcResponse;
  * </ul>
  *
  * <p>The {@code --name} form was added 2026-06-23 to mirror the
- * {@code --name} flag on {@code datatype create} / {@code datatype replace`
+ * {@code --name} flag on {@code datatype create} / {@code datatype replace}
  * (consistency: all three subcommands accept the same identifier shape).
  *
  * <p>{@code with_deps} (boolean, default {@code false}, added 2026-06-23):

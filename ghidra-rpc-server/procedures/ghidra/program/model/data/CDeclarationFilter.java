@@ -114,22 +114,22 @@ public final class CDeclarationFilter {
      *       for).</li>
      *   <li>Other types' bodies (dependencies the writer inlined ahead
      *       of ours) are stepped over via brace tracking — NOT emitted.</li>
-     *   <li>The requested body is captured from its {@code struct Foo {`
-     *       header until the matching {@code };} (depth back to 0).</li>
+     *   <li>The requested body is captured from its <code>struct Foo &#123;</code>
+     *       header until the matching <code>&#125;;</code> (depth back to 0).</li>
      * </ul>
      *
      * <p>History note on the body header regex: {@code DataTypeWriter}
-     * writes the body header as {@code "struct " + name + " {"} and
+     * writes the body header as <code>"struct " + name + " &#123;"</code> and
      * APPENDS the composite's GUI description as an inline comment
      * before the EOL — i.e. a struct with a description comes out as
-     * {@code struct NAME { /* description *&#47;}. An earlier version of
-     * this filter anchored {@code \{\s*$} (whitespace-only between
-     * {@code \{} and end-of-line), so it missed any struct carrying a
+     * <code>struct NAME &#123; /* description *&#47;</code>. An earlier version of
+     * this filter anchored <code>\&#123;\s*$</code> (whitespace-only between
+     * <code>\&#123;</code> and end-of-line), so it missed any struct carrying a
      * description. That triggered bug #15 (2026-07-20): the "large
      * aggregates" audit couldn't render {@code GameWorld},
      * {@code Town}, the screen classes — exactly the structs that
      * tend to have descriptions set. The fix loosens the anchor to
-     * "starts with {@code <kind> <NAME> \{}" and lets brace tracking
+     * "starts with <code>&lt;kind&gt; &lt;NAME&gt; \&#123;</code>" and lets brace tracking
      * find the matching close; a one-line body (no description, no
      * fields) still works because depth returns to 0 on the same line.
      */

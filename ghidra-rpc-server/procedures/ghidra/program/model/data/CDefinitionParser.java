@@ -123,7 +123,7 @@ final class CDefinitionParser {
 
     /**
      * Detect "anonymous definition" form: leading {@code struct}, {@code union},
-     * or {@code enum} keyword followed (after optional whitespace) by {@code {}
+     * or {@code enum} keyword followed (after optional whitespace) by <code>&#123;</code>
      * or {@code ;}. We reject this form outright because Ghidra's {@code CParser}
      * handles anonymous types inconsistently — sometimes returning the last
      * field's type, sometimes auto-naming to {@code enum_1} — neither of which

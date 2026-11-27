@@ -626,7 +626,7 @@ public final class DataTypeOps {
             if (composite instanceof ghidra.program.model.data.Union) {
                 throw new IllegalArgumentException(
                     "@offset form is not supported on unions (all components share "
-                  + "offset 0); use the field name or numeric index instead.");
+                    + "offset 0); use the field name or numeric index instead.");
             }
             Integer offset = tryParseOffset(field.substring(1));
             if (offset == null) {

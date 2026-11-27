@@ -80,8 +80,9 @@ pub enum Cmd {
         /// Target file project path (e.g. /foo.exe)
         #[arg(long)]
         file: String,
-        /// Number of most-recent versions to keep; 0 deletes the file entirely [default: 1]
-        #[arg(long, default_value_t = 1)]
+        /// Number of most-recent versions to keep, at least 1 [default: 1]. To
+        /// remove a file with all its versions use `file delete`
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
         keep: u32,
         /// Admin password (must match the server's GHIDRA_RPC_ADMIN_PASSWORD).
         /// Prefer exporting $GHIDRA_RPC_ADMIN_PASSWORD instead: a flag value is
@@ -217,14 +218,12 @@ pub fn run(cmd: Cmd, client: &Client) -> Result<(), ()> {
             let before = field_int(&response, "before");
             let after = field_int(&response, "after");
             let deleted = field_int(&response, "deleted");
-            let file_deleted = field_bool(&response, "fileDeleted");
             log::info!(
-                "purged {} version(s) of {} ({} -> {} version(s){})",
+                "purged {} version(s) of {} ({} -> {} version(s))",
                 deleted,
                 file,
                 before,
-                after,
-                if file_deleted { ", file removed" } else { "" }
+                after
             );
             Ok(())
         }

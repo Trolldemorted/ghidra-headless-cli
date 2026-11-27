@@ -1556,13 +1556,13 @@ fn print_show_full(
     // it instead of erroring. `--json` still works for callers
     // that want the structured view.
     let c = response.get("c").and_then(Json::as_str);
-    if let Some(s) = c {
-        if !s.is_empty() {
-            for line in s.lines() {
-                println!("{}", line);
-            }
-            return Ok(());
+    if let Some(s) = c
+        && !s.is_empty()
+    {
+        for line in s.lines() {
+            println!("{}", line);
         }
+        return Ok(());
     }
     if kind == "functiondef" {
         let signature = response

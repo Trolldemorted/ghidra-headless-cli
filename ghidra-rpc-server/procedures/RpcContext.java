@@ -575,162 +575,127 @@ public class RpcContext {
     public RpcContext(Project project, TaskMonitor monitor) {
         this.project = project;
         this.monitor = monitor;
-        // Auto-reconnect support (added 2026-08-10): wire a
-        // RemoteAdapterListener on the project's repository so we know the
-        // wall-clock time of the most recent Ghidra Server disconnect. The
-        // resolver checks this timestamp on a miss and forces a reconnect
-        // + retry once. Local (non-shared) projects have no repository —
-        // getRepository() returns null in that case and the listener is
-        // skipped. The listener is also a no-op when the project is
-        // already-disconnected at startup (the timestamp just stays at 0).
-        try {
-            RepositoryAdapter repo = (project == null) ? null : project.getRepository();
-            if (repo != null) {
-                repo.addListener(new RemoteAdapterListener() {
-                    @Override
-                    public void connectionStateChanged(Object state) {
-                        // Ghidra's listener fires on both transitions;
-                        // we update the timestamps for both (the
-                        // reconnect side updates recentDisconnect(), the
-                        // disconnect side updates recentSevereCheckoutIssue-
-                        // free recovery path). The "Disconnected from
-                        // repository" log we observe on the WARN line is
-                        // from this very listener.
-                        lastDisconnectMs = System.currentTimeMillis();
-                        // The in-memory project folder tree is
-                        // event-driven (RepositoryChangeDispatcher polls
-                        // the Server for change events and feeds a
-                        // FileSystemListener). On a disconnect the
-                        // dispatcher thread stops; on reconnect
-                        // RepositoryAdapter.recoverConnection restarts
-                        // it, but if the Server was restarted in between,
-                        // the per-client event counter is gone and the
-                        // dispatcher only sees events from after the
-                        // reconnect. Any file/folder added during the
-                        // disconnect window is now invisible to
-                        // getFolder/getFiles. Mark the tree as needing
-                        // refresh; the next resolveFile / file-list call
-                        // re-syncs via ProjectData.refresh(true).
-                        treeRefreshPending = true;
-                        // Drive the JVM-exit recovery path. Pre-fix:
-                        // the listener logged timestamps and left the
-                        // JVM serving SEVERE-error responses forever
-                        // (observed 2026-09-17: Server's RMI socket
-                        // died 09:46, JVM stayed up with isConnected()
-                        // == false until 15:28 and beyond; every RPC
-                        // returned "SEVERE server issue: project
-                        // repository reports disconnected" with no
-                        // orchestrator restart). The per-RMI-call catch
-                        // sites (noteConnectionLost at the checkout
-                        // helpers, openProgram, checkin, etc.) only fire
-                        // when an RPC throws — they don't help when the
-                        // disconnect happens while the JVM is idle.
-                        // The handler chain we're kicking off:
-                        //   1. Defer 500ms to let Ghidra's auto-
-                        //      recoverConnection land (it doesn't
-                        //      always fire for Service-side restarts —
-                        //      verified by inspection of Ghidra
-                        //      12.1.2's RepositoryAdapter; the
-                        //      keepalive ping returns false but the
-                        //      socket itself doesn't always re-establish
-                        //      on its own).
-                        //   2. Check repo.isConnected() — if the socket
-                        //      came back, do nothing.
-                        //   3. Otherwise call tryReconnect(): a forced
-                        //      repo.connect() may succeed where the
-                        //      auto-reconnect failed.
-                        //   4. If the forced reconnect also fails,
-                        //      fire onConnectionLost directly. Bypass
-                        //      CONNECTION_LOST_THRESHOLD — this isn't a
-                        //      noisy RMI-call catch, it's the underlying
-                        //      connection-state listener confirming the
-                        //      socket is gone and our one-shot recover
-                        //      couldn't bring it back. The handler
-                        //      closes ServerSocket and schedules
-                        //      System.exit(0) after a 2s grace.
-                        // The whole sequence runs on a daemon thread so
-                        // Ghidra's listener pump isn't blocked on a
-                        // repo.connect() that may take seconds on a
-                        // dead RMI socket.
-                        Thread recovery = new Thread(() -> {
-                            try {
-                                Thread.sleep(500);
-                            } catch (InterruptedException ie) {
-                                Thread.currentThread().interrupt();
-                                return;
-                            }
-                            boolean stillDown;
-                            try {
-                                RepositoryAdapter r = project.getRepository();
-                                stillDown = r != null && !r.isConnected();
-                            } catch (Exception e) {
-                                // Defensive: if the getter itself
-                                // throws (adapter in a half-torn-down
-                                // state), treat it as down so we attempt
-                                // recovery rather than staying silent.
-                                stillDown = true;
-                            }
-                            if (!stillDown) {
-                                return; // auto-reconnect already landed
-                            }
-                            if (tryReconnect()) {
-                                Msg.info(this,
-                                    "Listener-driven forced reconnect "
-                                    + "succeeded after disconnect");
-                                return;
-                            }
-                            Msg.error(this,
-                                "Ghidra Server RMI socket down and forced "
-                                + "reconnect failed; firing onConnectionLost "
-                                + "so the JVM exits and the orchestrator "
-                                + "restarts with a fresh connection.");
-                            Runnable h = onConnectionLost;
-                            if (h != null) {
-                                try {
-                                    h.run();
-                                } catch (Exception handlerEx) {
-                                    Msg.error(this,
-                                        "onConnectionLost handler threw",
-                                        handlerEx);
-                                }
-                            }
-                            // Belt-and-suspenders: if the handler was
-                            // unregistered or threw before scheduling
-                            // exit, force-exit now. The orchestrator
-                            // restart is the only path back to a
-                            // healthy state from here. Exit code 70
-                            // matches the stuck-dispatch watchdog below
-                            // (line ~440) and the connection-lost exit
-                            // timer in RpcServer: signals "forced
-                            // recovery, please restart" — docker
-                            // --restart=unless-stopped restarts on any
-                            // code; --restart=on-failure needs non-zero.
-                            Thread forceExit = new Thread(() -> {
-                                try {
-                                    Thread.sleep(2_000);
-                                } catch (InterruptedException ie) {
-                                    Thread.currentThread().interrupt();
-                                }
-                                Msg.error(this,
-                                    "Forcing JVM exit after disconnect "
-                                    + "recovery (onConnectionLost did not "
-                                    + "schedule exit)");
-                                System.exit(70);
-                            }, "rpc-disconnect-listener-force-exit");
-                            forceExit.setDaemon(true);
-                            forceExit.start();
-                        }, "rpc-disconnect-listener-recovery");
-                        recovery.setDaemon(true);
-                        recovery.start();
-                    }
-                });
-            }
-        } catch (Exception ignored) {
-            // Listener registration is best-effort; if it fails (e.g. a
-            // Ghidra version that doesn't expose addListener), the
-            // resolver still retries on noteConnectionLost-driven
-            // timestamps, which is the legacy path.
+        // Watch the project's repository connection (see
+        // repositoryConnectionStateChanged). Local (non-shared) projects
+        // have no repository and are not watched. RepositoryAdapter keeps
+        // its listeners in a WeakSet, so the listener must stay strongly
+        // reachable from this context (the repositoryListener field):
+        // registered as an anonymous object, it was collected right after
+        // startup and never fired.
+        RepositoryAdapter repo = (project == null) ? null : project.getRepository();
+        if (repo != null) {
+            repo.addListener(repositoryListener);
         }
+    }
+
+    /**
+     * The repository connection listener. A field, not an anonymous object
+     * handed to {@link RepositoryAdapter#addListener}: Ghidra holds listeners
+     * weakly, and this reference is what keeps the listener alive.
+     */
+    private final RemoteAdapterListener repositoryListener = this::repositoryConnectionStateChanged;
+
+    /**
+     * Set once the process is on its way down (SIGTERM shutdown hook,
+     * connection-lost exit, {@link #closeAll}). Shutting down disconnects the
+     * repository, which fires {@link #repositoryConnectionStateChanged}; that
+     * disconnect is expected and must not start the connection-lost recovery
+     * (which would try to reconnect and request exit code 70). Volatile:
+     * written by the shutdown/exit threads, read by the listener threads.
+     */
+    private volatile boolean shuttingDown;
+
+    /** Mark the process as shutting down; see {@link #shuttingDown}. Idempotent. */
+    public void beginShutdown() {
+        shuttingDown = true;
+    }
+
+    /**
+     * Repository connection state changed. Ghidra calls this on BOTH
+     * transitions (RepositoryAdapter.connect() and disconnect() each call
+     * fireStateChanged), synchronously, while holding the server adapter's
+     * monitor: it must not block or make RMI calls here.
+     *
+     * <ul>
+     *   <li>Either transition marks the project tree stale
+     *       ({@link #treeRefreshPending}): the in-memory folder tree is
+     *       event-driven, and events that happened while disconnected (or
+     *       on a restarted Ghidra Server) are never delivered.</li>
+     *   <li>(Re)connected: nothing else to do.</li>
+     *   <li>Disconnected: record the time ({@link #lastDisconnectMs}, used
+     *       by the resolver's retry and by {@link #tryReconnect}) and, on a
+     *       daemon thread, give Ghidra 500 ms to reconnect on its own, try
+     *       one forced reconnect, and if that fails fire
+     *       {@link #onConnectionLost} so the JVM exits with code 70 and the
+     *       orchestrator restarts it with a fresh connection. Requests made
+     *       meanwhile fail at the server-state guard.</li>
+     *   <li>During shutdown the disconnect is expected: ignored.</li>
+     * </ul>
+     */
+    private void repositoryConnectionStateChanged(Object adapter) {
+        if (shuttingDown) {
+            return;
+        }
+        treeRefreshPending = true;
+        if (isRepositoryConnected()) {
+            return;
+        }
+        lastDisconnectMs = System.currentTimeMillis();
+        Msg.warn(this, "Ghidra Server connection lost; trying to reconnect before "
+            + "requesting a restart.");
+        Thread recovery = new Thread(this::recoverFromDisconnect, "rpc-disconnect-recovery");
+        recovery.setDaemon(true);
+        recovery.start();
+    }
+
+    /**
+     * Body of the disconnect recovery thread started by
+     * {@link #repositoryConnectionStateChanged}: reconnect, or exit for restart.
+     */
+    private void recoverFromDisconnect() {
+        try {
+            Thread.sleep(500); // let Ghidra's own reconnect land first
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            return;
+        }
+        if (shuttingDown || isRepositoryConnected()) {
+            return;
+        }
+        if (tryReconnect()) {
+            Msg.info(this, "Reconnected to the Ghidra Server after a disconnect.");
+            return;
+        }
+        if (shuttingDown) {
+            return;
+        }
+        Msg.error(this, "Ghidra Server connection lost and a forced reconnect failed; "
+            + "firing onConnectionLost so the JVM exits and the orchestrator restarts it "
+            + "with a fresh connection.");
+        Runnable h = onConnectionLost;
+        if (h != null) {
+            try {
+                h.run();
+                return; // the handler schedules the exit itself
+            } catch (Exception handlerEx) {
+                Msg.error(this, "onConnectionLost handler threw", handlerEx);
+            }
+        }
+        // No handler registered (connection lost during startup, before
+        // RpcServer wired one) or it threw: exit here. Exit code 70 matches
+        // RpcServer.exitOnConnectionLost and the stuck-dispatch watchdog:
+        // "forced recovery, please restart".
+        Thread forceExit = new Thread(() -> {
+            try {
+                Thread.sleep(2_000);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
+            Msg.error(this, "Forcing JVM exit after a lost Ghidra Server connection.");
+            System.exit(70);
+        }, "rpc-disconnect-force-exit");
+        forceExit.setDaemon(true);
+        forceExit.start();
     }
 
     /**
@@ -1404,7 +1369,7 @@ public class RpcContext {
      * (discarding the local copy). {@code DomainFile.delete()} refuses files
      * that are open or checked out, and this server keeps every file it has
      * touched in exactly that state. Called under {@link #lock} from
-     * project-level handlers (DeleteFile, PurgeVersions).
+     * project-level handlers (DeleteFile).
      */
     public void releaseFile(DomainFile df) throws java.io.IOException {
         String key = normalize(df.getPathname());
@@ -1419,22 +1384,6 @@ public class RpcContext {
         dirtyLocalFiles.remove(df);
         if (df.isVersioned() && df.isCheckedOut()) {
             df.undoCheckout(false, false);
-        }
-    }
-
-    /**
-     * Forget a cached Program whose file no longer exists (deleted on the
-     * server by a version purge). Never touches the repository. Called under
-     * {@link #lock}.
-     */
-    public void forgetProgram(String pathname) {
-        Program cached = open.remove(normalize(pathname));
-        if (cached != null) {
-            try {
-                cached.release(this);
-            } catch (Exception ignored) {
-                // best-effort
-            }
         }
     }
 
@@ -2613,6 +2562,7 @@ public class RpcContext {
 
     /** Release every program we opened. Call on shutdown; leaves the context empty. */
     public void closeAll() {
+        beginShutdown(); // releasing the project disconnects it: expected, not a loss
         // Drain in-flight dispatches before releasing programs. Without
         // this, an in-flight read (typical: FlatDecompilerAPI → decompiler
         // subprocess reading from the listing) can crash with
@@ -2735,26 +2685,38 @@ public class RpcContext {
         if (df.isReadOnly()) {
             return RpcResponse.error("Program is read-only; launch the server in commit mode.");
         }
+        if (project.getRepository() != null && !df.isVersioned()) {
+            // Shared project, but the file is not (or no longer) under
+            // version control: nothing we save can reach the Ghidra Server.
+            // Checked BEFORE saving, so the private local copy is not
+            // modified either; markDirty makes the next request drop the
+            // cached Program (and with it this request's in-memory change).
+            // GhidraFileData: isVersioned() is false when the server item is
+            // gone (validateCheckout clears a checkout the server no longer
+            // has) or when a private copy shadows it (isHijacked()). Imports
+            // add files to version control without going through here.
+            markDirty(program);
+            if (df.isHijacked()) {
+                // Our checkout was terminated by another session; openProgram's
+                // recoverLostCheckout resets the file on the next request.
+                return RpcResponse.error("Check-in/push failed: the checkout of '"
+                    + df.getPathname() + "' was terminated by another session, so this "
+                    + "change did not reach the Ghidra Server. Retry the request; the "
+                    + "file will be reopened from the server.");
+            }
+            return RpcResponse.error("Check-in/push failed: '" + df.getPathname()
+                + "' is not in the Ghidra Server repository (deleted there, or never "
+                + "added to version control), so this change was not saved. Only a "
+                + "private local copy is left on this server; delete it with `file delete` "
+                + "or restart the server.");
+        }
         boolean changed = program.isChanged();
         try {
             if (changed && df.canSave()) {
                 df.save(monitor);
             }
             if (!df.isVersioned()) {
-                if (project.getRepository() != null && df.isHijacked()) {
-                    // Shared project, and the server has a versioned file of
-                    // this name that we no longer hold a checkout on: our
-                    // checkout was terminated by another session. The save
-                    // above went to a private copy nobody else can see, so
-                    // this is a FAILED push, not a success. openProgram's
-                    // recoverLostCheckout resets the file on the next request.
-                    markDirty(program);
-                    return RpcResponse.error("Check-in/push failed: the checkout of '"
-                        + df.getPathname() + "' was terminated by another session, so this "
-                        + "change did not reach the Ghidra Server. Retry the request; the "
-                        + "file will be reopened from the server.");
-                }
-                clearDirty(program); // local non-versioned: save is the persistence
+                clearDirty(program); // local (non-shared) project: save is the persistence
                 return null;
             }
             if (!df.isCheckedOut()) {

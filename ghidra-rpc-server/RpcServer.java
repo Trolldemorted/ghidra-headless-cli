@@ -69,6 +69,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 import com.google.gson.Gson;
@@ -96,15 +97,16 @@ public class RpcServer extends GhidraScript {
 
     /**
      * Grace period after the connection-lost handler closes the ServerSocket,
-     * before we force {@link System#exit(int) System.exit(70)}. Long enough
+     * before we call {@link System#exit(int) System.exit(70)}. Long enough
      * for the accept loop to unwind and the run() finally block
      * ({@code clientPool.shutdownNow + context.closeAll + "Stopped."} log)
      * to finish; short enough that the orchestrator sees the JVM exit
-     * promptly and starts a replacement with a fresh RMI connection. If
-     * analyzeHeadless DOES unwind on its own before this expires, the
-     * JVM exits naturally and the System.exit is harmless (no-op on an
-     * already-exited process). Exit code 70 (not 0) signals "forced
-     * recovery, please restart" to docker restart policies.
+     * promptly and starts a replacement with a fresh RMI connection. The
+     * timer thread is NOT a daemon: analyzeHeadless usually unwinds within
+     * the grace period, and the JVM would then exit naturally with code 0
+     * (verified with a stopped Ghidra Server) unless a live non-daemon
+     * thread holds it up until the System.exit(70). Exit code 70 (not 0)
+     * signals "forced recovery, please restart" to restart policies.
      */
     private static final long CONNECTION_LOST_EXIT_GRACE_MS = 2_000;
 
@@ -117,6 +119,9 @@ public class RpcServer extends GhidraScript {
     // request, making the log unwound and confusing for long-running
     // bursty workloads).
     private final AtomicLong requestIds = new AtomicLong();
+
+    /** Set by the first {@link #exitOnConnectionLost} call; later calls are no-ops. */
+    private final AtomicBoolean exitRequested = new AtomicBoolean();
 
     /**
      * Upper bound on one request line, in chars. Imports carry a whole binary
@@ -326,9 +331,13 @@ public class RpcServer extends GhidraScript {
      * period so the orchestrator restarts us.
      */
     private void exitOnConnectionLost() {
+        if (!exitRequested.compareAndSet(false, true)) {
+            return; // the listener, the threshold and the watchdog can all get here
+        }
         Msg.error(this, "Ghidra Server connection lost (RpcContext detected "
             + "'Not connected to repository server'); exiting so the "
             + "orchestrator can restart the RPC server.");
+        context.beginShutdown(); // the coming disconnects are ours: no second recovery
         stopping = true;
         ServerSocket s = serverSocket;
         if (s != null) {
@@ -342,12 +351,10 @@ public class RpcServer extends GhidraScript {
             try {
                 Thread.sleep(CONNECTION_LOST_EXIT_GRACE_MS);
             } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                return;
+                Thread.currentThread().interrupt(); // exit anyway: returning would mean exit 0
             }
-            Msg.error(this, "Forcing JVM exit after "
-                + CONNECTION_LOST_EXIT_GRACE_MS + "ms grace period "
-                + "(analyzeHeadless did not unwind on its own).");
+            Msg.error(this, "Exiting with code 70 (restart requested) after a "
+                + CONNECTION_LOST_EXIT_GRACE_MS + "ms grace period.");
             // Exit code 70 (matches the stuck-dispatch watchdog in
             // RpcContext.watchdogLoop): signals "forced recovery, please
             // restart" to any orchestrator. With docker --restart=
@@ -357,7 +364,7 @@ public class RpcServer extends GhidraScript {
             // releases the local checkout cleanly.
             System.exit(70);
         }, "rpc-connection-lost-exit");
-        exitTimer.setDaemon(true);
+        exitTimer.setDaemon(false); // keeps the JVM alive until it exits with 70; see above
         exitTimer.start();
     }
 
@@ -554,6 +561,9 @@ public class RpcServer extends GhidraScript {
         mainThread = Thread.currentThread();
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             Msg.info(this, "Shutdown signal received; shutting down gracefully...");
+            // Shutdown disconnects the repository; that is not a lost
+            // connection, and must not turn a normal stop into exit 70.
+            context.beginShutdown();
             stopping = true;  // drive the accept loop to exit (monitor.cancel is a no-op here)
             monitor.cancel(); // best-effort cancel of any in-flight work (if supported)
             ServerSocket s = serverSocket;
